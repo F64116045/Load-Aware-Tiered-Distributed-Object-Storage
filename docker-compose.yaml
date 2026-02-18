@@ -244,7 +244,7 @@ services:
       context: .
       dockerfile: Dockerfile
     deploy:
-      replicas: 1 # Disabled during benchmarking
+      replicas: 0 # Disabled during benchmarking
     command: ["/usr/local/bin/healer"]
     environment:
       - ETCD_HOST=etcd0
