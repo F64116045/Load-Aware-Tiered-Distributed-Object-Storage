@@ -5,12 +5,12 @@ DRIVER="hybridstore"
 WORKLOAD_FILE="workloads/workloada"
 
 
-THREADS=20
+THREADS=10
 REC_COUNT=10000
 OPS_COUNT=10000
 
-OUTPUT_FILE="result_ec.txt"
-LOAD_LOG="load_ec.log"
+OUTPUT_FILE="result_ec3.txt"
+LOAD_LOG="load_ec3.log"
 
 echo "=== [2/3] Testing Strategy: Erasure Coding (EC) ==="
 echo "Config: Records=$REC_COUNT, Operations=$OPS_COUNT, Threads=$THREADS"
@@ -33,8 +33,8 @@ $YCSB_BIN run $DRIVER -P $WORKLOAD_FILE \
     -p hybridstore.strategy=$STRATEGY \
     -p operationcount=$OPS_COUNT \
     -p threadcount=$THREADS \
-    -p readproportion=0.5 \
-    -p updateproportion=0.5 \
+    -p readproportion=0.1 \
+    -p updateproportion=0.9 \
     > $OUTPUT_FILE 2>&1
 
 echo "--------------------------------------"

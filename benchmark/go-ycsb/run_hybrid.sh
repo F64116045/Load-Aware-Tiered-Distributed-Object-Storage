@@ -4,13 +4,13 @@ STRATEGY="field_hybrid"
 DRIVER="hybridstore"
 WORKLOAD_FILE="workloads/workloada"
 
-# 與前兩者保持嚴格一致
-THREADS=20
+
+THREADS=10
 REC_COUNT=10000
 OPS_COUNT=10000
 
-OUTPUT_FILE="result_hybrid.txt"
-LOAD_LOG="load_hybrid.log"
+OUTPUT_FILE="result_hybrid3.txt"
+LOAD_LOG="load_hybrid3.log"
 
 echo "=== [3/3] Testing Strategy: Field Hybrid ==="
 echo "Config: Records=$REC_COUNT, Operations=$OPS_COUNT, Threads=$THREADS"
@@ -33,8 +33,8 @@ $YCSB_BIN run $DRIVER -P $WORKLOAD_FILE \
     -p hybridstore.strategy=$STRATEGY \
     -p operationcount=$OPS_COUNT \
     -p threadcount=$THREADS \
-    -p readproportion=0.5 \
-    -p updateproportion=0.5 \
+    -p readproportion=0.1 \
+    -p updateproportion=0.9 \
     > $OUTPUT_FILE 2>&1
 
 echo "--------------------------------------"
