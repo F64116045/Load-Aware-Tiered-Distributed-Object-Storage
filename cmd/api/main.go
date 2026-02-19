@@ -20,6 +20,7 @@ import (
 	"hybrid_distributed_store/internal/ec"
 	etcdclient "hybrid_distributed_store/internal/etcd"
 	"hybrid_distributed_store/internal/httpclient"
+	"hybrid_distributed_store/internal/meta"
 	"hybrid_distributed_store/internal/monitoringservice"
 	"hybrid_distributed_store/internal/mq"
 	"hybrid_distributed_store/internal/readservice"
@@ -68,7 +69,7 @@ func watchNodesTask(ctx context.Context, etcdClient *etcd.Client) {
 			}
 		}
 		log.Printf("%s[API] Initial Nodes: %v%s\n", config.Colors["CYAN"], getKeys(ActiveNodeURLs), config.Colors["RESET"])
-		
+
 		if len(ActiveNodeURLs) >= config.K && !nodesReady {
 			nodesReady = true
 			close(NodesReadyEvent)
@@ -92,7 +93,7 @@ func watchNodesTask(ctx context.Context, etcdClient *etcd.Client) {
 				continue
 			}
 			nodeName := parts[2]
-			
+
 			if _, ok := config.ExpectedNodeNames[nodeName]; !ok {
 				continue
 			}
@@ -164,14 +165,14 @@ func PanicRecoveryMiddleware(c *gin.Context) {
 		if r := recover(); r != nil {
 			log.Printf("%s[API] PANIC: %v%s\n", config.Colors["RED"], r, config.Colors["RESET"])
 			debug.PrintStack()
-			
+
 			var errorMsg string
 			if err, ok := r.(error); ok {
 				errorMsg = err.Error()
 			} else {
 				errorMsg = fmt.Sprintf("%v", r)
 			}
-			
+
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":  "Internal Server Error",
 				"detail": errorMsg,
@@ -197,7 +198,49 @@ func main() {
 	// 1. Initialize Services
 	etcdClient := etcdclient.GetClient()
 	httpClient := httpclient.GetClient()
-	
+
+	metadataStatus := "disabled"
+	metadataErr := ""
+	metaStore, err := meta.NewStore(meta.Config{
+		Enabled:         config.MetaEnabled,
+		Driver:          config.MetaDriver,
+		DSN:             config.MetaDSN,
+		MaxOpenConns:    config.MetaMaxOpenConns,
+		MaxIdleConns:    config.MetaMaxIdleConns,
+		ConnMaxLifetime: config.MetaConnMaxLifetime,
+	})
+	if err != nil {
+		metadataStatus = "down"
+		metadataErr = err.Error()
+		log.Printf("[API] Metadata init failed: %v", err)
+	} else if config.MetaEnabled {
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer pingCancel()
+		if pingErr := metaStore.Ping(pingCtx); pingErr != nil {
+			metadataStatus = "down"
+			metadataErr = pingErr.Error()
+			log.Printf("[API] Metadata ping failed: %v", pingErr)
+		} else {
+			metadataStatus = "up"
+			if config.MetaAutoMigrate {
+				migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer migrateCancel()
+				if migrateErr := meta.NewMigrator(metaStore).Up(migrateCtx); migrateErr != nil {
+					metadataStatus = "down"
+					metadataErr = fmt.Sprintf("auto_migrate_failed: %v", migrateErr)
+					log.Printf("[API] Metadata auto migration failed: %v", migrateErr)
+				} else {
+					log.Printf("[API] Metadata auto migration completed.")
+				}
+			}
+		}
+	}
+	defer func() {
+		if metaStore != nil {
+			_ = metaStore.Close()
+		}
+	}()
+
 	// [FIX] Initialize Redpanda Client with isConsumer=false
 	mqClient := mq.NewClient(false)
 	defer mqClient.Close()
@@ -205,9 +248,9 @@ func main() {
 	utilsSvc := utils.NewService()
 	ecDriver := ec.NewService()
 	storageOpsSvc := storageops.NewService(httpClient)
-	
+
 	readSvc := readservice.NewService(httpClient, ecDriver, utilsSvc)
-	
+
 	// Inject mqClient into WriteService
 	writeSvc := writeservice.NewService(etcdClient, mqClient, httpClient, readSvc, ecDriver, utilsSvc)
 
@@ -327,23 +370,23 @@ func main() {
 			} else {
 				dataBytes, errRead = readSvc.ReadEC(c.Request.Context(), ecNodes, metadata)
 			}
-			
+
 			if errRead != nil {
 				c.JSON(http.StatusNotFound, gin.H{"detail": errRead.Error()})
 				return
 			}
-			
+
 			dataDict, errDes := utilsSvc.Deserialize(dataBytes)
 			if errDes != nil {
 				log.Printf("[Error] Key: %s, Parse failed: %v", key, errDes)
-    
+
 				c.JSON(http.StatusInternalServerError, gin.H{
-					"status": "error",
-					"code":   500,
+					"status":  "error",
+					"code":    500,
 					"message": "Data check failed",
-					"detail": "The data retrieved is corrupted. Please retry.",
+					"detail":  "The data retrieved is corrupted. Please retry.",
 				})
-			    return
+				return
 			} else {
 				c.JSON(http.StatusOK, dataDict)
 			}
@@ -449,12 +492,12 @@ func main() {
 			currentNodes = append(currentNodes, url)
 		}
 		NodeListLock.RUnlock()
-		
+
 		if len(currentNodes) == 0 {
 			c.JSON(http.StatusOK, gin.H{})
 			return
 		}
-		
+
 		statusMap, err := monitoringservice.FetchNodeStatus(c.Request.Context(), currentNodes)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch node status: %v", err)})
@@ -486,10 +529,21 @@ func main() {
 
 	router.GET("/health", func(c *gin.Context) {
 		hostname, _ := os.Hostname()
+		apiStatus := "healthy"
+		if config.MetaEnabled && metadataStatus != "up" {
+			apiStatus = "degraded"
+		}
 		c.JSON(http.StatusOK, gin.H{
-			"status":   "healthy",
+			"status":   apiStatus,
 			"service":  "api_gateway",
 			"hostname": hostname,
+			"metadata": gin.H{
+				"enabled":      config.MetaEnabled,
+				"status":       metadataStatus,
+				"driver":       config.MetaDriver,
+				"auto_migrate": config.MetaAutoMigrate,
+				"error":        metadataErr,
+			},
 		})
 	})
 
