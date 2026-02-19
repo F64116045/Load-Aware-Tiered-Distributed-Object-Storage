@@ -4,6 +4,10 @@ Status: Draft v1.1
 Owner: Project Team  
 Last Updated: 2026-02-18
 
+## Implementation Progress
+
+Daily implementation updates are tracked in `docs/DAILY_PROGRESS.md`.
+
 ## 1. Executive Summary
 
 This project evolves the current prototype into a practical and research-valid storage system:
@@ -473,6 +477,7 @@ Nice-to-have:
 2. adaptive dynamic `k,m` by object class.
 3. bi-directional tiering (EC -> Replication reheating).
 4. cost-aware placement by heterogeneous node capabilities.
+5. Heterogeneous media evaluation (HDD vs SSD sensitivity benchmark).
 
 ## 20. Risks and Mitigations
 
@@ -518,3 +523,7 @@ Nice-to-have:
 2. Storage overhead vs object age distribution.
 3. Throughput impact under worker concurrency sweep.
 4. Recovery convergence time after injected failures.
+
+Optional:
+
+1. HDD vs SSD sensitivity figure under identical workload and policy config.

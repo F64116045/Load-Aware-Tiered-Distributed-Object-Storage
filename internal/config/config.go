@@ -2,7 +2,9 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Colors for terminal output
@@ -38,7 +40,7 @@ var HotFields = map[string]bool{
 	"view_count":      true,
 	"inventory_count": true,
 	"update_count":    true,
-	"status_code": 	   true,
+	"status_code":     true,
 	"battery_level":   true,
 }
 
@@ -63,6 +65,23 @@ const (
 // ExpectedNodeNames stores the set of valid storage node identifiers
 var ExpectedNodeNames = map[string]bool{}
 
+var (
+	// MetaEnabled controls whether PostgreSQL-backed metadata service is enabled.
+	MetaEnabled = getEnvBool("META_ENABLED", false)
+	// MetaAutoMigrate controls whether API runs metadata migration on startup.
+	MetaAutoMigrate = getEnvBool("META_AUTO_MIGRATE", false)
+	// MetaDriver is the database/sql driver name.
+	MetaDriver = getEnv("META_DRIVER", "postgres")
+	// MetaDSN is the metadata DB connection string.
+	MetaDSN = getEnv("META_DSN", "")
+	// MetaMaxOpenConns controls the DB pool max open connections.
+	MetaMaxOpenConns = getEnvInt("META_MAX_OPEN_CONNS", 20)
+	// MetaMaxIdleConns controls the DB pool max idle connections.
+	MetaMaxIdleConns = getEnvInt("META_MAX_IDLE_CONNS", 10)
+	// MetaConnMaxLifetime controls DB connection max lifetime.
+	MetaConnMaxLifetime = time.Duration(getEnvInt("META_CONN_MAX_LIFETIME_SEC", 300)) * time.Second
+)
+
 func init() {
 	// Load expected node names from environment variable or use default fallback
 	names := os.Getenv("NODE_NAMES_CSV")
@@ -72,5 +91,40 @@ func init() {
 
 	for _, name := range strings.Split(names, ",") {
 		ExpectedNodeNames[name] = true
+	}
+}
+
+func getEnv(key, fallback string) string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	return v
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return fallback
+	}
+	switch v {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return fallback
 	}
 }
