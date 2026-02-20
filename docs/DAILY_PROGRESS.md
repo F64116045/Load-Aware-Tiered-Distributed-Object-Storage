@@ -166,3 +166,15 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 4. Added discovery observability:
    - `/health` now reports configured/active node discovery source
    - `/v2/admin/metrics-snapshot` includes active node discovery stats
+
+## 2026-02-20 (Milestone 5 postgres discovery defaulting, step 2)
+
+1. Updated storage-node startup behavior for discovery source:
+   - when `NODE_DISCOVERY_SOURCE=postgres`, node skips etcd lease registration
+   - keeps PostgreSQL heartbeat reporting active
+2. Updated compose defaults to prefer PostgreSQL discovery:
+   - API uses `NODE_DISCOVERY_SOURCE=postgres`
+   - all storage nodes use `NODE_DISCOVERY_SOURCE=postgres`
+3. Validation:
+   - compile checks passed for API / storage node / metadata / writeservice
+   - `docker compose config -q` passed

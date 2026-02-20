@@ -314,11 +314,19 @@ func main() {
 		log.Fatal("Error: NODE_PORT, NODE_NAME, and STORAGE_DIR must be set.")
 	}
 
-	etcdClient := etcd.GetClient()
-	if etcdClient == nil {
-		log.Fatalf("Failed to connect to Etcd. Cannot start Storage Node.")
+	var etcdClient *clientv3.Client
+	useEtcdDiscovery := config.NodeDiscoverySource == "etcd" || config.NodeDiscoverySource == "auto"
+	if useEtcdDiscovery {
+		etcdClient = etcd.GetClient()
+		if etcdClient == nil {
+			if config.NodeDiscoverySource == "etcd" {
+				log.Fatalf("Failed to connect to Etcd with NODE_DISCOVERY_SOURCE=etcd.")
+			}
+			log.Printf("Etcd unavailable; continue with PostgreSQL discovery path.")
+		} else {
+			defer etcd.CloseClient()
+		}
 	}
-	defer etcd.CloseClient()
 
 	metaStore, metaErr := meta.NewStore(meta.Config{
 		Enabled:         config.MetaEnabled,
@@ -350,7 +358,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	internalURL := fmt.Sprintf("http://%s:%s", nodeName, nodePort)
-	go registerAndHeartbeat(ctx, etcdClient, nodeName, internalURL)
+	if etcdClient != nil && useEtcdDiscovery {
+		go registerAndHeartbeat(ctx, etcdClient, nodeName, internalURL)
+	}
 	go registerAndHeartbeatMeta(ctx, metaStore, internalURL, storage)
 
 	// 5. Start Gin Server
