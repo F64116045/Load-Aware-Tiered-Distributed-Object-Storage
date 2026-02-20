@@ -101,3 +101,43 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Removed direct etcd-only metadata dependency in Hybrid update flow:
    - old cold hash/version lookup now uses source-aware metadata loader
    - preserves backward compatibility when metadata is missing
+
+## 2026-02-20 (Milestone 4 metadata observability, step 4)
+
+1. Added metadata lookup source counters in API:
+   - `postgres_normalized_hit`
+   - `etcd_hit`
+   - `not_found`
+   - `error_count`
+2. Exposed lookup counters via API endpoints:
+   - `/health` -> `metadata.lookup`
+   - `/v2/admin/metrics-snapshot` -> `metadata_lookup`
+3. Goal support:
+   - enables data-driven decision for `metadata_kv` fallback retirement
+
+## 2026-02-20 (Milestone 4 metadata_kv fallback retirement, step 5)
+
+1. Switched metadata read path to normalized-first without `metadata_kv` read fallback:
+   - API `loadMetadata(...)` now reads `objects + object_versions` first
+   - falls back directly to etcd for compatibility
+2. Updated writeservice metadata lookup path similarly:
+   - Hybrid old-metadata lookup now uses `normalized -> etcd` order
+3. Retained `metadata_kv` write/delete paths temporarily:
+   - keeps rollback safety before full schema/code cleanup
+
+## 2026-02-20 (Milestone 4 metadata_kv write retirement, step 6)
+
+1. Removed `metadata_kv` write from foreground finalize path:
+   - `writeservice.finalizeWALEntry(...)` now commits:
+     - PostgreSQL normalized metadata (`objects + object_versions`)
+     - etcd compatibility metadata
+2. Kept `metadata_kv` delete path temporarily:
+   - allows cleanup of historical rows during migration window
+
+## 2026-02-20 (Milestone 4 metadata_kv runtime dependency removal, step 7)
+
+1. Removed API delete-path dependency on `metadata_kv`:
+   - delete metadata now targets normalized PostgreSQL rows + etcd compatibility key
+2. Metadata runtime path status:
+   - no read/write/delete runtime dependency on `metadata_kv`
+   - table and migration files retained temporarily for controlled deprecation

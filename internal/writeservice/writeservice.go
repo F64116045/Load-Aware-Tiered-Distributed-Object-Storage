@@ -82,14 +82,6 @@ func (s *Service) loadExistingMetadata(ctx context.Context, key string) (map[str
 		if len(pgNormalizedMeta) > 0 {
 			return pgNormalizedMeta, "postgres_normalized", nil
 		}
-
-		pgMeta, err := s.meta.GetMetadataKV(ctx, metaKey)
-		if err != nil {
-			return nil, "", err
-		}
-		if len(pgMeta) > 0 {
-			return pgMeta, "postgres_kv", nil
-		}
 		if config.MetaSource == "postgres" {
 			return nil, "", errMetadataNotFound
 		}
@@ -170,9 +162,6 @@ func (s *Service) finalizeWALEntry(
 	if config.MetaEnabled && s.meta != nil {
 		if err := s.meta.UpsertNormalizedMetadata(ctx, mainKey, metadata); err != nil {
 			return fmt.Errorf("failed to commit normalized metadata to Postgres: %v", err)
-		}
-		if err := s.meta.UpsertMetadataKV(ctx, metaKey, metadata); err != nil {
-			return fmt.Errorf("failed to commit metadata to Postgres: %v", err)
 		}
 	}
 

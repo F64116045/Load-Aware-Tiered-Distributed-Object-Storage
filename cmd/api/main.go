@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,41 @@ var (
 )
 
 var errMetadataNotFound = errors.New("metadata not found")
+
+type metadataLookupMetrics struct {
+	postgresNormalizedHit uint64
+	etcdHit               uint64
+	notFound              uint64
+	errorCount            uint64
+}
+
+var lookupMetrics metadataLookupMetrics
+
+func recordMetadataLookupHit(source string) {
+	switch source {
+	case "postgres_normalized":
+		atomic.AddUint64(&lookupMetrics.postgresNormalizedHit, 1)
+	case "etcd":
+		atomic.AddUint64(&lookupMetrics.etcdHit, 1)
+	}
+}
+
+func recordMetadataLookupNotFound() {
+	atomic.AddUint64(&lookupMetrics.notFound, 1)
+}
+
+func recordMetadataLookupError() {
+	atomic.AddUint64(&lookupMetrics.errorCount, 1)
+}
+
+func metadataLookupSnapshot() gin.H {
+	return gin.H{
+		"postgres_normalized_hit": atomic.LoadUint64(&lookupMetrics.postgresNormalizedHit),
+		"etcd_hit":                atomic.LoadUint64(&lookupMetrics.etcdHit),
+		"not_found":               atomic.LoadUint64(&lookupMetrics.notFound),
+		"error_count":             atomic.LoadUint64(&lookupMetrics.errorCount),
+	}
+}
 
 // watchNodesTask monitors Etcd for storage node registration/deregistration.
 func watchNodesTask(ctx context.Context, etcdClient *etcd.Client) {
@@ -196,48 +232,46 @@ func getKeys(m map[string]string) []string {
 }
 
 func loadMetadata(ctx context.Context, key string, etcdClient *etcd.Client, metaStore *meta.Store, source string) (map[string]interface{}, string, error) {
-	metaKey := fmt.Sprintf("metadata/%s", key)
-
 	readFromPostgres := source == "auto" || source == "postgres"
 	readFromEtcd := source == "auto" || source == "etcd"
 
 	if readFromPostgres && config.MetaEnabled && metaStore != nil {
 		pgNormalizedMeta, err := metaStore.GetNormalizedMetadata(ctx, key)
 		if err != nil {
+			recordMetadataLookupError()
 			return nil, "", err
 		}
 		if len(pgNormalizedMeta) > 0 {
+			recordMetadataLookupHit("postgres_normalized")
 			return pgNormalizedMeta, "postgres_normalized", nil
 		}
-
-		pgMeta, err := metaStore.GetMetadataKV(ctx, metaKey)
-		if err != nil {
-			return nil, "", err
-		}
-		if len(pgMeta) > 0 {
-			return pgMeta, "postgres", nil
-		}
 		if source == "postgres" {
+			recordMetadataLookupNotFound()
 			return nil, "", errMetadataNotFound
 		}
 	}
 
 	if !readFromEtcd {
+		recordMetadataLookupNotFound()
 		return nil, "", errMetadataNotFound
 	}
 
-	rangeResp, err := etcdClient.Get(ctx, metaKey)
+	rangeResp, err := etcdClient.Get(ctx, fmt.Sprintf("metadata/%s", key))
 	if err != nil {
+		recordMetadataLookupError()
 		return nil, "", fmt.Errorf("etcd query failed: %v", err)
 	}
 	if len(rangeResp.Kvs) == 0 {
+		recordMetadataLookupNotFound()
 		return nil, "", errMetadataNotFound
 	}
 
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(rangeResp.Kvs[0].Value, &metadata); err != nil {
+		recordMetadataLookupError()
 		return nil, "", fmt.Errorf("metadata parse failed: %v", err)
 	}
+	recordMetadataLookupHit("etcd")
 	return metadata, "etcd", nil
 }
 
@@ -501,10 +535,6 @@ func main() {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Postgres normalized) deletion failed: %v", err)})
 					return
 				}
-				if err := metaStore.DeleteMetadataKV(c.Request.Context(), etcdKey); err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Postgres) deletion failed: %v", err)})
-					return
-				}
 			}
 			_, err = etcdClient.Delete(c.Request.Context(), etcdKey)
 			if err != nil {
@@ -591,7 +621,15 @@ func main() {
 				"source":       config.MetaSource,
 				"auto_migrate": config.MetaAutoMigrate,
 				"error":        metadataErr,
+				"lookup":       metadataLookupSnapshot(),
 			},
+		})
+	})
+
+	router.GET("/v2/admin/metrics-snapshot", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"metadata_lookup": metadataLookupSnapshot(),
+			"timestamp_unix":  time.Now().Unix(),
 		})
 	})
 
