@@ -315,6 +315,14 @@ func loadMetadata(ctx context.Context, key string, etcdClient *etcd.Client, meta
 		recordMetadataLookupNotFound()
 		return nil, "", errMetadataNotFound
 	}
+	if etcdClient == nil {
+		if source == "etcd" {
+			recordMetadataLookupError()
+			return nil, "", fmt.Errorf("etcd client unavailable")
+		}
+		recordMetadataLookupNotFound()
+		return nil, "", errMetadataNotFound
+	}
 
 	rangeResp, err := etcdClient.Get(ctx, fmt.Sprintf("metadata/%s", key))
 	if err != nil {
@@ -339,7 +347,11 @@ func main() {
 	log.Printf("%sAPI Gateway (PID: %d) Starting...%s\n", config.Colors["GREEN"], os.Getpid(), config.Colors["RESET"])
 
 	// 1. Initialize Services
-	etcdClient := etcdclient.GetClient()
+	var etcdClient *etcd.Client
+	requiresEtcd := !(config.MetaSource == "postgres" && config.NodeDiscoverySource == "postgres")
+	if requiresEtcd {
+		etcdClient = etcdclient.GetClient()
+	}
 	httpClient := httpclient.GetClient()
 
 	metadataStatus := "disabled"
@@ -408,17 +420,23 @@ func main() {
 		} else {
 			nodeDiscoveryActive = "etcd_fallback"
 			log.Printf("%s[API] NODE_DISCOVERY_SOURCE=postgres but metadata is unavailable, fallback to etcd%s\n", config.Colors["YELLOW"], config.Colors["RESET"])
-			go watchNodesTask(ctx, etcdClient)
+			if etcdClient != nil {
+				go watchNodesTask(ctx, etcdClient)
+			}
 		}
 	case "etcd":
-		go watchNodesTask(ctx, etcdClient)
+		if etcdClient != nil {
+			go watchNodesTask(ctx, etcdClient)
+		}
 	default: // auto
 		if config.MetaEnabled && metaStore != nil {
 			nodeDiscoveryActive = "postgres"
 			go watchNodesFromPostgres(ctx, metaStore)
 		} else {
 			nodeDiscoveryActive = "etcd"
-			go watchNodesTask(ctx, etcdClient)
+			if etcdClient != nil {
+				go watchNodesTask(ctx, etcdClient)
+			}
 		}
 	}
 
@@ -616,10 +634,12 @@ func main() {
 					return
 				}
 			}
-			_, err = etcdClient.Delete(c.Request.Context(), etcdKey)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Etcd) deletion failed: %v", err)})
-				return
+			if config.MetaSource != "postgres" && etcdClient != nil {
+				_, err = etcdClient.Delete(c.Request.Context(), etcdKey)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Etcd) deletion failed: %v", err)})
+					return
+				}
 			}
 
 		} else {

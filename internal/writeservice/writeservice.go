@@ -90,6 +90,12 @@ func (s *Service) loadExistingMetadata(ctx context.Context, key string) (map[str
 	if !readFromEtcd {
 		return nil, "", errMetadataNotFound
 	}
+	if s.etcd == nil {
+		if config.MetaSource == "etcd" {
+			return nil, "", fmt.Errorf("etcd client unavailable")
+		}
+		return nil, "", errMetadataNotFound
+	}
 
 	resp, err := s.etcd.Get(ctx, metaKey)
 	if err != nil {
@@ -165,9 +171,14 @@ func (s *Service) finalizeWALEntry(
 		}
 	}
 
-	_, err = s.etcd.Put(ctx, metaKey, string(metaBytes))
-	if err != nil {
-		return fmt.Errorf("failed to commit metadata to Etcd: %v", err)
+	if config.MetaSource != "postgres" {
+		if s.etcd == nil {
+			return fmt.Errorf("etcd client unavailable for metadata compatibility write")
+		}
+		_, err = s.etcd.Put(ctx, metaKey, string(metaBytes))
+		if err != nil {
+			return fmt.Errorf("failed to commit metadata to Etcd: %v", err)
+		}
 	}
 
 	return nil

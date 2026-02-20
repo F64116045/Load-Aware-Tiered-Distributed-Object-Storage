@@ -51,6 +51,7 @@ services:
       - NODE_NAMES_CSV=storage_node_1,storage_node_2,storage_node_3,storage_node_4,storage_node_5,storage_node_6
       - META_ENABLED=true
       - META_DRIVER=postgres
+      - META_SOURCE=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=20
       - META_MAX_IDLE_CONNS=10

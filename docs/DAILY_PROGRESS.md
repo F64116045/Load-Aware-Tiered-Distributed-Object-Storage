@@ -178,3 +178,13 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 3. Validation:
    - compile checks passed for API / storage node / metadata / writeservice
    - `docker compose config -q` passed
+
+## 2026-02-20 (Milestone 5 api etcd hard-dependency relaxation, step 3)
+
+1. Updated API etcd client bootstrap behavior:
+   - API skips etcd client initialization when both `META_SOURCE=postgres` and `NODE_DISCOVERY_SOURCE=postgres`
+2. Updated compatibility behavior for metadata paths:
+   - writeservice skips etcd compatibility metadata write when `META_SOURCE=postgres`
+   - metadata lookup handles `etcdClient=nil` safely in postgres-primary mode
+3. Updated compose defaults:
+   - API now explicitly uses `META_SOURCE=postgres`
