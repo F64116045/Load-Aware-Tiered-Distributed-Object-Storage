@@ -188,3 +188,12 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - metadata lookup handles `etcdClient=nil` safely in postgres-primary mode
 3. Updated compose defaults:
    - API now explicitly uses `META_SOURCE=postgres`
+
+## 2026-02-20 (Architecture freeze documentation)
+
+1. Created architecture document split:
+   - `docs/ARCHITECTURE_V2_FREEZE.md` as current authoritative architecture baseline
+   - `docs/ARCHITECTURE_V1_LEGACY.md` as historical reference
+2. Updated `docs/ARCHITECTURE.md` as architecture index/entry point
+3. Purpose:
+   - lock implementation target to v2 (PostgreSQL-first, tiered background migration, source-switchable discovery)
