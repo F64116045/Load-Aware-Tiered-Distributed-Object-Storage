@@ -60,8 +60,8 @@ func (m *MockReadService) ReadFieldHybrid(ctx context.Context, replicaNodes, ecN
 type MockEcDriver struct{}
 
 func (m *MockEcDriver) Split(data []byte) ([][]byte, error) { return nil, nil }
-func (m *MockEcDriver) Encode(shards [][]byte) error       { return nil }
-func (m *MockEcDriver) Reconstruct(shards [][]byte) error  { return nil }
+func (m *MockEcDriver) Encode(shards [][]byte) error        { return nil }
+func (m *MockEcDriver) Reconstruct(shards [][]byte) error   { return nil }
 
 // MockUtilsSvc implements IUtilsSvc.
 type MockUtilsSvc struct{}
@@ -69,9 +69,9 @@ type MockUtilsSvc struct{}
 func (m *MockUtilsSvc) SeparateHotColdFields(data map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
 	return nil, nil
 }
-func (m *MockUtilsSvc) Serialize(data map[string]interface{}) ([]byte, error) { return nil, nil }
+func (m *MockUtilsSvc) Serialize(data map[string]interface{}) ([]byte, error)   { return nil, nil }
 func (m *MockUtilsSvc) Deserialize(data []byte) (map[string]interface{}, error) { return nil, nil }
-func (m *MockUtilsSvc) MapsAreEqual(map1, map2 map[string]interface{}) bool { return true }
+func (m *MockUtilsSvc) MapsAreEqual(map1, map2 map[string]interface{}) bool     { return true }
 func (m *MockUtilsSvc) MergeHotColdFields(hotFields, coldFields map[string]interface{}) map[string]interface{} {
 	return nil
 }
@@ -81,7 +81,7 @@ func (m *MockUtilsSvc) MergeHotColdFields(hotFields, coldFields map[string]inter
 func startEmbeddedEtcd(t *testing.T) (*embed.Etcd, *etcd.Client) {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir() // Use temporary directory
-	
+
 	// Bind to random ports on localhost
 	uClient, _ := url.Parse("http://127.0.0.1:0")
 	uPeer, _ := url.Parse("http://127.0.0.1:0")
@@ -120,7 +120,11 @@ func createMockService(etcdClient interfaces.IEtcdClient, httpClient interfaces.
 	mockEc := &MockEcDriver{}
 	mockUtils := &MockUtilsSvc{}
 
-	return NewService(etcdClient, httpClient, mockRead, mockEc, mockUtils)
+	svc := NewService(etcdClient, nil, httpClient, mockRead, mockEc, mockUtils, nil)
+	svc.walProduce = func(ctx context.Context, key string, value []byte) error {
+		return nil
+	}
+	return svc
 }
 
 // --- 2. Test Cases ---
@@ -177,18 +181,9 @@ func TestWriteReplication_StorageFails(t *testing.T) {
 		t.Errorf("WriteReplication() expected error (storage failed), but got nil")
 	}
 
-	// Verify WAL status is FAILED
-	resp, _ := etcdClient.Get(context.Background(), "txn/", etcd.WithPrefix())
-	foundFailed := false
-	for _, kv := range resp.Kvs {
-		// Look for any key ending in /status with value "FAILED"
-		if strings.HasSuffix(string(kv.Key), "/status") && string(kv.Value) == "FAILED" {
-			foundFailed = true
-			break
-		}
-	}
-
-	if !foundFailed {
-		t.Errorf("Expected WAL entry with status FAILED, but none found in Etcd")
+	// Verify metadata is not committed on failed write.
+	resp, _ := etcdClient.Get(context.Background(), "metadata/test_key")
+	if len(resp.Kvs) != 0 {
+		t.Errorf("WriteReplication() failed, but metadata/test_key was still written")
 	}
 }

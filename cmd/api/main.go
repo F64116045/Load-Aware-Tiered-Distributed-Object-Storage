@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,6 +38,43 @@ var (
 	NodesReadyEvent = make(chan struct{})
 	nodesReady      = false
 )
+
+var errMetadataNotFound = errors.New("metadata not found")
+
+type metadataLookupMetrics struct {
+	postgresNormalizedHit uint64
+	etcdHit               uint64
+	notFound              uint64
+	errorCount            uint64
+}
+
+var lookupMetrics metadataLookupMetrics
+
+func recordMetadataLookupHit(source string) {
+	switch source {
+	case "postgres_normalized":
+		atomic.AddUint64(&lookupMetrics.postgresNormalizedHit, 1)
+	case "etcd":
+		atomic.AddUint64(&lookupMetrics.etcdHit, 1)
+	}
+}
+
+func recordMetadataLookupNotFound() {
+	atomic.AddUint64(&lookupMetrics.notFound, 1)
+}
+
+func recordMetadataLookupError() {
+	atomic.AddUint64(&lookupMetrics.errorCount, 1)
+}
+
+func metadataLookupSnapshot() gin.H {
+	return gin.H{
+		"postgres_normalized_hit": atomic.LoadUint64(&lookupMetrics.postgresNormalizedHit),
+		"etcd_hit":                atomic.LoadUint64(&lookupMetrics.etcdHit),
+		"not_found":               atomic.LoadUint64(&lookupMetrics.notFound),
+		"error_count":             atomic.LoadUint64(&lookupMetrics.errorCount),
+	}
+}
 
 // watchNodesTask monitors Etcd for storage node registration/deregistration.
 func watchNodesTask(ctx context.Context, etcdClient *etcd.Client) {
@@ -192,6 +231,50 @@ func getKeys(m map[string]string) []string {
 	return keys
 }
 
+func loadMetadata(ctx context.Context, key string, etcdClient *etcd.Client, metaStore *meta.Store, source string) (map[string]interface{}, string, error) {
+	readFromPostgres := source == "auto" || source == "postgres"
+	readFromEtcd := source == "auto" || source == "etcd"
+
+	if readFromPostgres && config.MetaEnabled && metaStore != nil {
+		pgNormalizedMeta, err := metaStore.GetNormalizedMetadata(ctx, key)
+		if err != nil {
+			recordMetadataLookupError()
+			return nil, "", err
+		}
+		if len(pgNormalizedMeta) > 0 {
+			recordMetadataLookupHit("postgres_normalized")
+			return pgNormalizedMeta, "postgres_normalized", nil
+		}
+		if source == "postgres" {
+			recordMetadataLookupNotFound()
+			return nil, "", errMetadataNotFound
+		}
+	}
+
+	if !readFromEtcd {
+		recordMetadataLookupNotFound()
+		return nil, "", errMetadataNotFound
+	}
+
+	rangeResp, err := etcdClient.Get(ctx, fmt.Sprintf("metadata/%s", key))
+	if err != nil {
+		recordMetadataLookupError()
+		return nil, "", fmt.Errorf("etcd query failed: %v", err)
+	}
+	if len(rangeResp.Kvs) == 0 {
+		recordMetadataLookupNotFound()
+		return nil, "", errMetadataNotFound
+	}
+
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(rangeResp.Kvs[0].Value, &metadata); err != nil {
+		recordMetadataLookupError()
+		return nil, "", fmt.Errorf("metadata parse failed: %v", err)
+	}
+	recordMetadataLookupHit("etcd")
+	return metadata, "etcd", nil
+}
+
 func main() {
 	log.Printf("%sAPI Gateway (PID: %d) Starting...%s\n", config.Colors["GREEN"], os.Getpid(), config.Colors["RESET"])
 
@@ -252,7 +335,7 @@ func main() {
 	readSvc := readservice.NewService(httpClient, ecDriver, utilsSvc)
 
 	// Inject mqClient into WriteService
-	writeSvc := writeservice.NewService(etcdClient, mqClient, httpClient, readSvc, ecDriver, utilsSvc)
+	writeSvc := writeservice.NewService(etcdClient, mqClient, httpClient, readSvc, ecDriver, utilsSvc, metaStore)
 
 	// 2. Start Service Discovery
 	ctx, cancel := context.WithCancel(context.Background())
@@ -343,20 +426,13 @@ func main() {
 			return
 		}
 
-		etcdKey := fmt.Sprintf("metadata/%s", key)
-		rangeResp, err := etcdClient.Get(c.Request.Context(), etcdKey)
+		metadata, _, err := loadMetadata(c.Request.Context(), key, etcdClient, metaStore, config.MetaSource)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Etcd query failed: %v", err)})
-			return
-		}
-		if len(rangeResp.Kvs) == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("Metadata not found for key '%s'", key)})
-			return
-		}
-
-		var metadata map[string]interface{}
-		if err := json.Unmarshal(rangeResp.Kvs[0].Value, &metadata); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata parse failed: %v", err)})
+			if errors.Is(err, errMetadataNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("Metadata not found for key '%s'", key)})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
@@ -417,18 +493,13 @@ func main() {
 		strategyStr := "N/A"
 		etcdKey := fmt.Sprintf("metadata/%s", key)
 
-		rangeResp, err := etcdClient.Get(c.Request.Context(), etcdKey)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Etcd query failed: %v", err)})
+		metadata, _, metaErr := loadMetadata(c.Request.Context(), key, etcdClient, metaStore, config.MetaSource)
+		if metaErr != nil && !errors.Is(metaErr, errMetadataNotFound) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": metaErr.Error()})
 			return
 		}
-
-		metadata := make(map[string]interface{})
-		if len(rangeResp.Kvs) > 0 {
-			if err := json.Unmarshal(rangeResp.Kvs[0].Value, &metadata); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata parse failed: %v", err)})
-				return
-			}
+		if metadata == nil {
+			metadata = make(map[string]interface{})
 		}
 
 		if len(metadata) > 0 {
@@ -459,9 +530,15 @@ func main() {
 				return
 			}
 
+			if config.MetaEnabled && metaStore != nil {
+				if err := metaStore.DeleteNormalizedMetadata(c.Request.Context(), key); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Postgres normalized) deletion failed: %v", err)})
+					return
+				}
+			}
 			_, err = etcdClient.Delete(c.Request.Context(), etcdKey)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata deletion failed: %v", err)})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Etcd) deletion failed: %v", err)})
 				return
 			}
 
@@ -541,9 +618,18 @@ func main() {
 				"enabled":      config.MetaEnabled,
 				"status":       metadataStatus,
 				"driver":       config.MetaDriver,
+				"source":       config.MetaSource,
 				"auto_migrate": config.MetaAutoMigrate,
 				"error":        metadataErr,
+				"lookup":       metadataLookupSnapshot(),
 			},
+		})
+	})
+
+	router.GET("/v2/admin/metrics-snapshot", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"metadata_lookup": metadataLookupSnapshot(),
+			"timestamp_unix":  time.Now().Unix(),
 		})
 	})
 

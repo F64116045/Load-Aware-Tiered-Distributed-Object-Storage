@@ -72,6 +72,8 @@ var (
 	MetaAutoMigrate = getEnvBool("META_AUTO_MIGRATE", false)
 	// MetaDriver is the database/sql driver name.
 	MetaDriver = getEnv("META_DRIVER", "postgres")
+	// MetaSource controls read source selection for metadata: postgres|etcd|auto.
+	MetaSource = normalizeMetaSource(getEnv("META_SOURCE", "auto"))
 	// MetaDSN is the metadata DB connection string.
 	MetaDSN = getEnv("META_DSN", "")
 	// MetaMaxOpenConns controls the DB pool max open connections.
@@ -126,5 +128,14 @@ func getEnvBool(key string, fallback bool) bool {
 		return false
 	default:
 		return fallback
+	}
+}
+
+func normalizeMetaSource(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "postgres", "etcd", "auto":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return "auto"
 	}
 }

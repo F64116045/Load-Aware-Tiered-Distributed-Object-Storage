@@ -516,6 +516,7 @@ Nice-to-have:
 12. `SIZE_THRESHOLD_BYTES=1048576`
 13. `MAX_OBJECTS_PER_ROUND=200`
 14. `MAX_BYTES_PER_ROUND=1073741824`
+15. `META_SOURCE=auto|postgres|etcd`
 
 ## Appendix B: Minimal Experiment Figures (Final Report)
 
