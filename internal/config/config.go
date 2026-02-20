@@ -82,6 +82,12 @@ var (
 	MetaMaxIdleConns = getEnvInt("META_MAX_IDLE_CONNS", 10)
 	// MetaConnMaxLifetime controls DB connection max lifetime.
 	MetaConnMaxLifetime = time.Duration(getEnvInt("META_CONN_MAX_LIFETIME_SEC", 300)) * time.Second
+	// NodeDiscoverySource controls node discovery source: postgres|etcd|auto.
+	NodeDiscoverySource = normalizeNodeDiscoverySource(getEnv("NODE_DISCOVERY_SOURCE", "auto"))
+	// NodeHeartbeatInterval controls storage-node heartbeat report interval.
+	NodeHeartbeatInterval = time.Duration(getEnvInt("NODE_HEARTBEAT_INTERVAL_SEC", 3)) * time.Second
+	// NodeHeartbeatStaleSec defines staleness threshold when listing healthy nodes.
+	NodeHeartbeatStaleSec = getEnvInt("NODE_HEARTBEAT_STALE_SEC", 15)
 )
 
 func init() {
@@ -132,6 +138,15 @@ func getEnvBool(key string, fallback bool) bool {
 }
 
 func normalizeMetaSource(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "postgres", "etcd", "auto":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return "auto"
+	}
+}
+
+func normalizeNodeDiscoverySource(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "postgres", "etcd", "auto":
 		return strings.ToLower(strings.TrimSpace(v))

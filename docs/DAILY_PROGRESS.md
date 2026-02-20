@@ -151,3 +151,18 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Metadata path now fully converged in code:
    - PostgreSQL normalized tables (`objects` + `object_versions`) as primary source
    - etcd retained only as compatibility fallback in current phase
+
+## 2026-02-20 (Milestone 5 postgres node discovery bootstrap, step 1)
+
+1. Added PostgreSQL node heartbeat repository in `internal/meta/node_heartbeats.go`:
+   - `UpsertNodeHeartbeat(...)`
+   - `ListHealthyNodeIDs(...)`
+2. Wired storage nodes to report heartbeats to PostgreSQL:
+   - added periodic heartbeat loop in `cmd/storage_node/main.go`
+   - heartbeat payload includes free bytes and write queue depth
+3. Added API node discovery source switch:
+   - new config `NODE_DISCOVERY_SOURCE=auto|postgres|etcd`
+   - `auto` prefers PostgreSQL discovery when metadata DB is available
+4. Added discovery observability:
+   - `/health` now reports configured/active node discovery source
+   - `/v2/admin/metrics-snapshot` includes active node discovery stats

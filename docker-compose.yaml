@@ -55,6 +55,8 @@ services:
       - META_MAX_OPEN_CONNS=20
       - META_MAX_IDLE_CONNS=10
       - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_DISCOVERY_SOURCE=auto
+      - NODE_HEARTBEAT_STALE_SEC=15
     depends_on:
       etcd0:
         condition: service_started
@@ -179,6 +181,13 @@ services:
       - NODE_NAME=storage_node_1
       - NODE_PORT=8001
       - STORAGE_DIR=/data/node1
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_1:/data/node1
     networks:
@@ -195,6 +204,13 @@ services:
       - NODE_NAME=storage_node_2
       - NODE_PORT=8002
       - STORAGE_DIR=/data/node2
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_2:/data/node2
     networks:
@@ -211,6 +227,13 @@ services:
       - NODE_NAME=storage_node_3
       - NODE_PORT=8003
       - STORAGE_DIR=/data/node3
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_3:/data/node3
     networks:
@@ -227,6 +250,13 @@ services:
       - NODE_NAME=storage_node_4
       - NODE_PORT=8004
       - STORAGE_DIR=/data/node4
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_4:/data/node4
     networks:
@@ -243,6 +273,13 @@ services:
       - NODE_NAME=storage_node_5
       - NODE_PORT=8005
       - STORAGE_DIR=/data/node5
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_5:/data/node5
     networks:
@@ -259,6 +296,13 @@ services:
       - NODE_NAME=storage_node_6
       - NODE_PORT=8006
       - STORAGE_DIR=/data/node6
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_6:/data/node6
     networks:

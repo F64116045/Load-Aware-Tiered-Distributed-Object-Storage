@@ -76,6 +76,28 @@ func metadataLookupSnapshot() gin.H {
 	}
 }
 
+func replaceActiveNodes(nodeURLs []string) {
+	newMap := make(map[string]string, len(nodeURLs))
+	for _, nodeURL := range nodeURLs {
+		if nodeURL == "" {
+			continue
+		}
+		newMap[nodeURL] = nodeURL
+	}
+
+	NodeListLock.Lock()
+	ActiveNodeURLs = newMap
+	if len(ActiveNodeURLs) >= config.K && !nodesReady {
+		nodesReady = true
+		close(NodesReadyEvent)
+	}
+	if len(ActiveNodeURLs) < config.K && nodesReady {
+		nodesReady = false
+		NodesReadyEvent = make(chan struct{})
+	}
+	NodeListLock.Unlock()
+}
+
 // watchNodesTask monitors Etcd for storage node registration/deregistration.
 func watchNodesTask(ctx context.Context, etcdClient *etcd.Client) {
 	keyPrefix := "nodes/health/"
@@ -159,6 +181,44 @@ func watchNodesTask(ctx context.Context, etcdClient *etcd.Client) {
 			}
 		}
 		NodeListLock.Unlock()
+	}
+}
+
+// watchNodesFromPostgres polls node heartbeats and updates active node list.
+func watchNodesFromPostgres(ctx context.Context, metaStore *meta.Store) {
+	log.Printf("%s[API] Service Discovery started. Source: postgres%s\n", config.Colors["CYAN"], config.Colors["RESET"])
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("%s[API-PG-Watcher] PANIC: %v%s\n", config.Colors["RED"], r, config.Colors["RESET"])
+			log.Println(string(debug.Stack()))
+		}
+		log.Printf("%s[API-PG-Watcher] Service Discovery stopped.%s\n", config.Colors["RED"], config.Colors["RESET"])
+	}()
+
+	load := func() {
+		loadCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+
+		nodeURLs, err := metaStore.ListHealthyNodeIDs(loadCtx, config.NodeHeartbeatStaleSec)
+		if err != nil {
+			log.Printf("%s[API] PostgreSQL node fetch failed: %v%s\n", config.Colors["RED"], err, config.Colors["RESET"])
+			return
+		}
+		replaceActiveNodes(nodeURLs)
+	}
+
+	load()
+	ticker := time.NewTicker(config.NodeHeartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			load()
+		}
 	}
 }
 
@@ -284,6 +344,7 @@ func main() {
 
 	metadataStatus := "disabled"
 	metadataErr := ""
+	nodeDiscoveryActive := config.NodeDiscoverySource
 	metaStore, err := meta.NewStore(meta.Config{
 		Enabled:         config.MetaEnabled,
 		Driver:          config.MetaDriver,
@@ -340,7 +401,26 @@ func main() {
 	// 2. Start Service Discovery
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go watchNodesTask(ctx, etcdClient)
+	switch config.NodeDiscoverySource {
+	case "postgres":
+		if config.MetaEnabled && metaStore != nil {
+			go watchNodesFromPostgres(ctx, metaStore)
+		} else {
+			nodeDiscoveryActive = "etcd_fallback"
+			log.Printf("%s[API] NODE_DISCOVERY_SOURCE=postgres but metadata is unavailable, fallback to etcd%s\n", config.Colors["YELLOW"], config.Colors["RESET"])
+			go watchNodesTask(ctx, etcdClient)
+		}
+	case "etcd":
+		go watchNodesTask(ctx, etcdClient)
+	default: // auto
+		if config.MetaEnabled && metaStore != nil {
+			nodeDiscoveryActive = "postgres"
+			go watchNodesFromPostgres(ctx, metaStore)
+		} else {
+			nodeDiscoveryActive = "etcd"
+			go watchNodesTask(ctx, etcdClient)
+		}
+	}
 
 	// 3. Setup Router
 	// Use gin.New() to avoid default Logger middleware which impacts performance benchmarks
@@ -623,13 +703,26 @@ func main() {
 				"error":        metadataErr,
 				"lookup":       metadataLookupSnapshot(),
 			},
+			"node_discovery": gin.H{
+				"configured_source": config.NodeDiscoverySource,
+				"active_source":     nodeDiscoveryActive,
+				"stale_sec":         config.NodeHeartbeatStaleSec,
+			},
 		})
 	})
 
 	router.GET("/v2/admin/metrics-snapshot", func(c *gin.Context) {
+		NodeListLock.RLock()
+		activeNodes := len(ActiveNodeURLs)
+		NodeListLock.RUnlock()
 		c.JSON(http.StatusOK, gin.H{
 			"metadata_lookup": metadataLookupSnapshot(),
-			"timestamp_unix":  time.Now().Unix(),
+			"node_discovery": gin.H{
+				"configured_source": config.NodeDiscoverySource,
+				"active_source":     nodeDiscoveryActive,
+				"active_node_count": activeNodes,
+			},
+			"timestamp_unix": time.Now().Unix(),
 		})
 	})
 
