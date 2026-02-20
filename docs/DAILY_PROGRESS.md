@@ -197,3 +197,17 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Updated `docs/ARCHITECTURE.md` as architecture index/entry point
 3. Purpose:
    - lock implementation target to v2 (PostgreSQL-first, tiered background migration, source-switchable discovery)
+
+## 2026-02-20 (Milestone 5 postgres discovery e2e validation, step 4)
+
+1. Environment validation:
+   - rebuilt and started compose services with latest images (`docker compose up -d --build`)
+   - initialized metadata schema in PostgreSQL for fresh volume
+2. Health/metrics validation:
+   - API health reports `node_discovery.active_source=postgres`
+   - admin snapshot reports `active_node_count=6`
+   - metadata lookup counters show PostgreSQL normalized hits, etcd hit remains 0
+3. Smoke test validation (container-internal):
+   - `POST /write` success (replication path, full node write)
+   - `GET /read/{key}` success (payload verified)
+   - `DELETE /delete/{key}` success (replica cleanup verified)
