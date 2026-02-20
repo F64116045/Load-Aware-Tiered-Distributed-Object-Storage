@@ -141,3 +141,13 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Metadata runtime path status:
    - no read/write/delete runtime dependency on `metadata_kv`
    - table and migration files retained temporarily for controlled deprecation
+
+## 2026-02-20 (Milestone 4 metadata_kv final cleanup, step 8)
+
+1. Removed transitional code and schema artifacts:
+   - deleted `internal/meta/metadata_kv.go`
+   - deleted `000002_metadata_kv.up.sql`
+   - deleted `000002_metadata_kv.down.sql`
+2. Metadata path now fully converged in code:
+   - PostgreSQL normalized tables (`objects` + `object_versions`) as primary source
+   - etcd retained only as compatibility fallback in current phase
