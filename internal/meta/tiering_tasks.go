@@ -52,8 +52,8 @@ ON CONFLICT (task_id) DO NOTHING
 	return nil
 }
 
-// ListTieringTasks returns recent tiering tasks with optional task_state filter.
-func (s *Store) ListTieringTasks(ctx context.Context, taskState string, limit int) ([]TieringTask, error) {
+// ListTieringTasks returns recent tiering tasks with optional task_state/task_type filters.
+func (s *Store) ListTieringTasks(ctx context.Context, taskState, taskType string, limit int) ([]TieringTask, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -68,10 +68,22 @@ func (s *Store) ListTieringTasks(ctx context.Context, taskState string, limit in
 SELECT task_id, object_id, version, task_type, task_state, priority, retry_count, last_error, scheduled_at, started_at, finished_at
 FROM tiering_tasks
 `
-	args := make([]interface{}, 0, 2)
+	args := make([]interface{}, 0, 3)
+	where := make([]string, 0, 2)
 	if taskState != "" {
-		query += "WHERE task_state = $1\n"
+		where = append(where, fmt.Sprintf("task_state = $%d", len(args)+1))
 		args = append(args, taskState)
+	}
+	if taskType != "" {
+		where = append(where, fmt.Sprintf("task_type = $%d", len(args)+1))
+		args = append(args, taskType)
+	}
+	if len(where) > 0 {
+		query += "WHERE " + where[0]
+		for i := 1; i < len(where); i++ {
+			query += " AND " + where[i]
+		}
+		query += "\n"
 	}
 	query += "ORDER BY scheduled_at DESC LIMIT $"
 	query += fmt.Sprintf("%d", len(args)+1)
@@ -107,6 +119,50 @@ FROM tiering_tasks
 		return nil, fmt.Errorf("iterate tiering tasks failed: %w", err)
 	}
 	return tasks, nil
+}
+
+// ListTieringTaskStateCounts aggregates task counts by state, optionally filtered by task_type.
+func (s *Store) ListTieringTaskStateCounts(ctx context.Context, taskType string) (map[string]int64, error) {
+	if s == nil || s.db == nil {
+		return map[string]int64{}, nil
+	}
+
+	query := `
+SELECT task_state, COUNT(*)
+FROM tiering_tasks
+`
+	args := make([]interface{}, 0, 1)
+	if taskType != "" {
+		query += "WHERE task_type = $1\n"
+		args = append(args, taskType)
+	}
+	query += "GROUP BY task_state"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list tiering task state counts failed: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]int64{
+		"PENDING":    0,
+		"RUNNING":    0,
+		"DONE":       0,
+		"FAILED":     0,
+		"RETRY_WAIT": 0,
+	}
+	for rows.Next() {
+		var state string
+		var count int64
+		if err := rows.Scan(&state, &count); err != nil {
+			return nil, fmt.Errorf("scan tiering state count failed: %w", err)
+		}
+		out[state] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tiering state counts failed: %w", err)
+	}
+	return out, nil
 }
 
 // ClaimNextTieringTask claims one runnable task and transitions it to RUNNING.

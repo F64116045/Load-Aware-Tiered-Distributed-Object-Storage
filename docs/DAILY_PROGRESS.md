@@ -340,3 +340,14 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `free_bytes`, `io_queue_depth`, `cpu_load`
 4. Staleness rule:
    - computed by `NODE_HEARTBEAT_STALE_SEC`
+
+## 2026-02-21 (Milestone 6 admin task filters and summary, step 10)
+
+1. Extended `GET /v2/admin/tasks` query support:
+   - new filter param: `task_type`
+2. Added task state summary aggregation:
+   - `state_counts` in response (grouped by `task_state`)
+   - summary is filter-aware by `task_type` (not limited by `limit`)
+3. Metadata store changes:
+   - `ListTieringTasks(ctx, state, taskType, limit)`
+   - `ListTieringTaskStateCounts(ctx, taskType)`

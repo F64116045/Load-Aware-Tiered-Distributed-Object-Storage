@@ -754,6 +754,7 @@ func main() {
 		}
 
 		state := strings.TrimSpace(c.Query("state"))
+		taskType := strings.TrimSpace(c.Query("task_type"))
 		limit := 100
 		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
 			parsed, err := strconv.Atoi(raw)
@@ -764,7 +765,12 @@ func main() {
 			limit = parsed
 		}
 
-		tasks, err := metaStore.ListTieringTasks(c.Request.Context(), state, limit)
+		tasks, err := metaStore.ListTieringTasks(c.Request.Context(), state, taskType, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		stateCounts, err := metaStore.ListTieringTaskStateCounts(c.Request.Context(), taskType)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -801,7 +807,13 @@ func main() {
 
 		c.JSON(http.StatusOK, gin.H{
 			"count": len(out),
-			"tasks": out,
+			"filters": gin.H{
+				"state":     state,
+				"task_type": taskType,
+				"limit":     limit,
+			},
+			"state_counts": stateCounts,
+			"tasks":        out,
 		})
 	})
 
