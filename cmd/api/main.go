@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -74,6 +76,28 @@ func metadataLookupSnapshot() gin.H {
 		"not_found":               atomic.LoadUint64(&lookupMetrics.notFound),
 		"error_count":             atomic.LoadUint64(&lookupMetrics.errorCount),
 	}
+}
+
+func replaceActiveNodes(nodeURLs []string) {
+	newMap := make(map[string]string, len(nodeURLs))
+	for _, nodeURL := range nodeURLs {
+		if nodeURL == "" {
+			continue
+		}
+		newMap[nodeURL] = nodeURL
+	}
+
+	NodeListLock.Lock()
+	ActiveNodeURLs = newMap
+	if len(ActiveNodeURLs) >= config.K && !nodesReady {
+		nodesReady = true
+		close(NodesReadyEvent)
+	}
+	if len(ActiveNodeURLs) < config.K && nodesReady {
+		nodesReady = false
+		NodesReadyEvent = make(chan struct{})
+	}
+	NodeListLock.Unlock()
 }
 
 // watchNodesTask monitors Etcd for storage node registration/deregistration.
@@ -159,6 +183,44 @@ func watchNodesTask(ctx context.Context, etcdClient *etcd.Client) {
 			}
 		}
 		NodeListLock.Unlock()
+	}
+}
+
+// watchNodesFromPostgres polls node heartbeats and updates active node list.
+func watchNodesFromPostgres(ctx context.Context, metaStore *meta.Store) {
+	log.Printf("%s[API] Service Discovery started. Source: postgres%s\n", config.Colors["CYAN"], config.Colors["RESET"])
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("%s[API-PG-Watcher] PANIC: %v%s\n", config.Colors["RED"], r, config.Colors["RESET"])
+			log.Println(string(debug.Stack()))
+		}
+		log.Printf("%s[API-PG-Watcher] Service Discovery stopped.%s\n", config.Colors["RED"], config.Colors["RESET"])
+	}()
+
+	load := func() {
+		loadCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+
+		nodeURLs, err := metaStore.ListHealthyNodeIDs(loadCtx, config.NodeHeartbeatStaleSec)
+		if err != nil {
+			log.Printf("%s[API] PostgreSQL node fetch failed: %v%s\n", config.Colors["RED"], err, config.Colors["RESET"])
+			return
+		}
+		replaceActiveNodes(nodeURLs)
+	}
+
+	load()
+	ticker := time.NewTicker(config.NodeHeartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			load()
+		}
 	}
 }
 
@@ -255,6 +317,14 @@ func loadMetadata(ctx context.Context, key string, etcdClient *etcd.Client, meta
 		recordMetadataLookupNotFound()
 		return nil, "", errMetadataNotFound
 	}
+	if etcdClient == nil {
+		if source == "etcd" {
+			recordMetadataLookupError()
+			return nil, "", fmt.Errorf("etcd client unavailable")
+		}
+		recordMetadataLookupNotFound()
+		return nil, "", errMetadataNotFound
+	}
 
 	rangeResp, err := etcdClient.Get(ctx, fmt.Sprintf("metadata/%s", key))
 	if err != nil {
@@ -279,11 +349,16 @@ func main() {
 	log.Printf("%sAPI Gateway (PID: %d) Starting...%s\n", config.Colors["GREEN"], os.Getpid(), config.Colors["RESET"])
 
 	// 1. Initialize Services
-	etcdClient := etcdclient.GetClient()
+	var etcdClient *etcd.Client
+	requiresEtcd := !(config.MetaSource == "postgres" && config.NodeDiscoverySource == "postgres")
+	if requiresEtcd {
+		etcdClient = etcdclient.GetClient()
+	}
 	httpClient := httpclient.GetClient()
 
 	metadataStatus := "disabled"
 	metadataErr := ""
+	nodeDiscoveryActive := config.NodeDiscoverySource
 	metaStore, err := meta.NewStore(meta.Config{
 		Enabled:         config.MetaEnabled,
 		Driver:          config.MetaDriver,
@@ -340,7 +415,32 @@ func main() {
 	// 2. Start Service Discovery
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go watchNodesTask(ctx, etcdClient)
+	switch config.NodeDiscoverySource {
+	case "postgres":
+		if config.MetaEnabled && metaStore != nil {
+			go watchNodesFromPostgres(ctx, metaStore)
+		} else {
+			nodeDiscoveryActive = "etcd_fallback"
+			log.Printf("%s[API] NODE_DISCOVERY_SOURCE=postgres but metadata is unavailable, fallback to etcd%s\n", config.Colors["YELLOW"], config.Colors["RESET"])
+			if etcdClient != nil {
+				go watchNodesTask(ctx, etcdClient)
+			}
+		}
+	case "etcd":
+		if etcdClient != nil {
+			go watchNodesTask(ctx, etcdClient)
+		}
+	default: // auto
+		if config.MetaEnabled && metaStore != nil {
+			nodeDiscoveryActive = "postgres"
+			go watchNodesFromPostgres(ctx, metaStore)
+		} else {
+			nodeDiscoveryActive = "etcd"
+			if etcdClient != nil {
+				go watchNodesTask(ctx, etcdClient)
+			}
+		}
+	}
 
 	// 3. Setup Router
 	// Use gin.New() to avoid default Logger middleware which impacts performance benchmarks
@@ -536,10 +636,12 @@ func main() {
 					return
 				}
 			}
-			_, err = etcdClient.Delete(c.Request.Context(), etcdKey)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Etcd) deletion failed: %v", err)})
-				return
+			if config.MetaSource != "postgres" && etcdClient != nil {
+				_, err = etcdClient.Delete(c.Request.Context(), etcdKey)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Etcd) deletion failed: %v", err)})
+					return
+				}
 			}
 
 		} else {
@@ -623,13 +725,293 @@ func main() {
 				"error":        metadataErr,
 				"lookup":       metadataLookupSnapshot(),
 			},
+			"node_discovery": gin.H{
+				"configured_source": config.NodeDiscoverySource,
+				"active_source":     nodeDiscoveryActive,
+				"stale_sec":         config.NodeHeartbeatStaleSec,
+			},
 		})
 	})
 
 	router.GET("/v2/admin/metrics-snapshot", func(c *gin.Context) {
+		NodeListLock.RLock()
+		activeNodes := len(ActiveNodeURLs)
+		NodeListLock.RUnlock()
 		c.JSON(http.StatusOK, gin.H{
 			"metadata_lookup": metadataLookupSnapshot(),
-			"timestamp_unix":  time.Now().Unix(),
+			"node_discovery": gin.H{
+				"configured_source": config.NodeDiscoverySource,
+				"active_source":     nodeDiscoveryActive,
+				"active_node_count": activeNodes,
+			},
+			"timestamp_unix": time.Now().Unix(),
+		})
+	})
+
+	router.GET("/v2/admin/tasks", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		state := strings.TrimSpace(c.Query("state"))
+		taskType := strings.TrimSpace(c.Query("task_type"))
+		limit := 100
+		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+				return
+			}
+			limit = parsed
+		}
+
+		tasks, err := metaStore.ListTieringTasks(c.Request.Context(), state, taskType, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		stateCounts, err := metaStore.ListTieringTaskStateCounts(c.Request.Context(), taskType)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		out := make([]gin.H, 0, len(tasks))
+		for _, t := range tasks {
+			lastErr := ""
+			if t.LastError.Valid {
+				lastErr = t.LastError.String
+			}
+			retryNowAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT" || t.TaskState == "FAILED"
+			cancelAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT"
+			var startedAt interface{}
+			if t.StartedAt.Valid {
+				startedAt = t.StartedAt.Time
+			}
+			var finishedAt interface{}
+			if t.FinishedAt.Valid {
+				finishedAt = t.FinishedAt.Time
+			}
+			out = append(out, gin.H{
+				"task_id":      t.TaskID,
+				"object_id":    t.ObjectID,
+				"version":      t.Version,
+				"task_type":    t.TaskType,
+				"task_state":   t.TaskState,
+				"priority":     t.Priority,
+				"retry_count":  t.RetryCount,
+				"last_error":   lastErr,
+				"scheduled_at": t.ScheduledAt,
+				"started_at":   startedAt,
+				"finished_at":  finishedAt,
+				"actions": gin.H{
+					"retry_now": retryNowAllowed,
+					"cancel":    cancelAllowed,
+				},
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"count": len(out),
+			"filters": gin.H{
+				"state":     state,
+				"task_type": taskType,
+				"limit":     limit,
+			},
+			"state_counts": stateCounts,
+			"tasks":        out,
+		})
+	})
+
+	router.POST("/v2/admin/tasks/:id/retry-now", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		taskID := strings.TrimSpace(c.Param("id"))
+		if taskID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+			return
+		}
+
+		ok, err := metaStore.RequeueTieringTaskNow(c.Request.Context(), taskID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":   "task not found or not requeueable",
+				"task_id": taskID,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"task_id": taskID,
+			"action":  "requeued_now",
+		})
+	})
+
+	router.POST("/v2/admin/tasks/:id/cancel", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		taskID := strings.TrimSpace(c.Param("id"))
+		if taskID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+			return
+		}
+
+		reason := strings.TrimSpace(c.Query("reason"))
+		if reason == "" {
+			var body struct {
+				Reason string `json:"reason"`
+			}
+			if err := c.ShouldBindJSON(&body); err == nil {
+				reason = strings.TrimSpace(body.Reason)
+			}
+		}
+		if reason == "" {
+			reason = "cancelled_by_admin"
+		}
+
+		ok, err := metaStore.CancelTieringTask(c.Request.Context(), taskID, reason)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":   "task not found or not cancellable",
+				"task_id": taskID,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"task_id": taskID,
+			"action":  "cancelled",
+			"reason":  reason,
+		})
+	})
+
+	router.GET("/v2/admin/nodes", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		limit := 100
+		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+				return
+			}
+			limit = parsed
+		}
+
+		nodes, err := metaStore.ListNodeHeartbeats(c.Request.Context(), limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		staleWindow := time.Duration(config.NodeHeartbeatStaleSec) * time.Second
+		now := time.Now()
+		out := make([]gin.H, 0, len(nodes))
+		for _, n := range nodes {
+			isStale := now.Sub(n.LastSeenAt) > staleWindow
+			out = append(out, gin.H{
+				"node_id":        n.NodeID,
+				"status":         n.Status,
+				"last_seen_at":   n.LastSeenAt,
+				"is_stale":       isStale,
+				"free_bytes":     n.FreeBytes,
+				"io_queue_depth": n.IOQueueDepth,
+				"cpu_load":       n.CPULoad,
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"count":     len(out),
+			"stale_sec": config.NodeHeartbeatStaleSec,
+			"nodes":     out,
+			"source":    "postgres",
+			"generated": now.Unix(),
+		})
+	})
+
+	router.GET("/v2/admin/objects/:id", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		objectID := strings.TrimSpace(c.Param("id"))
+		if objectID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
+			return
+		}
+
+		view, err := metaStore.GetObjectAdminView(c.Request.Context(), objectID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if view == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "object not found"})
+			return
+		}
+
+		var version interface{}
+		if view.Version != nil {
+			version = gin.H{
+				"version":         view.Version.Version,
+				"size_bytes":      view.Version.SizeBytes,
+				"checksum_sha256": view.Version.ChecksumSHA256,
+				"tier":            view.Version.Tier,
+				"encoding_k":      nullInt64OrNil(view.Version.EncodingK),
+				"encoding_m":      nullInt64OrNil(view.Version.EncodingM),
+				"created_at":      view.Version.CreatedAt,
+			}
+		}
+
+		replicas := make([]gin.H, 0, len(view.ReplicaLocations))
+		for _, r := range view.ReplicaLocations {
+			replicas = append(replicas, gin.H{
+				"node_id": r.NodeID,
+				"path":    r.Path,
+				"status":  r.Status,
+			})
+		}
+
+		shards := make([]gin.H, 0, len(view.ECShardLocations))
+		for _, s := range view.ECShardLocations {
+			shards = append(shards, gin.H{
+				"shard_index": s.ShardIndex,
+				"node_id":     s.NodeID,
+				"path":        s.Path,
+				"status":      s.Status,
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"object_id":          view.ObjectID,
+			"current_version":    view.CurrentVersion,
+			"state":              view.State,
+			"created_at":         view.CreatedAt,
+			"updated_at":         view.UpdatedAt,
+			"version":            version,
+			"replica_locations":  replicas,
+			"ec_shard_locations": shards,
 		})
 	})
 
@@ -638,4 +1020,11 @@ func main() {
 	if err := router.Run("0.0.0.0:8000"); err != nil {
 		log.Fatalf("Gin Server failed to start: %v", err)
 	}
+}
+
+func nullInt64OrNil(v sql.NullInt64) interface{} {
+	if !v.Valid {
+		return nil
+	}
+	return v.Int64
 }

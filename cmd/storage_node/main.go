@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ import (
 
 	"hybrid_distributed_store/internal/config"
 	etcd "hybrid_distributed_store/internal/etcd"
+	"hybrid_distributed_store/internal/meta"
 )
 
 // WriteTask represents an asynchronous write operation payload.
@@ -254,6 +256,51 @@ func registerAndHeartbeat(ctx context.Context, etcdClient *clientv3.Client, node
 	}
 }
 
+func getFreeBytes(path string) int64 {
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(path, &fs); err != nil {
+		return 0
+	}
+	return int64(fs.Bavail) * int64(fs.Bsize)
+}
+
+func registerAndHeartbeatMeta(ctx context.Context, metaStore *meta.Store, nodeURL string, storage *storageEngine) {
+	if metaStore == nil {
+		return
+	}
+	log.Printf("[%s] Starting PostgreSQL heartbeat...", nodeURL)
+
+	ticker := time.NewTicker(config.NodeHeartbeatInterval)
+	defer ticker.Stop()
+
+	upsert := func(status string) {
+		hbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		err := metaStore.UpsertNodeHeartbeat(
+			hbCtx,
+			nodeURL, // Keep URL as node_id so API can directly use it as endpoint.
+			getFreeBytes(storage.storageDir),
+			len(storage.writeQueue),
+			0, // TODO: wire actual cpu load in phase-2.
+			status,
+		)
+		if err != nil {
+			log.Printf("[%s] PostgreSQL heartbeat failed: %v", nodeURL, err)
+		}
+	}
+
+	upsert("UP")
+	for {
+		select {
+		case <-ctx.Done():
+			upsert("DOWN")
+			return
+		case <-ticker.C:
+			upsert("UP")
+		}
+	}
+}
+
 // --- Main Entry Point ---
 
 func main() {
@@ -267,18 +314,54 @@ func main() {
 		log.Fatal("Error: NODE_PORT, NODE_NAME, and STORAGE_DIR must be set.")
 	}
 
-	etcdClient := etcd.GetClient()
-	if etcdClient == nil {
-		log.Fatalf("Failed to connect to Etcd. Cannot start Storage Node.")
+	var etcdClient *clientv3.Client
+	useEtcdDiscovery := config.NodeDiscoverySource == "etcd" || config.NodeDiscoverySource == "auto"
+	if useEtcdDiscovery {
+		etcdClient = etcd.GetClient()
+		if etcdClient == nil {
+			if config.NodeDiscoverySource == "etcd" {
+				log.Fatalf("Failed to connect to Etcd with NODE_DISCOVERY_SOURCE=etcd.")
+			}
+			log.Printf("Etcd unavailable; continue with PostgreSQL discovery path.")
+		} else {
+			defer etcd.CloseClient()
+		}
 	}
-	defer etcd.CloseClient()
+
+	metaStore, metaErr := meta.NewStore(meta.Config{
+		Enabled:         config.MetaEnabled,
+		Driver:          config.MetaDriver,
+		DSN:             config.MetaDSN,
+		MaxOpenConns:    config.MetaMaxOpenConns,
+		MaxIdleConns:    config.MetaMaxIdleConns,
+		ConnMaxLifetime: config.MetaConnMaxLifetime,
+	})
+	if metaErr != nil {
+		log.Printf("Metadata store init failed: %v", metaErr)
+		metaStore = nil
+	} else if config.MetaEnabled {
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := metaStore.Ping(pingCtx); err != nil {
+			log.Printf("Metadata ping failed: %v", err)
+			metaStore = nil
+		}
+		pingCancel()
+	}
+	defer func() {
+		if metaStore != nil {
+			_ = metaStore.Close()
+		}
+	}()
 
 	storage := newStorageEngine(nodePort, nodeName, storageDir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	internalURL := fmt.Sprintf("http://%s:%s", nodeName, nodePort)
-	go registerAndHeartbeat(ctx, etcdClient, nodeName, internalURL)
+	if etcdClient != nil && useEtcdDiscovery {
+		go registerAndHeartbeat(ctx, etcdClient, nodeName, internalURL)
+	}
+	go registerAndHeartbeatMeta(ctx, metaStore, internalURL, storage)
 
 	// 5. Start Gin Server
 	gin.SetMode(gin.ReleaseMode)

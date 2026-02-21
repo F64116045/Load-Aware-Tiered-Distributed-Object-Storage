@@ -517,6 +517,9 @@ Nice-to-have:
 13. `MAX_OBJECTS_PER_ROUND=200`
 14. `MAX_BYTES_PER_ROUND=1073741824`
 15. `META_SOURCE=auto|postgres|etcd`
+16. `NODE_DISCOVERY_SOURCE=auto|postgres|etcd`
+17. `NODE_HEARTBEAT_INTERVAL_SEC=3`
+18. `NODE_HEARTBEAT_STALE_SEC=15`
 
 ## Appendix B: Minimal Experiment Figures (Final Report)
 

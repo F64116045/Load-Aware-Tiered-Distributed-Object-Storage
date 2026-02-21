@@ -61,6 +61,14 @@ DO UPDATE SET
 		return fmt.Errorf("upsert object_versions failed: %w", err)
 	}
 
+	if tier == "HOT" {
+		replicaNodes := toStringSlice(metadata["replica_nodes"])
+		if err := upsertReplicaLocationsTx(ctx, tx, objectID, version, replicaNodes); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit metadata tx failed: %w", err)
 	}
@@ -234,6 +242,56 @@ func toNullableInt(v interface{}) interface{} {
 	default:
 		return nil
 	}
+}
+
+func toStringSlice(v interface{}) []string {
+	if v == nil {
+		return nil
+	}
+	switch xs := v.(type) {
+	case []string:
+		return xs
+	case []interface{}:
+		out := make([]string, 0, len(xs))
+		for _, item := range xs {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func upsertReplicaLocationsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	objectID string,
+	version int64,
+	replicaNodes []string,
+) error {
+	if len(replicaNodes) == 0 {
+		return nil
+	}
+
+	const q = `
+INSERT INTO replica_locations (object_id, version, node_id, path, status)
+VALUES ($1, $2, $3, $4, 'ACTIVE')
+ON CONFLICT (object_id, version, node_id)
+DO UPDATE SET
+	path = EXCLUDED.path,
+	status = EXCLUDED.status
+`
+	for _, nodeID := range replicaNodes {
+		if nodeID == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, q, objectID, version, nodeID, objectID); err != nil {
+			return fmt.Errorf("upsert replica_locations failed: %w", err)
+		}
+	}
+	return nil
 }
 
 func strategyFromTier(tier string) string {
