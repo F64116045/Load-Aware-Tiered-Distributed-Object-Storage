@@ -351,3 +351,16 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 3. Metadata store changes:
    - `ListTieringTasks(ctx, state, taskType, limit)`
    - `ListTieringTaskStateCounts(ctx, taskType)`
+
+## 2026-02-21 (Milestone 6 object detail admin endpoint, step 11)
+
+1. Added object detail admin query in metadata layer:
+   - `GetObjectAdminView(ctx, objectID)` in `internal/meta/object_admin.go`
+   - joins current `objects` + `object_versions`
+   - includes `replica_locations` and `ec_shard_locations` for current version
+2. Added API endpoint:
+   - `GET /v2/admin/objects/:id`
+3. Endpoint output:
+   - object state/version timestamps
+   - current version metadata (tier/checksum/encoding)
+   - replica and EC shard placement rows

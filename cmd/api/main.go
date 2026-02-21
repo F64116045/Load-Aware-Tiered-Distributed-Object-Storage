@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -864,9 +865,82 @@ func main() {
 		})
 	})
 
+	router.GET("/v2/admin/objects/:id", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		objectID := strings.TrimSpace(c.Param("id"))
+		if objectID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
+			return
+		}
+
+		view, err := metaStore.GetObjectAdminView(c.Request.Context(), objectID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if view == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "object not found"})
+			return
+		}
+
+		var version interface{}
+		if view.Version != nil {
+			version = gin.H{
+				"version":         view.Version.Version,
+				"size_bytes":      view.Version.SizeBytes,
+				"checksum_sha256": view.Version.ChecksumSHA256,
+				"tier":            view.Version.Tier,
+				"encoding_k":      nullInt64OrNil(view.Version.EncodingK),
+				"encoding_m":      nullInt64OrNil(view.Version.EncodingM),
+				"created_at":      view.Version.CreatedAt,
+			}
+		}
+
+		replicas := make([]gin.H, 0, len(view.ReplicaLocations))
+		for _, r := range view.ReplicaLocations {
+			replicas = append(replicas, gin.H{
+				"node_id": r.NodeID,
+				"path":    r.Path,
+				"status":  r.Status,
+			})
+		}
+
+		shards := make([]gin.H, 0, len(view.ECShardLocations))
+		for _, s := range view.ECShardLocations {
+			shards = append(shards, gin.H{
+				"shard_index": s.ShardIndex,
+				"node_id":     s.NodeID,
+				"path":        s.Path,
+				"status":      s.Status,
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"object_id":          view.ObjectID,
+			"current_version":    view.CurrentVersion,
+			"state":              view.State,
+			"created_at":         view.CreatedAt,
+			"updated_at":         view.UpdatedAt,
+			"version":            version,
+			"replica_locations":  replicas,
+			"ec_shard_locations": shards,
+		})
+	})
+
 	// 4. Start Server
 	log.Println("[API] Starting Gin Server on 0.0.0.0:8000...")
 	if err := router.Run("0.0.0.0:8000"); err != nil {
 		log.Fatalf("Gin Server failed to start: %v", err)
 	}
+}
+
+func nullInt64OrNil(v sql.NullInt64) interface{} {
+	if !v.Valid {
+		return nil
+	}
+	return v.Int64
 }
