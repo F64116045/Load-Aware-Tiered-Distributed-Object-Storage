@@ -10,17 +10,11 @@ import (
 	"time"
 
 	"hybrid_distributed_store/internal/config"
+	"hybrid_distributed_store/internal/ec"
+	"hybrid_distributed_store/internal/httpclient"
 	"hybrid_distributed_store/internal/meta"
 	"hybrid_distributed_store/internal/tiering"
 )
-
-// stubProcessor keeps worker pipeline executable before real REPL->EC logic lands.
-type stubProcessor struct{}
-
-func (p *stubProcessor) ProcessReplicationToEC(ctx context.Context, task *meta.TieringTask) error {
-	log.Printf("[TieringWorker] Process stub task_id=%s object_id=%s version=%d type=%s", task.TaskID, task.ObjectID, task.Version, task.TaskType)
-	return nil
-}
 
 func envDurationSec(key string, fallback time.Duration) time.Duration {
 	raw := os.Getenv(key)
@@ -63,7 +57,8 @@ func main() {
 		taskType = tiering.TaskTypeReplicationToEC
 	}
 
-	worker := tiering.NewWorker(store, &stubProcessor{}, pollInterval, taskType)
+	processor := tiering.NewReplicationToECProcessor(store, httpclient.GetClient(), ec.NewService())
+	worker := tiering.NewWorker(store, processor, pollInterval, taskType)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

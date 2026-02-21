@@ -266,3 +266,17 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - queued task uses `scheduled_at = now + AGE_THRESHOLD_SEC`
 3. Current behavior:
    - enqueue is best-effort (logs warning on failure), foreground write path remains available
+
+## 2026-02-21 (Milestone 6 worker real processing path, step 4)
+
+1. Added metadata state transition repository in `internal/meta/tiering_state.go`:
+   - `GetObjectVersionSnapshot(...)`
+   - `MarkObjectMigrating(...)`
+   - `PromoteObjectVersionToEC(...)` (transactional update for EC tier + shard locations + object state)
+2. Added real REPL->EC processor in `internal/tiering/repl_to_ec_processor.go`:
+   - validate task snapshot and stale-task skip
+   - read source object from healthy replica nodes
+   - run EC split/encode, write shard keys to storage nodes
+   - enforce `>= K` successful shard writes before metadata commit
+3. Upgraded `cmd/tiering_worker/main.go`:
+   - switched from stub processor to real processor using shared HTTP client and EC driver
