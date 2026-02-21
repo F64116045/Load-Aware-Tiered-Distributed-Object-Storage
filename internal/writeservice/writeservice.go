@@ -169,6 +169,10 @@ func (s *Service) finalizeWALEntry(
 		if err := s.meta.UpsertNormalizedMetadata(ctx, mainKey, metadata); err != nil {
 			return fmt.Errorf("failed to commit normalized metadata to Postgres: %v", err)
 		}
+		if err := s.enqueueTieringTaskIfEligible(ctx, mainKey, metadata); err != nil {
+			// Tiering is best effort for now; foreground write must remain available.
+			log.Printf("[TieringEnqueue] skip key=%s: %v", mainKey, err)
+		}
 	}
 
 	if config.MetaSource != "postgres" {
@@ -182,6 +186,57 @@ func (s *Service) finalizeWALEntry(
 	}
 
 	return nil
+}
+
+func (s *Service) enqueueTieringTaskIfEligible(ctx context.Context, objectID string, metadata map[string]interface{}) error {
+	if s == nil || s.meta == nil {
+		return nil
+	}
+
+	strategy, _ := metadata["strategy"].(string)
+	if strategy != string(config.StrategyReplication) {
+		return nil
+	}
+
+	hotVersion := toInt64(metadata["hot_version"], 0)
+	if hotVersion <= 0 {
+		return fmt.Errorf("invalid hot_version for object %s", objectID)
+	}
+
+	priority := 100
+	scheduledAt := time.Now().Add(time.Duration(config.AgeThresholdSec) * time.Second)
+	taskID := fmt.Sprintf("repl2ec:%s:%d", objectID, hotVersion)
+
+	if err := s.meta.EnqueueTieringTask(
+		ctx,
+		taskID,
+		objectID,
+		hotVersion,
+		"REPL_TO_EC",
+		priority,
+		scheduledAt,
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func toInt64(v interface{}, fallback int64) int64 {
+	switch t := v.(type) {
+	case int:
+		return int64(t)
+	case int32:
+		return int64(t)
+	case int64:
+		return t
+	case float32:
+		return int64(t)
+	case float64:
+		return int64(t)
+	default:
+		return fallback
+	}
 }
 
 // --- Strategy A: Replication ---

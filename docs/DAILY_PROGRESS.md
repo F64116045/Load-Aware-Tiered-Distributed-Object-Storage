@@ -255,3 +255,14 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `docker-compose.yaml` now includes `tiering_worker` service (PostgreSQL path)
 3. Validation:
    - `go test ./cmd/tiering_worker ./internal/tiering ./internal/meta`
+
+## 2026-02-21 (Milestone 6 write-path task enqueue, step 3)
+
+1. Added write-path tiering enqueue in `writeservice.finalizeWALEntry(...)`:
+   - after PostgreSQL normalized metadata commit, replication writes enqueue `REPL_TO_EC` task
+   - task identity is deterministic by `repl2ec:{object_id}:{hot_version}`
+2. Added A1 baseline scheduling control:
+   - `AGE_THRESHOLD_SEC` is now loaded in config (default `3600`)
+   - queued task uses `scheduled_at = now + AGE_THRESHOLD_SEC`
+3. Current behavior:
+   - enqueue is best-effort (logs warning on failure), foreground write path remains available

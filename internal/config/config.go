@@ -88,6 +88,8 @@ var (
 	NodeHeartbeatInterval = time.Duration(getEnvInt("NODE_HEARTBEAT_INTERVAL_SEC", 3)) * time.Second
 	// NodeHeartbeatStaleSec defines staleness threshold when listing healthy nodes.
 	NodeHeartbeatStaleSec = getEnvInt("NODE_HEARTBEAT_STALE_SEC", 15)
+	// AgeThresholdSec defines when HOT objects become eligible for tiering (A1 baseline).
+	AgeThresholdSec = getEnvInt("AGE_THRESHOLD_SEC", 3600)
 )
 
 func init() {
