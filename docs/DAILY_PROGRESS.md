@@ -386,3 +386,12 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - mark task as `FAILED` and persist cancel reason in `last_error`
    - applies to `PENDING/RUNNING/RETRY_WAIT`
    - `DONE` tasks are not cancellable via this endpoint
+
+## 2026-02-21 (Milestone 6 task action hints in admin list, step 14)
+
+1. Enhanced `GET /v2/admin/tasks` per-task response:
+   - added `actions.retry_now` boolean
+   - added `actions.cancel` boolean
+2. Action hint rules:
+   - `retry_now`: allowed for `PENDING/RUNNING/RETRY_WAIT/FAILED`
+   - `cancel`: allowed for `PENDING/RUNNING/RETRY_WAIT`

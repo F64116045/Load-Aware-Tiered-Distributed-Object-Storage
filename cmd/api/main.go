@@ -783,6 +783,8 @@ func main() {
 			if t.LastError.Valid {
 				lastErr = t.LastError.String
 			}
+			retryNowAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT" || t.TaskState == "FAILED"
+			cancelAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT"
 			var startedAt interface{}
 			if t.StartedAt.Valid {
 				startedAt = t.StartedAt.Time
@@ -803,6 +805,10 @@ func main() {
 				"scheduled_at": t.ScheduledAt,
 				"started_at":   startedAt,
 				"finished_at":  finishedAt,
+				"actions": gin.H{
+					"retry_now": retryNowAllowed,
+					"cancel":    cancelAllowed,
+				},
 			})
 		}
 
