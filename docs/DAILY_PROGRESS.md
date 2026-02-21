@@ -408,3 +408,11 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - task filters + `state_counts`
    - node staleness view
    - object placement metadata
+
+## 2026-02-21 (Milestone 6 architecture status sync, step 16)
+
+1. Updated `docs/ARCHITECTURE.md` with a live implementation snapshot table:
+   - `DONE/PARTIAL/TODO` status across core architecture areas
+2. Added current runtime component map:
+   - `api`, `storage_node_*`, `tiering_worker`, `postgres`, `redpanda`
+   - `etcd/healer` legacy profile position explicitly documented
