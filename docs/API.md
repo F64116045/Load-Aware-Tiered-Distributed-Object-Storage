@@ -2,7 +2,7 @@
 
 Base URL: `http://localhost:8000`
 
-## Endpoints
+## Data Plane Endpoints
 
 ### 1. Write Data
 
@@ -82,7 +82,9 @@ Permanently removes the object metadata and physical files.
 
 ```
 
-### 4. System Status
+## Monitoring Endpoints
+
+### 4. Node Health
 
 **Node Health**:
 
@@ -90,8 +92,86 @@ Permanently removes the object metadata and physical files.
 - **Method**: `GET`
 - **Response**: Returns the status (Health/Size/Ops) of all active storage nodes.
 
+### 5. Storage Usage
+
 **Storage Usage**:
 
 - **URL**: `/storage_usage`
 - **Method**: `GET`
 - **Response**: Aggregated disk usage statistics.
+
+### 6. API Health
+
+- **URL**: `/health`
+- **Method**: `GET`
+- **Response**: API health, metadata health/source, node discovery source.
+
+### 7. Metrics Snapshot
+
+- **URL**: `/v2/admin/metrics-snapshot`
+- **Method**: `GET`
+- **Response**: metadata lookup counters + node discovery counters.
+
+## Admin v2 Endpoints
+
+### 8. List Tiering Tasks
+
+- **URL**: `/v2/admin/tasks`
+- **Method**: `GET`
+- **Query Parameters**:
+  - `state` (Optional): filter by task state, e.g. `PENDING`, `RUNNING`, `DONE`, `FAILED`, `RETRY_WAIT`.
+  - `task_type` (Optional): filter by type, currently `REPL_TO_EC`.
+  - `limit` (Optional): max rows returned, default `100`, max `1000`.
+
+**Response fields**:
+- `filters`: effective query filters.
+- `state_counts`: aggregated counts by state (filtered by `task_type` if provided).
+- `tasks[]`: task records with timestamps and action hints.
+  - `actions.retry_now` indicates if `POST /v2/admin/tasks/:id/retry-now` is allowed.
+  - `actions.cancel` indicates if `POST /v2/admin/tasks/:id/cancel` is allowed.
+
+### 9. Requeue Task Immediately
+
+- **URL**: `/v2/admin/tasks/:id/retry-now`
+- **Method**: `POST`
+- **Behavior**:
+  - sets task to `PENDING`
+  - sets `scheduled_at=NOW()`
+  - clears `started_at`, `finished_at`, `last_error`
+- **Allowed states**: `PENDING`, `RUNNING`, `RETRY_WAIT`, `FAILED`.
+- **Not allowed**: `DONE`.
+
+### 10. Cancel Task
+
+- **URL**: `/v2/admin/tasks/:id/cancel`
+- **Method**: `POST`
+- **Query Parameters / JSON Body**:
+  - `reason` (Optional)
+  - also accepted in body: `{"reason":"..."}`.
+- **Behavior**:
+  - sets task to `FAILED`
+  - writes reason to `last_error`
+  - sets `finished_at=NOW()`
+- **Allowed states**: `PENDING`, `RUNNING`, `RETRY_WAIT`.
+- **Not allowed**: `DONE`.
+
+### 11. List Node Heartbeats
+
+- **URL**: `/v2/admin/nodes`
+- **Method**: `GET`
+- **Query Parameters**:
+  - `limit` (Optional): default `100`, max `1000`.
+- **Response fields**:
+  - `node_id`, `status`, `last_seen_at`, `is_stale`
+  - `free_bytes`, `io_queue_depth`, `cpu_load`
+  - `stale_sec` (current staleness threshold).
+
+### 12. Get Object Metadata and Placement
+
+- **URL**: `/v2/admin/objects/:id`
+- **Method**: `GET`
+- **Response fields**:
+  - object header: `object_id`, `state`, `current_version`, `created_at`, `updated_at`
+  - current version metadata: `tier`, `checksum_sha256`, `encoding_k`, `encoding_m`, `size_bytes`
+  - `replica_locations[]` for current version
+  - `ec_shard_locations[]` for current version

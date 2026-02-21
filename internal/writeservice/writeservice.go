@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -16,18 +17,21 @@ import (
 
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/interfaces"
+	"hybrid_distributed_store/internal/meta"
 	"hybrid_distributed_store/internal/mq"
 )
 
 // Service implements the write logic using Redpanda for WAL (Write-Ahead Log)
 // and Etcd for Metadata storage.
 type Service struct {
-	etcd  interfaces.IEtcdClient
-	mq    *mq.Client
-	http  interfaces.IHttpClient
-	read  interfaces.IReadService
-	ec    interfaces.IEcDriver
-	utils interfaces.IUtilsSvc
+	etcd       interfaces.IEtcdClient
+	mq         *mq.Client
+	walProduce func(ctx context.Context, key string, value []byte) error
+	http       interfaces.IHttpClient
+	read       interfaces.IReadService
+	ec         interfaces.IEcDriver
+	utils      interfaces.IUtilsSvc
+	meta       *meta.Store
 }
 
 // NewService creates a new WriteService.
@@ -38,20 +42,74 @@ func NewService(
 	read interfaces.IReadService,
 	ec interfaces.IEcDriver,
 	utils interfaces.IUtilsSvc,
+	metaStore *meta.Store,
 ) *Service {
 	return &Service{
-		etcd:  etcd,
-		mq:    mqClient,
+		etcd: etcd,
+		mq:   mqClient,
+		walProduce: func(ctx context.Context, key string, value []byte) error {
+			if mqClient == nil {
+				return fmt.Errorf("wal client is nil")
+			}
+			return mqClient.ProduceSync(ctx, key, value)
+		},
 		http:  http,
 		read:  read,
 		ec:    ec,
 		utils: utils,
+		meta:  metaStore,
 	}
 }
 
 func computeSHA256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+var errMetadataNotFound = errors.New("metadata not found")
+
+func (s *Service) loadExistingMetadata(ctx context.Context, key string) (map[string]interface{}, string, error) {
+	metaKey := fmt.Sprintf("metadata/%s", key)
+
+	readFromPostgres := config.MetaSource == "auto" || config.MetaSource == "postgres"
+	readFromEtcd := config.MetaSource == "auto" || config.MetaSource == "etcd"
+
+	if readFromPostgres && config.MetaEnabled && s.meta != nil {
+		pgNormalizedMeta, err := s.meta.GetNormalizedMetadata(ctx, key)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(pgNormalizedMeta) > 0 {
+			return pgNormalizedMeta, "postgres_normalized", nil
+		}
+		if config.MetaSource == "postgres" {
+			return nil, "", errMetadataNotFound
+		}
+	}
+
+	if !readFromEtcd {
+		return nil, "", errMetadataNotFound
+	}
+	if s.etcd == nil {
+		if config.MetaSource == "etcd" {
+			return nil, "", fmt.Errorf("etcd client unavailable")
+		}
+		return nil, "", errMetadataNotFound
+	}
+
+	resp, err := s.etcd.Get(ctx, metaKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("etcd query failed: %v", err)
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, "", errMetadataNotFound
+	}
+
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(resp.Kvs[0].Value, &metadata); err != nil {
+		return nil, "", fmt.Errorf("metadata parse failed: %v", err)
+	}
+	return metadata, "etcd", nil
 }
 
 // --- Write-Ahead Log Helpers ---
@@ -79,7 +137,10 @@ func (s *Service) createWALEntry(
 		return "", fmt.Errorf("failed to serialize WAL entry: %v", err)
 	}
 
-	if err := s.mq.ProduceSync(ctx, key, valBytes); err != nil {
+	if s.walProduce == nil {
+		return "", fmt.Errorf("wal producer not configured")
+	}
+	if err := s.walProduce(ctx, key, valBytes); err != nil {
 		return "", fmt.Errorf("failed to write WAL to Redpanda: %v", err)
 	}
 
@@ -104,12 +165,78 @@ func (s *Service) finalizeWALEntry(
 		return fmt.Errorf("failed to serialize final metadata: %v", err)
 	}
 
-	_, err = s.etcd.Put(ctx, metaKey, string(metaBytes))
-	if err != nil {
-		return fmt.Errorf("failed to commit metadata to Etcd: %v", err)
+	if config.MetaEnabled && s.meta != nil {
+		if err := s.meta.UpsertNormalizedMetadata(ctx, mainKey, metadata); err != nil {
+			return fmt.Errorf("failed to commit normalized metadata to Postgres: %v", err)
+		}
+		if err := s.enqueueTieringTaskIfEligible(ctx, mainKey, metadata); err != nil {
+			// Tiering is best effort for now; foreground write must remain available.
+			log.Printf("[TieringEnqueue] skip key=%s: %v", mainKey, err)
+		}
+	}
+
+	if config.MetaSource != "postgres" {
+		if s.etcd == nil {
+			return fmt.Errorf("etcd client unavailable for metadata compatibility write")
+		}
+		_, err = s.etcd.Put(ctx, metaKey, string(metaBytes))
+		if err != nil {
+			return fmt.Errorf("failed to commit metadata to Etcd: %v", err)
+		}
 	}
 
 	return nil
+}
+
+func (s *Service) enqueueTieringTaskIfEligible(ctx context.Context, objectID string, metadata map[string]interface{}) error {
+	if s == nil || s.meta == nil {
+		return nil
+	}
+
+	strategy, _ := metadata["strategy"].(string)
+	if strategy != string(config.StrategyReplication) {
+		return nil
+	}
+
+	hotVersion := toInt64(metadata["hot_version"], 0)
+	if hotVersion <= 0 {
+		return fmt.Errorf("invalid hot_version for object %s", objectID)
+	}
+
+	priority := 100
+	scheduledAt := time.Now().Add(time.Duration(config.AgeThresholdSec) * time.Second)
+	taskID := fmt.Sprintf("repl2ec:%s:%d", objectID, hotVersion)
+
+	if err := s.meta.EnqueueTieringTask(
+		ctx,
+		taskID,
+		objectID,
+		hotVersion,
+		"REPL_TO_EC",
+		priority,
+		scheduledAt,
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func toInt64(v interface{}, fallback int64) int64 {
+	switch t := v.(type) {
+	case int:
+		return int64(t)
+	case int32:
+		return int64(t)
+	case int64:
+		return t
+	case float32:
+		return int64(t)
+	case float64:
+		return int64(t)
+	default:
+		return fallback
+	}
 }
 
 // --- Strategy A: Replication ---
@@ -166,10 +293,11 @@ func (s *Service) WriteReplication(
 	}
 
 	finalMeta := map[string]interface{}{
-		"strategy":     string(config.StrategyReplication),
-		"hot_version":  time.Now().UnixNano(),
-		"cold_version": 0,
-		"cold_hash":    "",
+		"strategy":      string(config.StrategyReplication),
+		"hot_version":   time.Now().UnixNano(),
+		"cold_version":  0,
+		"cold_hash":     "",
+		"replica_nodes": writtenNodes,
 	}
 
 	// [ADDED] Explicitly mark as dirty if partial failure occurred
@@ -301,24 +429,26 @@ func (s *Service) WriteFieldHybrid(
 
 	newHot, newCold := s.utils.SeparateHotColdFields(dataDict)
 
-	metaKey := fmt.Sprintf("metadata/%s", key)
-	resp, _ := s.etcd.Get(ctx, metaKey)
-
 	oldColdHash := ""
 	var oldColdVersion int64 = 0
 
-	if len(resp.Kvs) > 0 {
-		var oldMeta map[string]interface{}
-		if err := json.Unmarshal(resp.Kvs[0].Value, &oldMeta); err == nil {
-			if v, ok := oldMeta["cold_hash"].(string); ok {
-				oldColdHash = v
-			}
-			switch v := oldMeta["cold_version"].(type) {
-			case float64:
-				oldColdVersion = int64(v)
-			case int64:
-				oldColdVersion = v
-			}
+	oldMeta, _, err := s.loadExistingMetadata(ctx, key)
+	if err != nil && !errors.Is(err, errMetadataNotFound) {
+		return nil, fmt.Errorf("load existing metadata failed: %v", err)
+	}
+	if oldMeta != nil {
+		if v, ok := oldMeta["cold_hash"].(string); ok {
+			oldColdHash = v
+		}
+		switch v := oldMeta["cold_version"].(type) {
+		case float64:
+			oldColdVersion = int64(v)
+		case int64:
+			oldColdVersion = v
+		case int:
+			oldColdVersion = int64(v)
+		case int32:
+			oldColdVersion = int64(v)
 		}
 	}
 

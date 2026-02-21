@@ -18,12 +18,13 @@ COPY . .
 RUN go mod tidy
 
 # 3. Build Microservices
-# We build three separate binaries: API Gateway, Storage Node, and Healer.
+# We build separate binaries: API Gateway, Storage Node, Healer, and Tiering Worker.
 # CGO_ENABLED=0 ensures static linking .
 # -ldflags="-s -w" strips debug information to reduce binary size.
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/api ./cmd/api
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/storage_node ./cmd/storage_node
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/healer ./cmd/healer
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/tiering_worker ./cmd/tiering_worker
 
 # -----------------------------------------------------------------------------
 # Stage 2: Release
@@ -38,6 +39,7 @@ RUN apk add --no-cache ca-certificates
 COPY --from=builder /usr/local/bin/api /usr/local/bin/api
 COPY --from=builder /usr/local/bin/storage_node /usr/local/bin/storage_node
 COPY --from=builder /usr/local/bin/healer /usr/local/bin/healer
+COPY --from=builder /usr/local/bin/tiering_worker /usr/local/bin/tiering_worker
 
 # Default entrypoint (Overridden by docker-compose.yaml 'command')
 CMD ["/usr/local/bin/api"]
