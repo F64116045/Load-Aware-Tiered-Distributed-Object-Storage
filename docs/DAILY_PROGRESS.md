@@ -395,3 +395,16 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Action hint rules:
    - `retry_now`: allowed for `PENDING/RUNNING/RETRY_WAIT/FAILED`
    - `cancel`: allowed for `PENDING/RUNNING/RETRY_WAIT`
+
+## 2026-02-21 (Milestone 6 API documentation sync, step 15)
+
+1. Updated `docs/API.md` to include implemented admin v2 endpoints:
+   - `/v2/admin/tasks`
+   - `/v2/admin/tasks/:id/retry-now`
+   - `/v2/admin/tasks/:id/cancel`
+   - `/v2/admin/nodes`
+   - `/v2/admin/objects/:id`
+2. Added query/filter semantics and key response fields:
+   - task filters + `state_counts`
+   - node staleness view
+   - object placement metadata
