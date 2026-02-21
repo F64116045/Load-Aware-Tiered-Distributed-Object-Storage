@@ -280,3 +280,16 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - enforce `>= K` successful shard writes before metadata commit
 3. Upgraded `cmd/tiering_worker/main.go`:
    - switched from stub processor to real processor using shared HTTP client and EC driver
+
+## 2026-02-21 (Milestone 6 integration smoke script, step 5)
+
+1. Added executable smoke script:
+   - `scripts/smoke_tiering_repl_to_ec.sh`
+2. Script validates end-to-end path:
+   - replication write
+   - tiering task enqueue check
+   - force `scheduled_at` for immediate execution
+   - wait for `objects.state=EC_ACTIVE`, `object_versions.tier=EC`, `tiering_tasks.task_state=DONE`
+   - API read-back payload verification
+3. Runtime note:
+   - script assumes compose stack is already running and API reachable at `API_BASE` (default `http://127.0.0.1:8000`)
