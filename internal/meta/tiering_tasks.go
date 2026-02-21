@@ -9,14 +9,17 @@ import (
 
 // TieringTask is the metadata record consumed by tiering workers.
 type TieringTask struct {
-	TaskID     string
-	ObjectID   string
-	Version    int64
-	TaskType   string
-	TaskState  string
-	Priority   int
-	RetryCount int
-	LastError  sql.NullString
+	TaskID      string
+	ObjectID    string
+	Version     int64
+	TaskType    string
+	TaskState   string
+	Priority    int
+	RetryCount  int
+	LastError   sql.NullString
+	ScheduledAt time.Time
+	StartedAt   sql.NullTime
+	FinishedAt  sql.NullTime
 }
 
 // EnqueueTieringTask inserts a pending task if task_id is not present yet.
@@ -47,6 +50,63 @@ ON CONFLICT (task_id) DO NOTHING
 		return fmt.Errorf("enqueue tiering task failed: %w", err)
 	}
 	return nil
+}
+
+// ListTieringTasks returns recent tiering tasks with optional task_state filter.
+func (s *Store) ListTieringTasks(ctx context.Context, taskState string, limit int) ([]TieringTask, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	query := `
+SELECT task_id, object_id, version, task_type, task_state, priority, retry_count, last_error, scheduled_at, started_at, finished_at
+FROM tiering_tasks
+`
+	args := make([]interface{}, 0, 2)
+	if taskState != "" {
+		query += "WHERE task_state = $1\n"
+		args = append(args, taskState)
+	}
+	query += "ORDER BY scheduled_at DESC LIMIT $"
+	query += fmt.Sprintf("%d", len(args)+1)
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list tiering tasks failed: %w", err)
+	}
+	defer rows.Close()
+
+	tasks := make([]TieringTask, 0, limit)
+	for rows.Next() {
+		var t TieringTask
+		if err := rows.Scan(
+			&t.TaskID,
+			&t.ObjectID,
+			&t.Version,
+			&t.TaskType,
+			&t.TaskState,
+			&t.Priority,
+			&t.RetryCount,
+			&t.LastError,
+			&t.ScheduledAt,
+			&t.StartedAt,
+			&t.FinishedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan tiering task failed: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tiering tasks failed: %w", err)
+	}
+	return tasks, nil
 }
 
 // ClaimNextTieringTask claims one runnable task and transitions it to RUNNING.

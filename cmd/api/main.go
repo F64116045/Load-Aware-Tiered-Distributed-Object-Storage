@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -743,6 +744,64 @@ func main() {
 				"active_node_count": activeNodes,
 			},
 			"timestamp_unix": time.Now().Unix(),
+		})
+	})
+
+	router.GET("/v2/admin/tasks", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		state := strings.TrimSpace(c.Query("state"))
+		limit := 100
+		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+				return
+			}
+			limit = parsed
+		}
+
+		tasks, err := metaStore.ListTieringTasks(c.Request.Context(), state, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		out := make([]gin.H, 0, len(tasks))
+		for _, t := range tasks {
+			lastErr := ""
+			if t.LastError.Valid {
+				lastErr = t.LastError.String
+			}
+			var startedAt interface{}
+			if t.StartedAt.Valid {
+				startedAt = t.StartedAt.Time
+			}
+			var finishedAt interface{}
+			if t.FinishedAt.Valid {
+				finishedAt = t.FinishedAt.Time
+			}
+			out = append(out, gin.H{
+				"task_id":      t.TaskID,
+				"object_id":    t.ObjectID,
+				"version":      t.Version,
+				"task_type":    t.TaskType,
+				"task_state":   t.TaskState,
+				"priority":     t.Priority,
+				"retry_count":  t.RetryCount,
+				"last_error":   lastErr,
+				"scheduled_at": t.ScheduledAt,
+				"started_at":   startedAt,
+				"finished_at":  finishedAt,
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"count": len(out),
+			"tasks": out,
 		})
 	})
 

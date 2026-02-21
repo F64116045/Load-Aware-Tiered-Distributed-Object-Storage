@@ -317,3 +317,13 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - scanner and worker now run concurrently in same process
 4. Added compose env:
    - `TIERING_POLICY_PERIOD_SEC` for scanner period control
+
+## 2026-02-21 (Milestone 6 admin task visibility, step 8)
+
+1. Added metadata query API for tiering tasks:
+   - `Store.ListTieringTasks(ctx, state, limit)` in `internal/meta/tiering_tasks.go`
+2. Implemented admin endpoint:
+   - `GET /v2/admin/tasks`
+   - supports optional query params: `state`, `limit`
+3. Purpose:
+   - quick inspection of task queue lifecycle (`PENDING/RUNNING/DONE/RETRY_WAIT`) during integration/debug runs
