@@ -4,7 +4,18 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 )
+
+// NodeHeartbeatSnapshot is an admin-facing view of node liveness/load.
+type NodeHeartbeatSnapshot struct {
+	NodeID       string
+	LastSeenAt   time.Time
+	FreeBytes    int64
+	IOQueueDepth int
+	CPULoad      float64
+	Status       string
+}
 
 // UpsertNodeHeartbeat writes node liveness and load stats.
 func (s *Store) UpsertNodeHeartbeat(
@@ -72,4 +83,49 @@ WHERE status = 'UP'
 	}
 	sort.Strings(nodes)
 	return nodes, nil
+}
+
+// ListNodeHeartbeats returns recent heartbeat snapshots ordered by last_seen_at desc.
+func (s *Store) ListNodeHeartbeats(ctx context.Context, limit int) ([]NodeHeartbeatSnapshot, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	const q = `
+SELECT node_id, last_seen_at, free_bytes, io_queue_depth, cpu_load, status
+FROM node_heartbeats
+ORDER BY last_seen_at DESC
+LIMIT $1
+`
+	rows, err := s.db.QueryContext(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list node heartbeats failed: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]NodeHeartbeatSnapshot, 0, limit)
+	for rows.Next() {
+		var n NodeHeartbeatSnapshot
+		if err := rows.Scan(
+			&n.NodeID,
+			&n.LastSeenAt,
+			&n.FreeBytes,
+			&n.IOQueueDepth,
+			&n.CPULoad,
+			&n.Status,
+		); err != nil {
+			return nil, fmt.Errorf("scan node heartbeat failed: %w", err)
+		}
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate node heartbeats failed: %w", err)
+	}
+	return out, nil
 }

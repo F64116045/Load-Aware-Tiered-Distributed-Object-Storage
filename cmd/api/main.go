@@ -805,6 +805,53 @@ func main() {
 		})
 	})
 
+	router.GET("/v2/admin/nodes", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		limit := 100
+		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+				return
+			}
+			limit = parsed
+		}
+
+		nodes, err := metaStore.ListNodeHeartbeats(c.Request.Context(), limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		staleWindow := time.Duration(config.NodeHeartbeatStaleSec) * time.Second
+		now := time.Now()
+		out := make([]gin.H, 0, len(nodes))
+		for _, n := range nodes {
+			isStale := now.Sub(n.LastSeenAt) > staleWindow
+			out = append(out, gin.H{
+				"node_id":        n.NodeID,
+				"status":         n.Status,
+				"last_seen_at":   n.LastSeenAt,
+				"is_stale":       isStale,
+				"free_bytes":     n.FreeBytes,
+				"io_queue_depth": n.IOQueueDepth,
+				"cpu_load":       n.CPULoad,
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"count":     len(out),
+			"stale_sec": config.NodeHeartbeatStaleSec,
+			"nodes":     out,
+			"source":    "postgres",
+			"generated": now.Unix(),
+		})
+	})
+
 	// 4. Start Server
 	log.Println("[API] Starting Gin Server on 0.0.0.0:8000...")
 	if err := router.Run("0.0.0.0:8000"); err != nil {

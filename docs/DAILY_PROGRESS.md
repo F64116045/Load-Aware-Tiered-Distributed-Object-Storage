@@ -327,3 +327,16 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - supports optional query params: `state`, `limit`
 3. Purpose:
    - quick inspection of task queue lifecycle (`PENDING/RUNNING/DONE/RETRY_WAIT`) during integration/debug runs
+
+## 2026-02-21 (Milestone 6 admin node visibility, step 9)
+
+1. Added metadata node snapshot query:
+   - `Store.ListNodeHeartbeats(ctx, limit)` in `internal/meta/node_heartbeats.go`
+2. Implemented admin endpoint:
+   - `GET /v2/admin/nodes`
+   - supports optional query param: `limit`
+3. Response fields include:
+   - `node_id`, `status`, `last_seen_at`, `is_stale`
+   - `free_bytes`, `io_queue_depth`, `cpu_load`
+4. Staleness rule:
+   - computed by `NODE_HEARTBEAT_STALE_SEC`
