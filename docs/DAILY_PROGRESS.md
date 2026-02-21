@@ -211,3 +211,22 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `POST /write` success (replication path, full node write)
    - `GET /read/{key}` success (payload verified)
    - `DELETE /delete/{key}` success (replica cleanup verified)
+
+## 2026-02-20 (Milestone 5 compose dependency cleanup, step 5)
+
+1. Removed default postgres-only runtime dependency on etcd for API/storage nodes in compose:
+   - removed `ETCD_HOST`/`ETCD_PORT` env from `api` and `storage_node_*` services
+   - removed `api.depends_on.etcd0` in default compose path
+2. Kept etcd services for compatibility consumers (e.g., healer / legacy modes).
+3. Validation:
+   - `docker compose config -q` passed
+   - compile checks for API / storage node / metadata / writeservice passed
+
+## 2026-02-20 (Milestone 5 deployment profile split, step 6)
+
+1. Added compose profile gating for legacy etcd path:
+   - `etcd0`, `etcd1`, `etcd2`, and `healer` now use profile `legacy-etcd`
+2. Default deployment target is now v2 postgres-first path:
+   - running `docker compose up -d` no longer requires starting etcd services by default
+3. Legacy compatibility path remains available:
+   - can be enabled with `--profile legacy-etcd` when needed

@@ -44,8 +44,6 @@ services:
     deploy:
       replicas: 3
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - WAL_BROKER=redpanda:9092
       - WAL_TOPIC=wal-events
       - NODE_NAMES_CSV=storage_node_1,storage_node_2,storage_node_3,storage_node_4,storage_node_5,storage_node_6
@@ -59,8 +57,6 @@ services:
       - NODE_DISCOVERY_SOURCE=postgres
       - NODE_HEARTBEAT_STALE_SEC=15
     depends_on:
-      etcd0:
-        condition: service_started
       postgres:
         condition: service_healthy
       redpanda:
@@ -118,6 +114,7 @@ services:
   # Etcd Cluster (Metadata Store)
   # ---------------------------------------------------------------------------
   etcd0:
+    profiles: ["legacy-etcd"]
     image: 'bitnamilegacy/etcd:3.5.16'
     environment:
       - ALLOW_NONE_AUTHENTICATION=yes
@@ -135,6 +132,7 @@ services:
       - storage_net
 
   etcd1:
+    profiles: ["legacy-etcd"]
     image: 'bitnamilegacy/etcd:3.5.16'
     environment:
       - ALLOW_NONE_AUTHENTICATION=yes
@@ -152,6 +150,7 @@ services:
       - storage_net
 
   etcd2:
+    profiles: ["legacy-etcd"]
     image: 'bitnamilegacy/etcd:3.5.16'
     environment:
       - ALLOW_NONE_AUTHENTICATION=yes
@@ -177,8 +176,6 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_1
       - NODE_PORT=8001
       - STORAGE_DIR=/data/node1
@@ -201,8 +198,6 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_2
       - NODE_PORT=8002
       - STORAGE_DIR=/data/node2
@@ -225,8 +220,6 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_3
       - NODE_PORT=8003
       - STORAGE_DIR=/data/node3
@@ -249,8 +242,6 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_4
       - NODE_PORT=8004
       - STORAGE_DIR=/data/node4
@@ -273,8 +264,6 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_5
       - NODE_PORT=8005
       - STORAGE_DIR=/data/node5
@@ -297,8 +286,6 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_6
       - NODE_PORT=8006
       - STORAGE_DIR=/data/node6
@@ -319,6 +306,7 @@ services:
   # Healer Service
   # ---------------------------------------------------------------------------
   healer:
+    profiles: ["legacy-etcd"]
     build:
       context: .
       dockerfile: Dockerfile
