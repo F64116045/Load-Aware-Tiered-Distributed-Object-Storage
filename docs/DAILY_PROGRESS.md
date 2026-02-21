@@ -293,3 +293,13 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - API read-back payload verification
 3. Runtime note:
    - script assumes compose stack is already running and API reachable at `API_BASE` (default `http://127.0.0.1:8000`)
+
+## 2026-02-21 (Milestone 6 normalized replica location write, step 6)
+
+1. Updated replication foreground metadata commit:
+   - `WriteReplication(...)` now includes `replica_nodes` (actual successful node URLs) in normalized metadata payload
+2. Extended normalized upsert transaction in `internal/meta/normalized.go`:
+   - when tier is `HOT`, upsert `replica_locations(object_id, version, node_id, path, status)`
+   - written in the same metadata transaction as `objects` + `object_versions`
+3. Result:
+   - foreground replication write now records durable per-version replica placement metadata in PostgreSQL

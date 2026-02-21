@@ -293,10 +293,11 @@ func (s *Service) WriteReplication(
 	}
 
 	finalMeta := map[string]interface{}{
-		"strategy":     string(config.StrategyReplication),
-		"hot_version":  time.Now().UnixNano(),
-		"cold_version": 0,
-		"cold_hash":    "",
+		"strategy":      string(config.StrategyReplication),
+		"hot_version":   time.Now().UnixNano(),
+		"cold_version":  0,
+		"cold_hash":     "",
+		"replica_nodes": writtenNodes,
 	}
 
 	// [ADDED] Explicitly mark as dirty if partial failure occurred
