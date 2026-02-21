@@ -196,6 +196,38 @@ WHERE task_id=$1
 	return affected > 0, nil
 }
 
+// CancelTieringTask marks a task as FAILED with explicit reason.
+// It applies to PENDING/RUNNING/RETRY_WAIT tasks and intentionally excludes DONE.
+func (s *Store) CancelTieringTask(ctx context.Context, taskID, reason string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, nil
+	}
+	if taskID == "" {
+		return false, nil
+	}
+	if reason == "" {
+		reason = "cancelled_by_admin"
+	}
+
+	const q = `
+UPDATE tiering_tasks
+SET task_state='FAILED',
+	last_error=$2,
+	finished_at=NOW()
+WHERE task_id=$1
+  AND task_state IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+`
+	res, err := s.db.ExecContext(ctx, q, taskID, reason)
+	if err != nil {
+		return false, fmt.Errorf("cancel tiering task failed: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("cancel tiering task rows affected failed: %w", err)
+	}
+	return affected > 0, nil
+}
+
 // ClaimNextTieringTask claims one runnable task and transitions it to RUNNING.
 // Returns (nil, nil) when no runnable task is found.
 func (s *Store) ClaimNextTieringTask(ctx context.Context, taskType string) (*TieringTask, error) {

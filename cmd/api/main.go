@@ -850,6 +850,52 @@ func main() {
 		})
 	})
 
+	router.POST("/v2/admin/tasks/:id/cancel", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		taskID := strings.TrimSpace(c.Param("id"))
+		if taskID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+			return
+		}
+
+		reason := strings.TrimSpace(c.Query("reason"))
+		if reason == "" {
+			var body struct {
+				Reason string `json:"reason"`
+			}
+			if err := c.ShouldBindJSON(&body); err == nil {
+				reason = strings.TrimSpace(body.Reason)
+			}
+		}
+		if reason == "" {
+			reason = "cancelled_by_admin"
+		}
+
+		ok, err := metaStore.CancelTieringTask(c.Request.Context(), taskID, reason)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":   "task not found or not cancellable",
+				"task_id": taskID,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"task_id": taskID,
+			"action":  "cancelled",
+			"reason":  reason,
+		})
+	})
+
 	router.GET("/v2/admin/nodes", func(c *gin.Context) {
 		if !config.MetaEnabled || metaStore == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})

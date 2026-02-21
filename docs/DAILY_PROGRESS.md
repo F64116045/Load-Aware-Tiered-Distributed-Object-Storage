@@ -375,3 +375,14 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - force task back to immediate `PENDING` with `scheduled_at=NOW()`
    - applies to `PENDING/RUNNING/RETRY_WAIT/FAILED`
    - `DONE` tasks are intentionally not requeued by this endpoint
+
+## 2026-02-21 (Milestone 6 manual task cancel endpoint, step 13)
+
+1. Added metadata helper:
+   - `CancelTieringTask(ctx, taskID, reason)` in `internal/meta/tiering_tasks.go`
+2. Added admin action endpoint:
+   - `POST /v2/admin/tasks/:id/cancel`
+3. Behavior:
+   - mark task as `FAILED` and persist cancel reason in `last_error`
+   - applies to `PENDING/RUNNING/RETRY_WAIT`
+   - `DONE` tasks are not cancellable via this endpoint
