@@ -165,6 +165,37 @@ FROM tiering_tasks
 	return out, nil
 }
 
+// RequeueTieringTaskNow forces a task back to immediate runnable state.
+// It only applies to PENDING/RUNNING/RETRY_WAIT/FAILED tasks; DONE tasks are not requeued.
+func (s *Store) RequeueTieringTaskNow(ctx context.Context, taskID string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, nil
+	}
+	if taskID == "" {
+		return false, nil
+	}
+
+	const q = `
+UPDATE tiering_tasks
+SET task_state='PENDING',
+	scheduled_at=NOW(),
+	started_at=NULL,
+	finished_at=NULL,
+	last_error=NULL
+WHERE task_id=$1
+  AND task_state IN ('PENDING', 'RUNNING', 'RETRY_WAIT', 'FAILED')
+`
+	res, err := s.db.ExecContext(ctx, q, taskID)
+	if err != nil {
+		return false, fmt.Errorf("requeue tiering task failed: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("requeue tiering task rows affected failed: %w", err)
+	}
+	return affected > 0, nil
+}
+
 // ClaimNextTieringTask claims one runnable task and transitions it to RUNNING.
 // Returns (nil, nil) when no runnable task is found.
 func (s *Store) ClaimNextTieringTask(ctx context.Context, taskType string) (*TieringTask, error) {

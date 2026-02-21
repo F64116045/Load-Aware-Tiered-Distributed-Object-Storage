@@ -818,6 +818,38 @@ func main() {
 		})
 	})
 
+	router.POST("/v2/admin/tasks/:id/retry-now", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		taskID := strings.TrimSpace(c.Param("id"))
+		if taskID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+			return
+		}
+
+		ok, err := metaStore.RequeueTieringTaskNow(c.Request.Context(), taskID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":   "task not found or not requeueable",
+				"task_id": taskID,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"task_id": taskID,
+			"action":  "requeued_now",
+		})
+	})
+
 	router.GET("/v2/admin/nodes", func(c *gin.Context) {
 		if !config.MetaEnabled || metaStore == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})

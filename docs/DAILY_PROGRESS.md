@@ -364,3 +364,14 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - object state/version timestamps
    - current version metadata (tier/checksum/encoding)
    - replica and EC shard placement rows
+
+## 2026-02-21 (Milestone 6 manual task unstick endpoint, step 12)
+
+1. Added metadata helper:
+   - `RequeueTieringTaskNow(ctx, taskID)` in `internal/meta/tiering_tasks.go`
+2. Added admin action endpoint:
+   - `POST /v2/admin/tasks/:id/retry-now`
+3. Behavior:
+   - force task back to immediate `PENDING` with `scheduled_at=NOW()`
+   - applies to `PENDING/RUNNING/RETRY_WAIT/FAILED`
+   - `DONE` tasks are intentionally not requeued by this endpoint
