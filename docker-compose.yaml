@@ -303,6 +303,32 @@ services:
       - storage_net
 
   # ---------------------------------------------------------------------------
+  # Tiering Worker
+  # ---------------------------------------------------------------------------
+  tiering_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/usr/local/bin/tiering_worker"]
+    restart: on-failure
+    environment:
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - TIERING_WORKER_POLL_SEC=2
+      - TIERING_WORKER_TASK_TYPE=REPL_TO_EC
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - storage_net
+
+  # ---------------------------------------------------------------------------
   # Healer Service
   # ---------------------------------------------------------------------------
   healer:

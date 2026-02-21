@@ -230,3 +230,28 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - running `docker compose up -d` no longer requires starting etcd services by default
 3. Legacy compatibility path remains available:
    - can be enabled with `--profile legacy-etcd` when needed
+
+## 2026-02-21 (Milestone 6 tiering worker skeleton, step 1)
+
+1. Added PostgreSQL tiering task repository methods in `internal/meta/tiering_tasks.go`:
+   - `EnqueueTieringTask(...)`
+   - `ClaimNextTieringTask(...)` (`FOR UPDATE SKIP LOCKED`)
+   - `MarkTieringTaskDone(...)`
+   - `MarkTieringTaskRetry(...)`
+2. Added `internal/tiering/worker.go`:
+   - poll loop + task dispatch for `REPL_TO_EC`
+   - retry backoff with cap (up to 5 minutes)
+3. Validation:
+   - `go test ./internal/meta ./internal/tiering ./internal/writeservice ./cmd/api ./cmd/storage_node`
+
+## 2026-02-21 (Milestone 6 tiering worker runnable bootstrap, step 2)
+
+1. Added runnable worker entrypoint `cmd/tiering_worker/main.go`:
+   - metadata store bootstrap + ping
+   - env-configurable poll interval and task type
+   - graceful shutdown (`SIGINT`/`SIGTERM`)
+2. Added compose/runtime packaging:
+   - `Dockerfile` now builds and copies `/usr/local/bin/tiering_worker`
+   - `docker-compose.yaml` now includes `tiering_worker` service (PostgreSQL path)
+3. Validation:
+   - `go test ./cmd/tiering_worker ./internal/tiering ./internal/meta`
