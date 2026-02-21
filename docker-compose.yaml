@@ -319,6 +319,7 @@ services:
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
       - TIERING_WORKER_POLL_SEC=2
+      - TIERING_POLICY_PERIOD_SEC=300
       - TIERING_WORKER_TASK_TYPE=REPL_TO_EC
     depends_on:
       postgres:

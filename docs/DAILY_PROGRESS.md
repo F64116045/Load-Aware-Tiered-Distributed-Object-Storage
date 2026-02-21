@@ -303,3 +303,17 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - written in the same metadata transaction as `objects` + `object_versions`
 3. Result:
    - foreground replication write now records durable per-version replica placement metadata in PostgreSQL
+
+## 2026-02-21 (Milestone 6 periodic A1 policy scanner, step 7)
+
+1. Added metadata-side periodic candidate enqueue API:
+   - `Store.EnqueueTieringCandidatesA1(...)` in `internal/meta/tiering_policy.go`
+   - scans `objects.state=HOT_ACTIVE` older than `AGE_THRESHOLD_SEC`
+   - enqueues deterministic `REPL_TO_EC` tasks and marks objects `MIGRATION_PENDING`
+2. Added scanner runtime in `internal/tiering/policy_scanner.go`:
+   - periodic run loop for A1 scheduling
+   - logs enqueue counts per round
+3. Wired scanner into `cmd/tiering_worker/main.go`:
+   - scanner and worker now run concurrently in same process
+4. Added compose env:
+   - `TIERING_POLICY_PERIOD_SEC` for scanner period control

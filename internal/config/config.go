@@ -90,6 +90,10 @@ var (
 	NodeHeartbeatStaleSec = getEnvInt("NODE_HEARTBEAT_STALE_SEC", 15)
 	// AgeThresholdSec defines when HOT objects become eligible for tiering (A1 baseline).
 	AgeThresholdSec = getEnvInt("AGE_THRESHOLD_SEC", 3600)
+	// TieringPeriodSec defines periodic policy scan interval.
+	TieringPeriodSec = getEnvInt("TIERING_PERIOD_SEC", 300)
+	// MaxObjectsPerRound caps A1 periodic enqueue count per round.
+	MaxObjectsPerRound = getEnvInt("MAX_OBJECTS_PER_ROUND", 200)
 )
 
 func init() {

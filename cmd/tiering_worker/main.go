@@ -52,6 +52,7 @@ func main() {
 	pingCancel()
 
 	pollInterval := envDurationSec("TIERING_WORKER_POLL_SEC", 2*time.Second)
+	policyPeriod := envDurationSec("TIERING_POLICY_PERIOD_SEC", time.Duration(config.TieringPeriodSec)*time.Second)
 	taskType := os.Getenv("TIERING_WORKER_TASK_TYPE")
 	if taskType == "" {
 		taskType = tiering.TaskTypeReplicationToEC
@@ -59,9 +60,16 @@ func main() {
 
 	processor := tiering.NewReplicationToECProcessor(store, httpclient.GetClient(), ec.NewService())
 	worker := tiering.NewWorker(store, processor, pollInterval, taskType)
+	scanner := tiering.NewPolicyScanner(store, policyPeriod, config.AgeThresholdSec, config.MaxObjectsPerRound)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	go func() {
+		if err := scanner.Run(ctx); err != nil {
+			log.Printf("[TieringPolicy] scanner stopped with error: %v", err)
+		}
+	}()
 
 	if err := worker.Run(ctx); err != nil {
 		log.Fatalf("[TieringWorker] run failed: %v", err)
