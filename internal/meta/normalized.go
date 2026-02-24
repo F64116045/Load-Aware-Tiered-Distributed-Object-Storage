@@ -21,6 +21,7 @@ func (s *Store) UpsertNormalizedMetadata(ctx context.Context, objectID string, m
 	tier := resolveTier(metadata)
 	sizeBytes := toInt64(metadata["original_length"], 0)
 	checksum := toString(metadata["cold_hash"], "")
+	contentType := toNullableString(metadata["content_type"])
 	encodingK := toNullableInt(metadata["k"])
 	encodingM := toNullableInt(metadata["m"])
 
@@ -45,18 +46,19 @@ DO UPDATE SET
 
 	const upsertVersionSQL = `
 INSERT INTO object_versions (
-	object_id, version, size_bytes, checksum_sha256, tier, encoding_k, encoding_m, created_at
+	object_id, version, size_bytes, checksum_sha256, tier, content_type, encoding_k, encoding_m, created_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 ON CONFLICT (object_id, version)
 DO UPDATE SET
 	size_bytes = EXCLUDED.size_bytes,
 	checksum_sha256 = EXCLUDED.checksum_sha256,
 	tier = EXCLUDED.tier,
+	content_type = EXCLUDED.content_type,
 	encoding_k = EXCLUDED.encoding_k,
 	encoding_m = EXCLUDED.encoding_m
 `
-	if _, err := tx.ExecContext(ctx, upsertVersionSQL, objectID, version, sizeBytes, checksum, tier, encodingK, encodingM); err != nil {
+	if _, err := tx.ExecContext(ctx, upsertVersionSQL, objectID, version, sizeBytes, checksum, tier, contentType, encodingK, encodingM); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("upsert object_versions failed: %w", err)
 	}
@@ -84,7 +86,7 @@ func (s *Store) GetNormalizedMetadata(ctx context.Context, objectID string) (map
 	}
 
 	const q = `
-SELECT o.current_version, o.state, ov.size_bytes, ov.checksum_sha256, ov.tier, ov.encoding_k, ov.encoding_m
+SELECT o.current_version, o.state, ov.size_bytes, ov.checksum_sha256, ov.tier, ov.content_type, ov.encoding_k, ov.encoding_m
 FROM objects o
 JOIN object_versions ov
   ON ov.object_id = o.object_id
@@ -98,11 +100,12 @@ WHERE o.object_id = $1
 		sizeBytes      int64
 		checksum       string
 		tier           string
+		contentType    sql.NullString
 		encodingK      sql.NullInt64
 		encodingM      sql.NullInt64
 	)
 	if err := s.db.QueryRowContext(ctx, q, objectID).Scan(
-		&currentVersion, &state, &sizeBytes, &checksum, &tier, &encodingK, &encodingM,
+		&currentVersion, &state, &sizeBytes, &checksum, &tier, &contentType, &encodingK, &encodingM,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -130,6 +133,9 @@ WHERE o.object_id = $1
 
 	if sizeBytes > 0 {
 		meta["original_length"] = sizeBytes
+	}
+	if contentType.Valid && contentType.String != "" {
+		meta["content_type"] = contentType.String
 	}
 	if encodingK.Valid {
 		meta["k"] = int(encodingK.Int64)
@@ -242,6 +248,14 @@ func toNullableInt(v interface{}) interface{} {
 	default:
 		return nil
 	}
+}
+
+func toNullableString(v interface{}) interface{} {
+	s := toString(v, "")
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func toStringSlice(v interface{}) []string {

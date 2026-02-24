@@ -427,3 +427,16 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `field_hybrid` objects are not exposed via binary v2 GET yet
 3. Documentation:
    - updated `docs/API.md` with v2 generic object endpoint section
+
+## 2026-02-21 (Milestone 6 normalized content-type persistence, step 18)
+
+1. Added metadata migration for generic object HTTP metadata:
+   - `object_versions.content_type` column (`000002_object_versions_content_type`)
+2. Updated normalized metadata read/write paths:
+   - `UpsertNormalizedMetadata(...)` persists `content_type`
+   - `GetNormalizedMetadata(...)` returns `content_type`
+3. Updated v2 binary object API:
+   - `PUT /v2/objects/:id` now persists request `Content-Type`
+   - `GET /v2/objects/:id` returns stored `Content-Type` when available
+4. Updated admin object detail:
+   - `/v2/admin/objects/:id` includes current version `content_type`

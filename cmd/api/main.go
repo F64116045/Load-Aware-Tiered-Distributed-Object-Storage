@@ -469,19 +469,26 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 			return
 		}
+		contentType := strings.TrimSpace(c.GetHeader("Content-Type"))
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
 
-		opResult, opErr := writeSvc.WriteReplication(c.Request.Context(), replicaNodes, objectID, bodyBytes)
+		opResult, opErr := writeSvc.WriteReplicationWithMetadata(
+			c.Request.Context(),
+			replicaNodes,
+			objectID,
+			bodyBytes,
+			map[string]interface{}{
+				"content_type": contentType,
+			},
+		)
 		if opErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": opErr.Error()})
 			return
 		}
 		if opResult == nil {
 			opResult = map[string]interface{}{}
-		}
-
-		contentType := strings.TrimSpace(c.GetHeader("Content-Type"))
-		if contentType == "" {
-			contentType = "application/octet-stream"
 		}
 
 		opResult["status"] = "ok"
@@ -1071,6 +1078,7 @@ func main() {
 				"size_bytes":      view.Version.SizeBytes,
 				"checksum_sha256": view.Version.ChecksumSHA256,
 				"tier":            view.Version.Tier,
+				"content_type":    nullStringOrNil(view.Version.ContentType),
 				"encoding_k":      nullInt64OrNil(view.Version.EncodingK),
 				"encoding_m":      nullInt64OrNil(view.Version.EncodingM),
 				"created_at":      view.Version.CreatedAt,
@@ -1120,4 +1128,11 @@ func nullInt64OrNil(v sql.NullInt64) interface{} {
 		return nil
 	}
 	return v.Int64
+}
+
+func nullStringOrNil(v sql.NullString) interface{} {
+	if !v.Valid {
+		return nil
+	}
+	return v.String
 }

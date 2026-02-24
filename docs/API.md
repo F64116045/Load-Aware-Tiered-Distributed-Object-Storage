@@ -187,13 +187,15 @@ Permanently removes the object metadata and physical files.
   - stores object using replication strategy (HOT tier)
   - does not require JSON
 - **Notes**:
-  - `Content-Type` is accepted and echoed in response, but current metadata persistence for this field is not finalized yet.
+  - `Content-Type` is persisted in normalized metadata (`object_versions.content_type`) after running latest metadata migration.
 
 ### 14. Get Object (Binary)
 
 - **URL**: `/v2/objects/:id`
 - **Method**: `GET`
 - **Response**: raw bytes
+- **Response Header**:
+  - `Content-Type` is returned from normalized metadata when available; fallback is `application/octet-stream`.
 - **Supported object strategies (current)**:
   - `replication`
   - `ec`
