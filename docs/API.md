@@ -175,3 +175,27 @@ Permanently removes the object metadata and physical files.
   - current version metadata: `tier`, `checksum_sha256`, `encoding_k`, `encoding_m`, `size_bytes`
   - `replica_locations[]` for current version
   - `ec_shard_locations[]` for current version
+
+## v2 Generic Object Endpoints (Binary, Replication-First)
+
+### 13. Put Object (Binary)
+
+- **URL**: `/v2/objects/:id`
+- **Method**: `PUT`
+- **Body**: raw bytes (`--data-binary`)
+- **Current behavior**:
+  - stores object using replication strategy (HOT tier)
+  - does not require JSON
+- **Notes**:
+  - `Content-Type` is accepted and echoed in response, but current metadata persistence for this field is not finalized yet.
+
+### 14. Get Object (Binary)
+
+- **URL**: `/v2/objects/:id`
+- **Method**: `GET`
+- **Response**: raw bytes
+- **Supported object strategies (current)**:
+  - `replication`
+  - `ec`
+- **Not supported in this endpoint (current)**:
+  - `field_hybrid` (returns conflict/error)

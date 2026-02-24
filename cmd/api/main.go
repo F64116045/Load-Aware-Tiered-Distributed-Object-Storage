@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -448,6 +449,98 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery()) // Keep recovery for stability
 	router.Use(PanicRecoveryMiddleware)
+
+	// --- v2 Generic Object Endpoints (binary body, replication-first) ---
+	router.PUT("/v2/objects/:id", func(c *gin.Context) {
+		start := time.Now()
+		objectID := strings.TrimSpace(c.Param("id"))
+		if objectID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
+			return
+		}
+
+		replicaNodes, _, err := getDynamicNodes(c)
+		if err != nil {
+			return
+		}
+
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
+			return
+		}
+
+		opResult, opErr := writeSvc.WriteReplication(c.Request.Context(), replicaNodes, objectID, bodyBytes)
+		if opErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": opErr.Error()})
+			return
+		}
+		if opResult == nil {
+			opResult = map[string]interface{}{}
+		}
+
+		contentType := strings.TrimSpace(c.GetHeader("Content-Type"))
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+
+		opResult["status"] = "ok"
+		opResult["object_id"] = objectID
+		opResult["tier"] = "HOT"
+		opResult["strategy"] = string(config.StrategyReplication)
+		opResult["size_bytes"] = len(bodyBytes)
+		opResult["content_type"] = contentType
+		opResult["latency_ms"] = time.Since(start).Milliseconds()
+		c.JSON(http.StatusCreated, opResult)
+	})
+
+	router.GET("/v2/objects/:id", func(c *gin.Context) {
+		objectID := strings.TrimSpace(c.Param("id"))
+		if objectID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
+			return
+		}
+
+		replicaNodes, ecNodes, err := getDynamicNodes(c)
+		if err != nil {
+			return
+		}
+
+		metadata, _, err := loadMetadata(c.Request.Context(), objectID, etcdClient, metaStore, config.MetaSource)
+		if err != nil {
+			if errors.Is(err, errMetadataNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("Metadata not found for key '%s'", objectID)})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		strategyStr, _ := metadata["strategy"].(string)
+		var dataBytes []byte
+		switch config.StorageStrategy(strategyStr) {
+		case config.StrategyReplication:
+			dataBytes, err = readSvc.ReadReplication(c.Request.Context(), replicaNodes, objectID)
+		case config.StrategyEC:
+			dataBytes, err = readSvc.ReadEC(c.Request.Context(), ecNodes, metadata)
+		default:
+			c.JSON(http.StatusConflict, gin.H{
+				"error":    "object is not binary-readable via /v2/objects",
+				"strategy": strategyStr,
+			})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"detail": err.Error()})
+			return
+		}
+
+		contentType := "application/octet-stream"
+		if ct, ok := metadata["content_type"].(string); ok && strings.TrimSpace(ct) != "" {
+			contentType = strings.TrimSpace(ct)
+		}
+		c.Data(http.StatusOK, contentType, dataBytes)
+	})
 
 	// --- Write Endpoint ---
 	router.POST("/write", func(c *gin.Context) {

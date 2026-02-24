@@ -416,3 +416,14 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Added current runtime component map:
    - `api`, `storage_node_*`, `tiering_worker`, `postgres`, `redpanda`
    - `etcd/healer` legacy profile position explicitly documented
+
+## 2026-02-21 (Milestone 6 generic object API bootstrap, step 17)
+
+1. Added binary v2 object endpoints in `cmd/api/main.go`:
+   - `PUT /v2/objects/:id` (replication-first write, raw bytes)
+   - `GET /v2/objects/:id` (raw bytes read for replication/EC objects)
+2. Scope (current):
+   - no JSON requirement on v2 object write path
+   - `field_hybrid` objects are not exposed via binary v2 GET yet
+3. Documentation:
+   - updated `docs/API.md` with v2 generic object endpoint section
