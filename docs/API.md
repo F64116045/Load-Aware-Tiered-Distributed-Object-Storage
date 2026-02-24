@@ -2,6 +2,10 @@
 
 Base URL: `http://localhost:8000`
 
+Migration note (Docker workflow):
+- Run metadata migrations before starting/rolling API after schema changes:
+  - `docker compose run --rm meta_migrate`
+
 ## Data Plane Endpoints
 
 ### 1. Write Data

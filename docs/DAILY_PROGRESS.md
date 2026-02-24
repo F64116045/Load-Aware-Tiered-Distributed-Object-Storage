@@ -440,3 +440,13 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `GET /v2/objects/:id` returns stored `Content-Type` when available
 4. Updated admin object detail:
    - `/v2/admin/objects/:id` includes current version `content_type`
+
+## 2026-02-21 (Milestone 6 dockerized metadata migration service, step 19)
+
+1. Added `meta_migrate` binary to Docker image build (`Dockerfile`)
+2. Added `meta_migrate` compose service (run-on-demand):
+   - uses same project image
+   - waits for PostgreSQL healthcheck
+   - runs `META_MIGRATE_ACTION=up` by default
+3. Result:
+   - schema migration can be executed in full-Docker workflow without local Go runtime
