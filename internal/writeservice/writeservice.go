@@ -247,7 +247,27 @@ func (s *Service) WriteReplication(
 	key string,
 	value []byte,
 ) (map[string]interface{}, error) {
+	return s.writeReplication(ctx, replicaNodes, key, value, nil)
+}
 
+// WriteReplicationWithMetadata writes replicated bytes and persists additional metadata fields.
+func (s *Service) WriteReplicationWithMetadata(
+	ctx context.Context,
+	replicaNodes []string,
+	key string,
+	value []byte,
+	extraMeta map[string]interface{},
+) (map[string]interface{}, error) {
+	return s.writeReplication(ctx, replicaNodes, key, value, extraMeta)
+}
+
+func (s *Service) writeReplication(
+	ctx context.Context,
+	replicaNodes []string,
+	key string,
+	value []byte,
+	extraMeta map[string]interface{},
+) (map[string]interface{}, error) {
 	walMeta := map[string]interface{}{
 		"strategy": config.StrategyReplication,
 	}
@@ -293,11 +313,15 @@ func (s *Service) WriteReplication(
 	}
 
 	finalMeta := map[string]interface{}{
-		"strategy":      string(config.StrategyReplication),
-		"hot_version":   time.Now().UnixNano(),
-		"cold_version":  0,
-		"cold_hash":     "",
-		"replica_nodes": writtenNodes,
+		"strategy":        string(config.StrategyReplication),
+		"hot_version":     time.Now().UnixNano(),
+		"cold_version":    0,
+		"cold_hash":       "",
+		"original_length": len(value),
+		"replica_nodes":   writtenNodes,
+	}
+	for k, v := range extraMeta {
+		finalMeta[k] = v
 	}
 
 	// [ADDED] Explicitly mark as dirty if partial failure occurred

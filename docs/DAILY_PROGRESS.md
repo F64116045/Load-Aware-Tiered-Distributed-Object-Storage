@@ -416,3 +416,37 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Added current runtime component map:
    - `api`, `storage_node_*`, `tiering_worker`, `postgres`, `redpanda`
    - `etcd/healer` legacy profile position explicitly documented
+
+## 2026-02-21 (Milestone 6 generic object API bootstrap, step 17)
+
+1. Added binary v2 object endpoints in `cmd/api/main.go`:
+   - `PUT /v2/objects/:id` (replication-first write, raw bytes)
+   - `GET /v2/objects/:id` (raw bytes read for replication/EC objects)
+2. Scope (current):
+   - no JSON requirement on v2 object write path
+   - `field_hybrid` objects are not exposed via binary v2 GET yet
+3. Documentation:
+   - updated `docs/API.md` with v2 generic object endpoint section
+
+## 2026-02-21 (Milestone 6 normalized content-type persistence, step 18)
+
+1. Added metadata migration for generic object HTTP metadata:
+   - `object_versions.content_type` column (`000002_object_versions_content_type`)
+2. Updated normalized metadata read/write paths:
+   - `UpsertNormalizedMetadata(...)` persists `content_type`
+   - `GetNormalizedMetadata(...)` returns `content_type`
+3. Updated v2 binary object API:
+   - `PUT /v2/objects/:id` now persists request `Content-Type`
+   - `GET /v2/objects/:id` returns stored `Content-Type` when available
+4. Updated admin object detail:
+   - `/v2/admin/objects/:id` includes current version `content_type`
+
+## 2026-02-21 (Milestone 6 dockerized metadata migration service, step 19)
+
+1. Added `meta_migrate` binary to Docker image build (`Dockerfile`)
+2. Added `meta_migrate` compose service (run-on-demand):
+   - uses same project image
+   - waits for PostgreSQL healthcheck
+   - runs `META_MIGRATE_ACTION=up` by default
+3. Result:
+   - schema migration can be executed in full-Docker workflow without local Go runtime

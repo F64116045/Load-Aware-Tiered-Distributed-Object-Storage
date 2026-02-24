@@ -2,6 +2,10 @@
 
 Base URL: `http://localhost:8000`
 
+Migration note (Docker workflow):
+- Run metadata migrations before starting/rolling API after schema changes:
+  - `docker compose run --rm meta_migrate`
+
 ## Data Plane Endpoints
 
 ### 1. Write Data
@@ -175,3 +179,29 @@ Permanently removes the object metadata and physical files.
   - current version metadata: `tier`, `checksum_sha256`, `encoding_k`, `encoding_m`, `size_bytes`
   - `replica_locations[]` for current version
   - `ec_shard_locations[]` for current version
+
+## v2 Generic Object Endpoints (Binary, Replication-First)
+
+### 13. Put Object (Binary)
+
+- **URL**: `/v2/objects/:id`
+- **Method**: `PUT`
+- **Body**: raw bytes (`--data-binary`)
+- **Current behavior**:
+  - stores object using replication strategy (HOT tier)
+  - does not require JSON
+- **Notes**:
+  - `Content-Type` is persisted in normalized metadata (`object_versions.content_type`) after running latest metadata migration.
+
+### 14. Get Object (Binary)
+
+- **URL**: `/v2/objects/:id`
+- **Method**: `GET`
+- **Response**: raw bytes
+- **Response Header**:
+  - `Content-Type` is returned from normalized metadata when available; fallback is `application/octet-stream`.
+- **Supported object strategies (current)**:
+  - `replication`
+  - `ec`
+- **Not supported in this endpoint (current)**:
+  - `field_hybrid` (returns conflict/error)

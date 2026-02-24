@@ -34,6 +34,29 @@ services:
       - storage_net
 
   # ---------------------------------------------------------------------------
+  # Metadata Migration (run-on-demand)
+  # ---------------------------------------------------------------------------
+  meta_migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/usr/local/bin/meta_migrate"]
+    environment:
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=5
+      - META_MAX_IDLE_CONNS=2
+      - META_CONN_MAX_LIFETIME_SEC=60
+      - META_MIGRATE_ACTION=up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - storage_net
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
   # API Gateway Cluster
   # ---------------------------------------------------------------------------
   api:
