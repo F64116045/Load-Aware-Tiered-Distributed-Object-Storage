@@ -2,6 +2,7 @@ package writeservice
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -185,5 +186,57 @@ func TestWriteReplication_StorageFails(t *testing.T) {
 	resp, _ := etcdClient.Get(context.Background(), "metadata/test_key")
 	if len(resp.Kvs) != 0 {
 		t.Errorf("WriteReplication() failed, but metadata/test_key was still written")
+	}
+}
+
+func TestWriteReplicationWithMetadata_PersistsContentTypeAndLength(t *testing.T) {
+	// 1. Arrange
+	etcdServer, etcdClient := startEmbeddedEtcd(t)
+	defer etcdServer.Close()
+	defer etcdClient.Close()
+
+	mockHttp := &MockHttpClient{
+		StatusCode: 200,
+		ShouldFail: false,
+	}
+	writerSvc := createMockService(etcdClient, mockHttp)
+
+	payload := []byte("binary-payload-123")
+	extraMeta := map[string]interface{}{
+		"content_type": "image/png",
+	}
+
+	// 2. Act
+	nodes := []string{"http://node1"}
+	_, err := writerSvc.WriteReplicationWithMetadata(context.Background(), nodes, "bin_key", payload, extraMeta)
+	if err != nil {
+		t.Fatalf("WriteReplicationWithMetadata() expected success, got error: %v", err)
+	}
+
+	// 3. Assert
+	resp, err := etcdClient.Get(context.Background(), "metadata/bin_key")
+	if err != nil {
+		t.Fatalf("failed to get metadata/bin_key: %v", err)
+	}
+	if len(resp.Kvs) == 0 {
+		t.Fatalf("metadata/bin_key not found")
+	}
+
+	var meta map[string]interface{}
+	if err := json.Unmarshal(resp.Kvs[0].Value, &meta); err != nil {
+		t.Fatalf("failed to parse metadata JSON: %v", err)
+	}
+
+	if got, _ := meta["content_type"].(string); got != "image/png" {
+		t.Fatalf("content_type mismatch, got=%q want=%q", got, "image/png")
+	}
+
+	// JSON numbers are decoded as float64.
+	gotLen, ok := meta["original_length"].(float64)
+	if !ok {
+		t.Fatalf("original_length missing or wrong type, got=%T", meta["original_length"])
+	}
+	if int(gotLen) != len(payload) {
+		t.Fatalf("original_length mismatch, got=%d want=%d", int(gotLen), len(payload))
 	}
 }

@@ -450,3 +450,11 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - runs `META_MIGRATE_ACTION=up` by default
 3. Result:
    - schema migration can be executed in full-Docker workflow without local Go runtime
+
+## 2026-02-21 (Milestone 6 binary metadata test coverage, step 20)
+
+1. Added writeservice unit test:
+   - `TestWriteReplicationWithMetadata_PersistsContentTypeAndLength`
+2. Validation target:
+   - verifies `WriteReplicationWithMetadata(...)` commits `content_type`
+   - verifies `original_length` metadata is persisted as expected
