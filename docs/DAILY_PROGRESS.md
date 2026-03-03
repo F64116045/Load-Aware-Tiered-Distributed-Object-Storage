@@ -536,3 +536,21 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - added runtime profile note to `docs/API.md`
 4. Verification:
    - `docker compose config -q` passes
+
+## 2026-03-03 (Milestone 6 API structure cleanup, step 27)
+
+1. Split route-heavy `cmd/api/main.go` into focused files (no behavior change):
+   - `cmd/api/routes_legacy.go`
+     - `/write`, `/read/:key`, `/delete/:key`
+     - `/node_status`, `/storage_usage`
+   - `cmd/api/routes_admin_misc.go`
+     - `/health`, `/v2/admin/metrics-snapshot`
+     - `/v2/admin/nodes`, `/v2/admin/objects/:id`
+   - `cmd/api/node_registry.go`
+     - active-node snapshot helpers for route usage
+2. Kept existing testable route modules intact:
+   - `registerV2ObjectRoutes(...)`
+   - `registerAdminTaskRoutes(...)`
+3. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes

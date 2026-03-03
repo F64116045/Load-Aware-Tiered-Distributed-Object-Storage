@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +25,6 @@ import (
 	etcdclient "hybrid_distributed_store/internal/etcd"
 	"hybrid_distributed_store/internal/httpclient"
 	"hybrid_distributed_store/internal/meta"
-	"hybrid_distributed_store/internal/monitoringservice"
 	"hybrid_distributed_store/internal/mq"
 	"hybrid_distributed_store/internal/readservice"
 	"hybrid_distributed_store/internal/storageops"
@@ -747,303 +745,44 @@ func main() {
 		now:             time.Now,
 	})
 
-	// --- Write Endpoint ---
-	router.POST("/write", func(c *gin.Context) {
-		start := time.Now()
-		key := c.Query("key")
-		strategy := config.StorageStrategy(c.DefaultQuery("strategy", string(config.StrategyReplication)))
-		hotOnlyStr := c.Query("hot_only")
-		isHotOnly := strings.ToLower(hotOnlyStr) == "true"
-
-		replicaNodes, ecNodes, err := getDynamicNodes(c)
-		if err != nil {
-			return
-		}
-
-		var opResult map[string]interface{}
-		var opErr error
-		var dataDict map[string]interface{}
-
-		contentType := c.GetHeader("Content-Type")
-		if !strings.HasPrefix(contentType, "application/json") {
-			c.JSON(http.StatusUnsupportedMediaType, gin.H{
-				"error":  "Invalid Content-Type",
-				"detail": "Must be application/json",
-			})
-			return
-		}
-
-		if err := c.ShouldBindJSON(&dataDict); err != nil {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Invalid JSON body"})
-			return
-		}
-		if (dataDict == nil || len(dataDict) == 0) && c.Request.ContentLength > 0 {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "JSON body cannot be empty"})
-			return
-		}
-
-		switch strategy {
-		case config.StrategyReplication, config.StrategyEC:
-			bodyBytes, errSer := utilsSvc.Serialize(dataDict)
-			if errSer != nil {
-				panic(fmt.Errorf("JSON serialization failed: %v", errSer))
+	registerLegacyRoutes(router, legacyRouteDeps{
+		getDynamicNodes: getDynamicNodes,
+		loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+			return loadMetadata(ctx, key, etcdClient, metaStore, config.MetaSource)
+		},
+		writeReplication:  writeSvc.WriteReplication,
+		writeEC:           writeSvc.WriteEC,
+		writeFieldHybrid:  writeSvc.WriteFieldHybrid,
+		serialize:         utilsSvc.Serialize,
+		deserialize:       utilsSvc.Deserialize,
+		readReplication:   readSvc.ReadReplication,
+		readEC:            readSvc.ReadEC,
+		readFieldHybrid:   readSvc.ReadFieldHybrid,
+		deleteReplication: storageOpsSvc.DeleteReplication,
+		deleteEC:          storageOpsSvc.DeleteEC,
+		deleteFieldHybrid: storageOpsSvc.DeleteFieldHybrid,
+		deleteNormalizedMetadata: func(ctx context.Context, key string) error {
+			if !config.MetaEnabled || metaStore == nil {
+				return nil
 			}
-			if strategy == config.StrategyReplication {
-				opResult, opErr = writeSvc.WriteReplication(c.Request.Context(), replicaNodes, key, bodyBytes)
-			} else {
-				opResult, opErr = writeSvc.WriteEC(c.Request.Context(), ecNodes, key, bodyBytes)
+			return metaStore.DeleteNormalizedMetadata(ctx, key)
+		},
+		deleteEtcdMetadata: func(ctx context.Context, key string) error {
+			if config.MetaSource == "postgres" || etcdClient == nil {
+				return nil
 			}
-		case config.StrategyFieldHybrid:
-			opResult, opErr = writeSvc.WriteFieldHybrid(c.Request.Context(), replicaNodes, ecNodes, key, dataDict, isHotOnly)
-		default:
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Invalid strategy"})
-			return
-		}
-
-		if opErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": opErr.Error()})
-			return
-		}
-
-		if opResult == nil {
-			opResult = make(map[string]interface{})
-		}
-
-		opResult["status"] = "ok"
-		opResult["strategy"] = string(strategy)
-		opResult["key"] = key
-		opResult["latency_ms"] = time.Since(start).Milliseconds()
-		c.JSON(http.StatusOK, opResult)
+			_, err := etcdClient.Delete(ctx, fmt.Sprintf("metadata/%s", key))
+			return err
+		},
+		getActiveNodes: getActiveNodeURLs,
 	})
 
-	// --- Read Endpoint ---
-	router.GET("/read/:key", func(c *gin.Context) {
-		key := c.Param("key")
-		replicaNodes, ecNodes, err := getDynamicNodes(c)
-		if err != nil {
-			return
-		}
-
-		metadata, _, err := loadMetadata(c.Request.Context(), key, etcdClient, metaStore, config.MetaSource)
-		if err != nil {
-			if errors.Is(err, errMetadataNotFound) {
-				c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("Metadata not found for key '%s'", key)})
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		strategyStr, _ := metadata["strategy"].(string)
-		switch config.StorageStrategy(strategyStr) {
-		case config.StrategyReplication, config.StrategyEC:
-			var dataBytes []byte
-			var errRead error
-			if config.StorageStrategy(strategyStr) == config.StrategyReplication {
-				dataBytes, errRead = readSvc.ReadReplication(c.Request.Context(), replicaNodes, key)
-			} else {
-				dataBytes, errRead = readSvc.ReadEC(c.Request.Context(), ecNodes, metadata)
-			}
-
-			if errRead != nil {
-				c.JSON(http.StatusNotFound, gin.H{"detail": errRead.Error()})
-				return
-			}
-
-			dataDict, errDes := utilsSvc.Deserialize(dataBytes)
-			if errDes != nil {
-				log.Printf("[Error] Key: %s, Parse failed: %v", key, errDes)
-
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"status":  "error",
-					"code":    500,
-					"message": "Data check failed",
-					"detail":  "The data retrieved is corrupted. Please retry.",
-				})
-				return
-			} else {
-				c.JSON(http.StatusOK, dataDict)
-			}
-
-		case config.StrategyFieldHybrid:
-			dataDict, err := readSvc.ReadFieldHybrid(c.Request.Context(), replicaNodes, ecNodes, metadata)
-			if err != nil {
-				c.JSON(http.StatusNotFound, gin.H{"detail": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, dataDict)
-
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Unknown strategy in metadata: %s", strategyStr)})
-		}
-	})
-
-	// --- Delete Endpoint ---
-	router.DELETE("/delete/:key", func(c *gin.Context) {
-		start := time.Now()
-		key := c.Param("key")
-		replicaNodes, ecNodes, err := getDynamicNodes(c)
-		if err != nil {
-			return
-		}
-
-		result := make(map[string]interface{})
-		strategyStr := "N/A"
-		etcdKey := fmt.Sprintf("metadata/%s", key)
-
-		metadata, _, metaErr := loadMetadata(c.Request.Context(), key, etcdClient, metaStore, config.MetaSource)
-		if metaErr != nil && !errors.Is(metaErr, errMetadataNotFound) {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": metaErr.Error()})
-			return
-		}
-		if metadata == nil {
-			metadata = make(map[string]interface{})
-		}
-
-		if len(metadata) > 0 {
-			log.Printf("%sDelete [Index Found] key=%s%s\n", config.Colors["RED"], key, config.Colors["RESET"])
-			strategyStr, _ = metadata["strategy"].(string)
-
-			var hotCount, coldCount int
-			var delErr error
-
-			switch config.StorageStrategy(strategyStr) {
-			case config.StrategyReplication:
-				hotCount, delErr = storageOpsSvc.DeleteReplication(c.Request.Context(), replicaNodes, key)
-				result["nodes_deleted"] = hotCount
-			case config.StrategyEC:
-				coldCount, delErr = storageOpsSvc.DeleteEC(c.Request.Context(), ecNodes, metadata)
-				result["chunks_deleted"] = coldCount
-			case config.StrategyFieldHybrid:
-				hotCount, coldCount, delErr = storageOpsSvc.DeleteFieldHybrid(c.Request.Context(), replicaNodes, ecNodes, metadata)
-				result["hot_nodes_deleted"] = hotCount
-				result["cold_chunks_deleted"] = coldCount
-			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Unknown strategy: %s", strategyStr)})
-				return
-			}
-
-			if delErr != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Data plane deletion failed: %v", delErr)})
-				return
-			}
-
-			if config.MetaEnabled && metaStore != nil {
-				if err := metaStore.DeleteNormalizedMetadata(c.Request.Context(), key); err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Postgres normalized) deletion failed: %v", err)})
-					return
-				}
-			}
-			if config.MetaSource != "postgres" && etcdClient != nil {
-				_, err = etcdClient.Delete(c.Request.Context(), etcdKey)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Etcd) deletion failed: %v", err)})
-					return
-				}
-			}
-
-		} else {
-			log.Printf("%sDelete [Index Not Found] key=%s. Executing Blind Delete...%s\n", config.Colors["YELLOW"], key, config.Colors["RESET"])
-			strategyStr = "blind_delete"
-
-			blindMetadata := map[string]interface{}{"key_name": key}
-			storageOpsSvc.DeleteReplication(c.Request.Context(), replicaNodes, key)
-			storageOpsSvc.DeleteEC(c.Request.Context(), ecNodes, blindMetadata)
-			storageOpsSvc.DeleteFieldHybrid(c.Request.Context(), replicaNodes, ecNodes, blindMetadata)
-
-			result["detail"] = "key_not_found_or_zombie_cleaned"
-		}
-
-		result["status"] = "ok"
-		result["strategy"] = strategyStr
-		result["key"] = key
-		result["latency_ms"] = time.Since(start).Milliseconds()
-		c.JSON(http.StatusOK, result)
-	})
-
-	// --- Monitoring Endpoints ---
-	router.GET("/node_status", func(c *gin.Context) {
-		var currentNodes []string
-		NodeListLock.RLock()
-		for _, url := range ActiveNodeURLs {
-			currentNodes = append(currentNodes, url)
-		}
-		NodeListLock.RUnlock()
-
-		if len(currentNodes) == 0 {
-			c.JSON(http.StatusOK, gin.H{})
-			return
-		}
-
-		statusMap, err := monitoringservice.FetchNodeStatus(c.Request.Context(), currentNodes)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch node status: %v", err)})
-			return
-		}
-		c.JSON(http.StatusOK, statusMap)
-	})
-
-	router.GET("/storage_usage", func(c *gin.Context) {
-		var currentNodes []string
-		NodeListLock.RLock()
-		for _, url := range ActiveNodeURLs {
-			currentNodes = append(currentNodes, url)
-		}
-		NodeListLock.RUnlock()
-
-		if len(currentNodes) == 0 {
-			c.JSON(http.StatusOK, gin.H{"total_system_size": 0, "active_nodes_with_data": 0, "total_nodes_queried": 0})
-			return
-		}
-
-		usageMap, err := monitoringservice.FetchStorageUsage(c.Request.Context(), currentNodes)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch storage usage: %v", err)})
-			return
-		}
-		c.JSON(http.StatusOK, usageMap)
-	})
-
-	router.GET("/health", func(c *gin.Context) {
-		hostname, _ := os.Hostname()
-		apiStatus := "healthy"
-		if config.MetaEnabled && metadataStatus != "up" {
-			apiStatus = "degraded"
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"status":   apiStatus,
-			"service":  "api_gateway",
-			"hostname": hostname,
-			"metadata": gin.H{
-				"enabled":      config.MetaEnabled,
-				"status":       metadataStatus,
-				"driver":       config.MetaDriver,
-				"source":       config.MetaSource,
-				"auto_migrate": config.MetaAutoMigrate,
-				"error":        metadataErr,
-				"lookup":       metadataLookupSnapshot(),
-			},
-			"node_discovery": gin.H{
-				"configured_source": config.NodeDiscoverySource,
-				"active_source":     nodeDiscoveryActive,
-				"stale_sec":         config.NodeHeartbeatStaleSec,
-			},
-		})
-	})
-
-	router.GET("/v2/admin/metrics-snapshot", func(c *gin.Context) {
-		NodeListLock.RLock()
-		activeNodes := len(ActiveNodeURLs)
-		NodeListLock.RUnlock()
-		c.JSON(http.StatusOK, gin.H{
-			"metadata_lookup": metadataLookupSnapshot(),
-			"node_discovery": gin.H{
-				"configured_source": config.NodeDiscoverySource,
-				"active_source":     nodeDiscoveryActive,
-				"active_node_count": activeNodes,
-			},
-			"timestamp_unix": time.Now().Unix(),
-		})
+	registerAdminObservabilityRoutes(router, adminObservabilityRouteDeps{
+		metadataStatus:      metadataStatus,
+		metadataErr:         metadataErr,
+		nodeDiscoveryActive: nodeDiscoveryActive,
+		getActiveNodeCount:  getActiveNodeCount,
+		metaStore:           metaStore,
 	})
 
 	registerAdminTaskRoutes(router, adminTaskRouteDeps{
@@ -1054,137 +793,11 @@ func main() {
 		cancelTask:        metaStore.CancelTieringTask,
 	})
 
-	router.GET("/v2/admin/nodes", func(c *gin.Context) {
-		if !config.MetaEnabled || metaStore == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
-			return
-		}
-
-		limit := 100
-		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-			parsed, err := strconv.Atoi(raw)
-			if err != nil || parsed <= 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
-				return
-			}
-			limit = parsed
-		}
-
-		nodes, err := metaStore.ListNodeHeartbeats(c.Request.Context(), limit)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		staleWindow := time.Duration(config.NodeHeartbeatStaleSec) * time.Second
-		now := time.Now()
-		out := make([]gin.H, 0, len(nodes))
-		for _, n := range nodes {
-			isStale := now.Sub(n.LastSeenAt) > staleWindow
-			out = append(out, gin.H{
-				"node_id":        n.NodeID,
-				"status":         n.Status,
-				"last_seen_at":   n.LastSeenAt,
-				"is_stale":       isStale,
-				"free_bytes":     n.FreeBytes,
-				"io_queue_depth": n.IOQueueDepth,
-				"cpu_load":       n.CPULoad,
-			})
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"count":     len(out),
-			"stale_sec": config.NodeHeartbeatStaleSec,
-			"nodes":     out,
-			"source":    "postgres",
-			"generated": now.Unix(),
-		})
-	})
-
-	router.GET("/v2/admin/objects/:id", func(c *gin.Context) {
-		if !config.MetaEnabled || metaStore == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
-			return
-		}
-
-		objectID := strings.TrimSpace(c.Param("id"))
-		if objectID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
-			return
-		}
-
-		view, err := metaStore.GetObjectAdminView(c.Request.Context(), objectID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if view == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "object not found"})
-			return
-		}
-
-		var version interface{}
-		if view.Version != nil {
-			version = gin.H{
-				"version":         view.Version.Version,
-				"size_bytes":      view.Version.SizeBytes,
-				"checksum_sha256": view.Version.ChecksumSHA256,
-				"tier":            view.Version.Tier,
-				"content_type":    nullStringOrNil(view.Version.ContentType),
-				"encoding_k":      nullInt64OrNil(view.Version.EncodingK),
-				"encoding_m":      nullInt64OrNil(view.Version.EncodingM),
-				"created_at":      view.Version.CreatedAt,
-			}
-		}
-
-		replicas := make([]gin.H, 0, len(view.ReplicaLocations))
-		for _, r := range view.ReplicaLocations {
-			replicas = append(replicas, gin.H{
-				"node_id": r.NodeID,
-				"path":    r.Path,
-				"status":  r.Status,
-			})
-		}
-
-		shards := make([]gin.H, 0, len(view.ECShardLocations))
-		for _, s := range view.ECShardLocations {
-			shards = append(shards, gin.H{
-				"shard_index": s.ShardIndex,
-				"node_id":     s.NodeID,
-				"path":        s.Path,
-				"status":      s.Status,
-			})
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"object_id":          view.ObjectID,
-			"current_version":    view.CurrentVersion,
-			"state":              view.State,
-			"created_at":         view.CreatedAt,
-			"updated_at":         view.UpdatedAt,
-			"version":            version,
-			"replica_locations":  replicas,
-			"ec_shard_locations": shards,
-		})
-	})
+	registerAdminMetadataRoutes(router, metaStore)
 
 	// 4. Start Server
 	log.Println("[API] Starting Gin Server on 0.0.0.0:8000...")
 	if err := router.Run("0.0.0.0:8000"); err != nil {
 		log.Fatalf("Gin Server failed to start: %v", err)
 	}
-}
-
-func nullInt64OrNil(v sql.NullInt64) interface{} {
-	if !v.Valid {
-		return nil
-	}
-	return v.Int64
-}
-
-func nullStringOrNil(v sql.NullString) interface{} {
-	if !v.Valid {
-		return nil
-	}
-	return v.String
 }
