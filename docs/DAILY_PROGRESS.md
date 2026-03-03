@@ -523,3 +523,16 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `go test ./internal/writeservice` passes
    - `go test ./...` passes
    - `docker compose config -q` passes
+
+## 2026-03-03 (Milestone 6 Redpanda default-off profile cleanup, step 26)
+
+1. Updated Docker default runtime to postgres-first profile:
+   - `api` no longer exports `WAL_BROKER` / `WAL_TOPIC` in default env
+   - `redpanda` moved behind compose profiles: `legacy-wal`, `legacy-etcd`
+2. Result:
+   - default `docker compose up` no longer requires Redpanda for API startup
+   - legacy WAL path is explicit profile opt-in
+3. Documentation:
+   - added runtime profile note to `docs/API.md`
+4. Verification:
+   - `docker compose config -q` passes

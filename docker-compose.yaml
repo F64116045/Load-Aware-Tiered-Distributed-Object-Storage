@@ -68,8 +68,6 @@ services:
       replicas: 3
     environment:
       - WAL_ENABLED=false
-      - WAL_BROKER=redpanda:9092
-      - WAL_TOPIC=wal-events
       - NODE_NAMES_CSV=storage_node_1,storage_node_2,storage_node_3,storage_node_4,storage_node_5,storage_node_6
       - META_ENABLED=true
       - META_DRIVER=postgres
@@ -103,6 +101,7 @@ services:
   # WAL Service (Redpanda)
   # ---------------------------------------------------------------------------
   redpanda:
+    profiles: ["legacy-wal", "legacy-etcd"]
     image: docker.redpanda.com/redpandadata/redpanda:v23.3.6
     command:
       - redpanda start

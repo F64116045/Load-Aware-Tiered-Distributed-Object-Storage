@@ -6,6 +6,12 @@ Migration note (Docker workflow):
 - Run metadata migrations before starting/rolling API after schema changes:
   - `docker compose run --rm meta_migrate`
 
+Runtime profile note (Docker workflow):
+- Default profile is postgres-first and does not require Redpanda:
+  - `WAL_ENABLED=false` on `api`
+  - `redpanda` is behind legacy profiles (`legacy-wal` / `legacy-etcd`)
+- If you need legacy WAL path, explicitly enable profile + API WAL env override.
+
 ## Data Plane Endpoints
 
 ### 1. Write Data
