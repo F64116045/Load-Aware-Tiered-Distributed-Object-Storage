@@ -659,3 +659,18 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - added build note in `docs/API.md`
 4. Verification:
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 legacy hybrid hard removal, step 35)
+
+1. Removed legacy hybrid implementation files:
+   - `internal/writeservice/writeservice_legacy_hybrid.go`
+   - `internal/readservice/readservice_legacy_hybrid.go`
+   - `internal/storageops/storageops_legacy_hybrid.go`
+2. Removed hybrid-focused unit tests that depended on deleted methods:
+   - `TestReadFieldHybrid_Success`
+   - `TestDeleteFieldHybrid`
+   - `TestDeleteFieldHybrid_BlindDelete`
+3. Updated docs to reflect hard removal state.
+4. Verification:
+   - `go test ./...` passes
+   - `go test -tags no_legacy_hybrid ./...` passes
