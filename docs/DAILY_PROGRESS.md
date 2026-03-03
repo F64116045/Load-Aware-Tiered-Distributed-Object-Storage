@@ -618,3 +618,17 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 4. Verification:
    - `go test ./internal/writeservice ./internal/readservice ./internal/storageops` passes
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 active interface convergence, step 32)
+
+1. Narrowed core interfaces to active strategies only:
+   - `internal/interfaces/IReadService` now exposes:
+     - `CheckFirstWrite`
+     - `ReadReplication`
+     - `ReadEC`
+   - `internal/interfaces/IStorageOps` now exposes:
+     - `DeleteReplication`
+     - `DeleteEC`
+2. Legacy hybrid methods remain implemented on concrete services in legacy files, but are no longer part of active core contracts.
+3. Verification:
+   - `go test ./...` passes
