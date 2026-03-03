@@ -2,6 +2,19 @@
 
 Base URL: `http://localhost:8000`
 
+Migration note (Docker workflow):
+- Run metadata migrations before starting/rolling API after schema changes:
+  - `docker compose run --rm meta_migrate`
+
+Runtime profile note (Docker workflow):
+- Default profile is postgres-first and does not require Redpanda:
+  - `WAL_ENABLED=false` on `api`
+  - `redpanda` is behind legacy profiles (`legacy-wal` / `legacy-etcd`)
+- If you need legacy WAL path, explicitly enable profile + API WAL env override.
+
+Build note:
+- Current mainline build no longer includes legacy `field_hybrid` implementation paths.
+
 ## Data Plane Endpoints
 
 ### 1. Write Data
@@ -13,8 +26,10 @@ Writes a JSON object or binary data to the distributed store.
 - **Headers**: `Content-Type: application/json`
 - **Query Parameters**:
     - `key` (Required): Unique identifier for the object.
-    - `strategy` (Optional): `replication`, `ec`, or `field_hybrid` (default: `replication`).
-    - `hot_only` (Optional): `true` to force a hot-only update (debug use).
+    - `strategy` (Optional): `replication` only (default: `replication`).
+    - `hot_only` is deprecated together with `field_hybrid`.
+- **Deprecation note**:
+  - direct `ec` write via `/write` is deprecated; use replication write + background tiering worker.
 
 **Request Body (Example)**:
 
@@ -49,6 +64,8 @@ Retrieves data. The system automatically determines the storage strategy and rec
 
 - **URL**: `/read/:key`
 - **Method**: `GET`
+- **Note**:
+  - metadata with `strategy=field_hybrid` is deprecated and returns conflict in current profile.
 
 **Success Response (200 OK)**:
 Returns the original JSON object.
@@ -68,6 +85,8 @@ Permanently removes the object metadata and physical files.
 
 - **URL**: `/delete/:key`
 - **Method**: `DELETE`
+- **Note**:
+  - metadata with `strategy=field_hybrid` is deprecated and returns conflict in current profile.
 
 **Success Response (200 OK)**:
 
@@ -175,3 +194,29 @@ Permanently removes the object metadata and physical files.
   - current version metadata: `tier`, `checksum_sha256`, `encoding_k`, `encoding_m`, `size_bytes`
   - `replica_locations[]` for current version
   - `ec_shard_locations[]` for current version
+
+## v2 Generic Object Endpoints (Binary, Replication-First)
+
+### 13. Put Object (Binary)
+
+- **URL**: `/v2/objects/:id`
+- **Method**: `PUT`
+- **Body**: raw bytes (`--data-binary`)
+- **Current behavior**:
+  - stores object using replication strategy (HOT tier)
+  - does not require JSON
+- **Notes**:
+  - `Content-Type` is persisted in normalized metadata (`object_versions.content_type`) after running latest metadata migration.
+
+### 14. Get Object (Binary)
+
+- **URL**: `/v2/objects/:id`
+- **Method**: `GET`
+- **Response**: raw bytes
+- **Response Header**:
+  - `Content-Type` is returned from normalized metadata when available; fallback is `application/octet-stream`.
+- **Supported object strategies (current)**:
+  - `replication`
+  - `ec`
+- **Not supported in this endpoint (current)**:
+  - `field_hybrid` (returns conflict/error)

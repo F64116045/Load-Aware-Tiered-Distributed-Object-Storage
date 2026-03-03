@@ -66,6 +66,8 @@ const (
 var ExpectedNodeNames = map[string]bool{}
 
 var (
+	// WALEnabled controls whether synchronous WAL (Redpanda) is enabled on write path.
+	WALEnabled = getEnvBool("WAL_ENABLED", false)
 	// MetaEnabled controls whether PostgreSQL-backed metadata service is enabled.
 	MetaEnabled = getEnvBool("META_ENABLED", false)
 	// MetaAutoMigrate controls whether API runs metadata migration on startup.

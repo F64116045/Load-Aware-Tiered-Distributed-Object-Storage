@@ -25,6 +25,7 @@ type ObjectVersionAdminView struct {
 	SizeBytes      int64
 	ChecksumSHA256 string
 	Tier           string
+	ContentType    sql.NullString
 	EncodingK      sql.NullInt64
 	EncodingM      sql.NullInt64
 	CreatedAt      time.Time
@@ -94,7 +95,7 @@ WHERE object_id = $1
 
 func (s *Store) loadCurrentVersionAdminView(ctx context.Context, objectID string, version int64) (*ObjectVersionAdminView, error) {
 	const q = `
-SELECT version, size_bytes, checksum_sha256, tier, encoding_k, encoding_m, created_at
+SELECT version, size_bytes, checksum_sha256, tier, content_type, encoding_k, encoding_m, created_at
 FROM object_versions
 WHERE object_id = $1
   AND version = $2
@@ -105,6 +106,7 @@ WHERE object_id = $1
 		&out.SizeBytes,
 		&out.ChecksumSHA256,
 		&out.Tier,
+		&out.ContentType,
 		&out.EncodingK,
 		&out.EncodingM,
 		&out.CreatedAt,
