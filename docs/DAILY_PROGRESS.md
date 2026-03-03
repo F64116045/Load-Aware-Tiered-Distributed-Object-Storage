@@ -489,3 +489,17 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Verification:
    - `go test ./internal/readservice` passes
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 admin-task handler test coverage, step 24)
+
+1. Refactored admin task routes for testability:
+   - extracted `registerAdminTaskRoutes(...)` in `cmd/api/main.go`
+   - added dependency-injection struct `adminTaskRouteDeps`
+2. Added `cmd/api/admin_tasks_test.go` coverage:
+   - `GET /v2/admin/tasks` success path (`filters`, `state_counts`, `actions`)
+   - `GET /v2/admin/tasks` invalid limit (`400`) and metadata unavailable (`503`)
+   - `POST /v2/admin/tasks/:id/retry-now` success/not-found/internal-error
+   - `POST /v2/admin/tasks/:id/cancel` default reason/query reason/not-found
+3. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes

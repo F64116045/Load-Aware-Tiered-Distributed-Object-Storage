@@ -355,6 +355,14 @@ type v2ObjectRouteDeps struct {
 	now                          func() time.Time
 }
 
+type adminTaskRouteDeps struct {
+	metadataAvailable func() bool
+	listTasks         func(ctx context.Context, state, taskType string, limit int) ([]meta.TieringTask, error)
+	listStateCounts   func(ctx context.Context, taskType string) (map[string]int64, error)
+	requeueNow        func(ctx context.Context, taskID string) (bool, error)
+	cancelTask        func(ctx context.Context, taskID, reason string) (bool, error)
+}
+
 func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 	nowFn := deps.now
 	if nowFn == nil {
@@ -457,6 +465,162 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			contentType = strings.TrimSpace(ct)
 		}
 		c.Data(http.StatusOK, contentType, dataBytes)
+	})
+}
+
+func registerAdminTaskRoutes(router gin.IRoutes, deps adminTaskRouteDeps) {
+	router.GET("/v2/admin/tasks", func(c *gin.Context) {
+		if deps.metadataAvailable == nil || !deps.metadataAvailable() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		state := strings.TrimSpace(c.Query("state"))
+		taskType := strings.TrimSpace(c.Query("task_type"))
+		limit := 100
+		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+				return
+			}
+			limit = parsed
+		}
+
+		tasks, err := deps.listTasks(c.Request.Context(), state, taskType, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		stateCounts, err := deps.listStateCounts(c.Request.Context(), taskType)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		out := make([]gin.H, 0, len(tasks))
+		for _, t := range tasks {
+			lastErr := ""
+			if t.LastError.Valid {
+				lastErr = t.LastError.String
+			}
+			retryNowAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT" || t.TaskState == "FAILED"
+			cancelAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT"
+			var startedAt interface{}
+			if t.StartedAt.Valid {
+				startedAt = t.StartedAt.Time
+			}
+			var finishedAt interface{}
+			if t.FinishedAt.Valid {
+				finishedAt = t.FinishedAt.Time
+			}
+			out = append(out, gin.H{
+				"task_id":      t.TaskID,
+				"object_id":    t.ObjectID,
+				"version":      t.Version,
+				"task_type":    t.TaskType,
+				"task_state":   t.TaskState,
+				"priority":     t.Priority,
+				"retry_count":  t.RetryCount,
+				"last_error":   lastErr,
+				"scheduled_at": t.ScheduledAt,
+				"started_at":   startedAt,
+				"finished_at":  finishedAt,
+				"actions": gin.H{
+					"retry_now": retryNowAllowed,
+					"cancel":    cancelAllowed,
+				},
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"count": len(out),
+			"filters": gin.H{
+				"state":     state,
+				"task_type": taskType,
+				"limit":     limit,
+			},
+			"state_counts": stateCounts,
+			"tasks":        out,
+		})
+	})
+
+	router.POST("/v2/admin/tasks/:id/retry-now", func(c *gin.Context) {
+		if deps.metadataAvailable == nil || !deps.metadataAvailable() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		taskID := strings.TrimSpace(c.Param("id"))
+		if taskID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+			return
+		}
+
+		ok, err := deps.requeueNow(c.Request.Context(), taskID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":   "task not found or not requeueable",
+				"task_id": taskID,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"task_id": taskID,
+			"action":  "requeued_now",
+		})
+	})
+
+	router.POST("/v2/admin/tasks/:id/cancel", func(c *gin.Context) {
+		if deps.metadataAvailable == nil || !deps.metadataAvailable() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		taskID := strings.TrimSpace(c.Param("id"))
+		if taskID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+			return
+		}
+
+		reason := strings.TrimSpace(c.Query("reason"))
+		if reason == "" {
+			var body struct {
+				Reason string `json:"reason"`
+			}
+			if err := c.ShouldBindJSON(&body); err == nil {
+				reason = strings.TrimSpace(body.Reason)
+			}
+		}
+		if reason == "" {
+			reason = "cancelled_by_admin"
+		}
+
+		ok, err := deps.cancelTask(c.Request.Context(), taskID, reason)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":   "task not found or not cancellable",
+				"task_id": taskID,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"task_id": taskID,
+			"action":  "cancelled",
+			"reason":  reason,
+		})
 	})
 }
 
@@ -877,158 +1041,12 @@ func main() {
 		})
 	})
 
-	router.GET("/v2/admin/tasks", func(c *gin.Context) {
-		if !config.MetaEnabled || metaStore == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
-			return
-		}
-
-		state := strings.TrimSpace(c.Query("state"))
-		taskType := strings.TrimSpace(c.Query("task_type"))
-		limit := 100
-		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-			parsed, err := strconv.Atoi(raw)
-			if err != nil || parsed <= 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
-				return
-			}
-			limit = parsed
-		}
-
-		tasks, err := metaStore.ListTieringTasks(c.Request.Context(), state, taskType, limit)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		stateCounts, err := metaStore.ListTieringTaskStateCounts(c.Request.Context(), taskType)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		out := make([]gin.H, 0, len(tasks))
-		for _, t := range tasks {
-			lastErr := ""
-			if t.LastError.Valid {
-				lastErr = t.LastError.String
-			}
-			retryNowAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT" || t.TaskState == "FAILED"
-			cancelAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT"
-			var startedAt interface{}
-			if t.StartedAt.Valid {
-				startedAt = t.StartedAt.Time
-			}
-			var finishedAt interface{}
-			if t.FinishedAt.Valid {
-				finishedAt = t.FinishedAt.Time
-			}
-			out = append(out, gin.H{
-				"task_id":      t.TaskID,
-				"object_id":    t.ObjectID,
-				"version":      t.Version,
-				"task_type":    t.TaskType,
-				"task_state":   t.TaskState,
-				"priority":     t.Priority,
-				"retry_count":  t.RetryCount,
-				"last_error":   lastErr,
-				"scheduled_at": t.ScheduledAt,
-				"started_at":   startedAt,
-				"finished_at":  finishedAt,
-				"actions": gin.H{
-					"retry_now": retryNowAllowed,
-					"cancel":    cancelAllowed,
-				},
-			})
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"count": len(out),
-			"filters": gin.H{
-				"state":     state,
-				"task_type": taskType,
-				"limit":     limit,
-			},
-			"state_counts": stateCounts,
-			"tasks":        out,
-		})
-	})
-
-	router.POST("/v2/admin/tasks/:id/retry-now", func(c *gin.Context) {
-		if !config.MetaEnabled || metaStore == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
-			return
-		}
-
-		taskID := strings.TrimSpace(c.Param("id"))
-		if taskID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
-			return
-		}
-
-		ok, err := metaStore.RequeueTieringTaskNow(c.Request.Context(), taskID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if !ok {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":   "task not found or not requeueable",
-				"task_id": taskID,
-			})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "ok",
-			"task_id": taskID,
-			"action":  "requeued_now",
-		})
-	})
-
-	router.POST("/v2/admin/tasks/:id/cancel", func(c *gin.Context) {
-		if !config.MetaEnabled || metaStore == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
-			return
-		}
-
-		taskID := strings.TrimSpace(c.Param("id"))
-		if taskID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
-			return
-		}
-
-		reason := strings.TrimSpace(c.Query("reason"))
-		if reason == "" {
-			var body struct {
-				Reason string `json:"reason"`
-			}
-			if err := c.ShouldBindJSON(&body); err == nil {
-				reason = strings.TrimSpace(body.Reason)
-			}
-		}
-		if reason == "" {
-			reason = "cancelled_by_admin"
-		}
-
-		ok, err := metaStore.CancelTieringTask(c.Request.Context(), taskID, reason)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if !ok {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":   "task not found or not cancellable",
-				"task_id": taskID,
-			})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "ok",
-			"task_id": taskID,
-			"action":  "cancelled",
-			"reason":  reason,
-		})
+	registerAdminTaskRoutes(router, adminTaskRouteDeps{
+		metadataAvailable: func() bool { return config.MetaEnabled && metaStore != nil },
+		listTasks:         metaStore.ListTieringTasks,
+		listStateCounts:   metaStore.ListTieringTaskStateCounts,
+		requeueNow:        metaStore.RequeueTieringTaskNow,
+		cancelTask:        metaStore.CancelTieringTask,
 	})
 
 	router.GET("/v2/admin/nodes", func(c *gin.Context) {
