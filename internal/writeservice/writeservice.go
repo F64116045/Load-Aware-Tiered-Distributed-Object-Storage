@@ -28,7 +28,6 @@ type Service struct {
 	mq         *mq.Client
 	walProduce func(ctx context.Context, key string, value []byte) error
 	http       interfaces.IHttpClient
-	read       interfaces.IReadService
 	ec         interfaces.IEcDriver
 	utils      interfaces.IUtilsSvc
 	meta       *meta.Store
@@ -39,7 +38,6 @@ func NewService(
 	etcd interfaces.IEtcdClient,
 	mqClient *mq.Client,
 	http interfaces.IHttpClient,
-	read interfaces.IReadService,
 	ec interfaces.IEcDriver,
 	utils interfaces.IUtilsSvc,
 	metaStore *meta.Store,
@@ -54,7 +52,6 @@ func NewService(
 			return mqClient.ProduceSync(ctx, key, value)
 		},
 		http:  http,
-		read:  read,
 		ec:    ec,
 		utils: utils,
 		meta:  metaStore,

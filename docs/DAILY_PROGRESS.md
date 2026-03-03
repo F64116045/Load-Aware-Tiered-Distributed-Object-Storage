@@ -632,3 +632,16 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Legacy hybrid methods remain implemented on concrete services in legacy files, but are no longer part of active core contracts.
 3. Verification:
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 writeservice dependency trim, step 33)
+
+1. Removed unused read dependency from `writeservice.Service`:
+   - dropped `read` field
+   - simplified `writeservice.NewService(...)` signature
+2. Updated call sites:
+   - `cmd/api/bootstrap_runtime.go`
+   - `internal/writeservice/writeservice_test.go`
+3. Cleaned obsolete read mocks in writeservice tests.
+4. Verification:
+   - `go test ./internal/writeservice` passes
+   - `go test ./...` passes

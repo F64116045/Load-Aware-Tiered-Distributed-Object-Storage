@@ -97,7 +97,7 @@ func initAppRuntime() (*appRuntime, func()) {
 	ecDriver := ec.NewService()
 	rt.storageOpsSvc = storageops.NewService(httpClient)
 	rt.readSvc = readservice.NewService(httpClient, ecDriver, rt.utilsSvc)
-	rt.writeSvc = writeservice.NewService(rt.etcdClient, rt.mqClient, httpClient, rt.readSvc, ecDriver, rt.utilsSvc, rt.metaStore)
+	rt.writeSvc = writeservice.NewService(rt.etcdClient, rt.mqClient, httpClient, ecDriver, rt.utilsSvc, rt.metaStore)
 
 	cleanup := func() {
 		if rt.mqClient != nil {

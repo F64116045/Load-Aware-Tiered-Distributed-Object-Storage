@@ -39,25 +39,6 @@ func (m *MockHttpClient) Do(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// MockReadService implements IReadService.
-type MockReadService struct{}
-
-func (m *MockReadService) CheckFirstWrite(ctx context.Context, replicaNodes []string, hotKey string) (bool, error) {
-	return true, nil
-}
-func (m *MockReadService) GetExistingColdFields(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (map[string]interface{}, error) {
-	return nil, nil
-}
-func (m *MockReadService) ReadReplication(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
-	return nil, nil
-}
-func (m *MockReadService) ReadEC(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
-	return nil, nil
-}
-func (m *MockReadService) ReadFieldHybrid(ctx context.Context, replicaNodes, ecNodes []string, metadata map[string]interface{}) (map[string]interface{}, error) {
-	return nil, nil
-}
-
 // MockEcDriver implements IEcDriver.
 type MockEcDriver struct{}
 
@@ -118,11 +99,10 @@ func startEmbeddedEtcd(t *testing.T) (*embed.Etcd, *etcd.Client) {
 
 // Helper: Create service with dependencies
 func createMockService(etcdClient interfaces.IEtcdClient, httpClient interfaces.IHttpClient) *Service {
-	mockRead := &MockReadService{}
 	mockEc := &MockEcDriver{}
 	mockUtils := &MockUtilsSvc{}
 
-	svc := NewService(etcdClient, nil, httpClient, mockRead, mockEc, mockUtils, nil)
+	svc := NewService(etcdClient, nil, httpClient, mockEc, mockUtils, nil)
 	svc.walProduce = func(ctx context.Context, key string, value []byte) error {
 		return nil
 	}
@@ -257,7 +237,7 @@ func TestWriteReplication_WALDisabled_AllowsNilMQClient(t *testing.T) {
 	config.WALEnabled = false
 
 	// Create service with nil MQ client and default walProduce closure from NewService.
-	writerSvc := NewService(etcdClient, nil, mockHttp, &MockReadService{}, &MockEcDriver{}, &MockUtilsSvc{}, nil)
+	writerSvc := NewService(etcdClient, nil, mockHttp, &MockEcDriver{}, &MockUtilsSvc{}, nil)
 
 	_, err := writerSvc.WriteReplication(context.Background(), []string{"http://node1"}, "wal_off_key", []byte("data"))
 	if err != nil {
