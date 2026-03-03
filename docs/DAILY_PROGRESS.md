@@ -674,3 +674,20 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 4. Verification:
    - `go test ./...` passes
    - `go test -tags no_legacy_hybrid ./...` passes
+
+## 2026-03-03 (Milestone 6 one-command v2 e2e smoke flow, step 36)
+
+1. Added executable script:
+   - `scripts/smoke_e2e_v2.sh`
+2. Covered flow:
+   - `meta_migrate` run
+   - optional compose startup
+   - `PUT /v2/objects/:id` (binary)
+   - tiering task existence + admin task visibility check
+   - optional force-schedule task
+   - wait for `EC_ACTIVE` + `tier=EC` + task `DONE`
+   - `GET /v2/objects/:id` payload validation
+3. Config knobs:
+   - `START_STACK`, `FORCE_TASK_NOW`, `API_BASE`, `TIMEOUT_SEC`
+4. Documentation:
+   - updated `docs/API.md` with smoke entry point

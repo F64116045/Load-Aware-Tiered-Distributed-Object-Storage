@@ -5,6 +5,8 @@ Base URL: `http://localhost:8000`
 Migration note (Docker workflow):
 - Run metadata migrations before starting/rolling API after schema changes:
   - `docker compose run --rm meta_migrate`
+- One-command v2 smoke flow:
+  - `scripts/smoke_e2e_v2.sh`
 
 Runtime profile note (Docker workflow):
 - Default profile is postgres-first and does not require Redpanda:
