@@ -602,3 +602,19 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 4. Verification:
    - `go test ./cmd/api` passes
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 hybrid implementation isolation, step 31)
+
+1. Isolated `field_hybrid` implementation into legacy files (no behavior change):
+   - `internal/writeservice/writeservice_legacy_hybrid.go`
+   - `internal/readservice/readservice_legacy_hybrid.go`
+   - `internal/storageops/storageops_legacy_hybrid.go`
+2. Main strategy files now focus on active paths (`replication` / `ec`).
+3. Added explicit deprecation comments on legacy hybrid methods:
+   - `WriteFieldHybrid`
+   - `GetExistingColdFields`
+   - `ReadFieldHybrid`
+   - `DeleteFieldHybrid`
+4. Verification:
+   - `go test ./internal/writeservice ./internal/readservice ./internal/storageops` passes
+   - `go test ./...` passes

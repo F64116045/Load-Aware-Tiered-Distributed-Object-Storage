@@ -42,7 +42,7 @@ func (s *Service) CheckFirstWrite(ctx context.Context, replicaNodes []string, ho
 	defer cancel()
 
 	var wg sync.WaitGroup
-	
+
 	// Query all replica nodes in parallel
 	for _, nodeURL := range replicaNodes {
 		wg.Add(1)
@@ -77,100 +77,6 @@ func (s *Service) CheckFirstWrite(ctx context.Context, replicaNodes []string, ho
 		// If no node returned 200 OK, treat as first write
 		return true, nil
 	}
-}
-
-// GetExistingColdFields retrieves and reconstructs cold data fields specifically for Hybrid updates.
-func (s *Service) GetExistingColdFields(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (map[string]interface{}, error) {
-	log.Printf("  %s[ReadService] Fetching existing cold fields concurrently...%s\n", config.Colors["CYAN"], config.Colors["RESET"])
-
-	k, err := s.getIntFromMetadata(metadata, "k")
-	if err != nil {
-		k = config.K
-	}
-	originalLength, err := s.getIntFromMetadata(metadata, "original_length")
-	if err != nil {
-		return nil, fmt.Errorf("metadata missing 'original_length', cannot safely decode")
-	}
-
-	coldPrefix, _ := metadata["cold_prefix"].(string)
-	if coldPrefix == "" {
-		keyName, _ := metadata["key_name"].(string)
-		coldPrefix = fmt.Sprintf("%s_cold_chunk_", keyName)
-	}
-
-	// Parallel Fetch Logic
-	chunks := make([][]byte, len(ecNodes))
-	var wg sync.WaitGroup
-	var mutex sync.Mutex
-	healthyCount := 0
-
-	for i, nodeURL := range ecNodes {
-		wg.Add(1)
-		go func(index int, url string) {
-			defer wg.Done()
-			chunkKey := fmt.Sprintf("%s%d", coldPrefix, index)
-			
-			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", url, chunkKey), nil)
-			if err != nil {
-				return
-			}
-
-			resp, err := s.http.Do(req)
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode == http.StatusOK {
-				data, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return
-				}
-				mutex.Lock()
-				chunks[index] = data
-				healthyCount++
-				mutex.Unlock()
-			}
-		}(i, nodeURL)
-	}
-	wg.Wait()
-
-	if healthyCount < k {
-		log.Printf("  %s[ReadService] Insufficient chunks. Need %d, got %d%s\n", config.Colors["RED"], k, healthyCount, config.Colors["RESET"])
-		return nil, fmt.Errorf("insufficient chunks (need %d, got %d)", k, healthyCount)
-	}
-
-	// EC Reconstruction
-	if err := s.ec.Reconstruct(chunks); err != nil {
-		log.Printf("  %s[ReadService] EC Reconstruction failed: %v%s\n", config.Colors["RED"], err, config.Colors["RESET"])
-		return nil, err
-	}
-
-	// Join shards
-	var coldData bytes.Buffer
-	for i := 0; i < k; i++ {
-		if chunks[i] == nil {
-			return nil, fmt.Errorf("chunk %d is nil after reconstruction", i)
-		}
-		coldData.Write(chunks[i])
-	}
-
-	// Truncate padding
-	unpaddedData := coldData.Bytes()
-	
-
-	if len(unpaddedData) > originalLength {
-		unpaddedData = unpaddedData[:originalLength]
-	} else if len(unpaddedData) < originalLength {
-		log.Printf("  %s[ReadService] Warning: Reconstructed data length (%d) < Original length (%d)%s\n", config.Colors["YELLOW"], len(unpaddedData), originalLength, config.Colors["RESET"])
-	}
-
-	coldFields, err := s.utils.Deserialize(unpaddedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize cold fields: %v", err)
-	}
-
-	return coldFields, nil
 }
 
 // ReadReplication implements Strategy A: Simple Replication.
@@ -253,7 +159,7 @@ func (s *Service) ReadEC(ctx context.Context, ecNodes []string, metadata map[str
 		go func(index int, url string) {
 			defer wg.Done()
 			chunkKey := fmt.Sprintf("%s%d", chunkPrefix, index)
-			
+
 			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", url, chunkKey), nil)
 			if err != nil {
 				return
@@ -299,63 +205,12 @@ func (s *Service) ReadEC(ctx context.Context, ecNodes []string, metadata map[str
 	if len(unpaddedData) < originalLength {
 		return nil, fmt.Errorf("data corruption: reconstructed length (%d) < original (%d)", len(unpaddedData), originalLength)
 	}
-	
+
 	// Truncate logic
 	unpaddedData = unpaddedData[:originalLength]
 	log.Printf("  %s[DEBUG] ReadEC: Truncated data length = %d%s\n", config.Colors["YELLOW"], len(unpaddedData), config.Colors["RESET"])
 
 	return unpaddedData, nil
-}
-
-// ReadFieldHybrid implements Strategy C: Hybrid.
-// It fetches Hot Data (Replication) and Cold Data (EC) in parallel.
-func (s *Service) ReadFieldHybrid(ctx context.Context, replicaNodes, ecNodes []string, metadata map[string]interface{}) (map[string]interface{}, error) {
-	log.Printf("%s[ReadService] Strategy: Field Hybrid%s\n", config.Colors["GREEN"], config.Colors["RESET"])
-
-	var wg sync.WaitGroup
-	var hotFields map[string]interface{}
-	var coldFields map[string]interface{}
-	var hotErr, coldErr error
-
-	hotKey, _ := metadata["hot_key"].(string)
-	if hotKey == "" {
-		return nil, fmt.Errorf("metadata missing 'hot_key'")
-	}
-
-	// 1. Fetch Hot Data (Replication)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		hotDataBytes, err := s.ReadReplication(ctx, replicaNodes, hotKey)
-		if err != nil {
-			hotErr = fmt.Errorf("failed to read hot data: %v", err)
-			return
-		}
-		hotFields, hotErr = s.utils.Deserialize(hotDataBytes)
-	}()
-
-	// 2. Fetch Cold Data (EC)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		coldDataBytes, err := s.ReadEC(ctx, ecNodes, metadata)
-		if err != nil {
-			coldErr = fmt.Errorf("failed to read cold data: %v", err)
-			return
-		}
-		coldFields, coldErr = s.utils.Deserialize(coldDataBytes)
-	}()
-
-	wg.Wait()
-
-	if hotErr != nil {
-		return nil, hotErr
-	}
-	if coldErr != nil {
-		return nil, coldErr
-	}
-
-	return s.utils.MergeHotColdFields(hotFields, coldFields), nil
 }
 
 // helper: getIntFromMetadata safely extracts an integer from the generic map.
