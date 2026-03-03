@@ -470,3 +470,13 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `GET /v2/objects/:id` metadata-not-found and strategy-conflict paths
 3. Verification:
    - `go test ./cmd/api` passes
+
+## 2026-03-03 (Milestone 6 API error-path test coverage, step 22)
+
+1. Expanded `cmd/api/v2_objects_test.go` with error-path coverage:
+   - `PUT /v2/objects/:id` write failure -> `500`
+   - `GET /v2/objects/:id` metadata internal error -> `500`
+   - `GET /v2/objects/:id` replication read failure -> `404`
+   - `GET /v2/objects/:id` EC read failure -> `404`
+2. Verification:
+   - `go test ./cmd/api` passes

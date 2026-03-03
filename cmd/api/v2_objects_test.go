@@ -215,3 +215,117 @@ func TestV2GetObject_MetadataNotFoundAndConflict(t *testing.T) {
 		}
 	})
 }
+
+func TestV2Object_ErrorPaths(t *testing.T) {
+	t.Run("put_write_error_returns_500", func(t *testing.T) {
+		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
+			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
+			},
+			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
+				return nil, errors.New("write failed")
+			},
+			loadMetadata:    func(ctx context.Context, key string) (map[string]interface{}, string, error) { return nil, "", nil },
+			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) { return nil, nil },
+			readEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
+				return nil, nil
+			},
+			now: time.Now,
+		})
+
+		req := httptest.NewRequest(http.MethodPut, "/v2/objects/o4", strings.NewReader("abc"))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected %d, got %d, body=%s", http.StatusInternalServerError, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("get_metadata_internal_error_returns_500", func(t *testing.T) {
+		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
+			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
+			},
+			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
+				return nil, nil
+			},
+			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+				return nil, "", errors.New("db down")
+			},
+			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+				return nil, nil
+			},
+			readEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
+				return nil, nil
+			},
+			now: time.Now,
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/objects/o5", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected %d, got %d, body=%s", http.StatusInternalServerError, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("get_replication_read_error_returns_404", func(t *testing.T) {
+		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
+			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
+			},
+			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
+				return nil, nil
+			},
+			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+				return map[string]interface{}{"strategy": string(config.StrategyReplication)}, "postgres_normalized", nil
+			},
+			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+				return nil, errors.New("read failed")
+			},
+			readEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
+				return nil, nil
+			},
+			now: time.Now,
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/objects/o6", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected %d, got %d, body=%s", http.StatusNotFound, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("get_ec_read_error_returns_404", func(t *testing.T) {
+		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
+			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
+			},
+			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
+				return nil, nil
+			},
+			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+				return map[string]interface{}{"strategy": string(config.StrategyEC)}, "postgres_normalized", nil
+			},
+			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+				return nil, nil
+			},
+			readEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
+				return nil, errors.New("decode failed")
+			},
+			now: time.Now,
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/objects/o7", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected %d, got %d, body=%s", http.StatusNotFound, rec.Code, rec.Body.String())
+		}
+	})
+}
