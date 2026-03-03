@@ -346,6 +346,120 @@ func loadMetadata(ctx context.Context, key string, etcdClient *etcd.Client, meta
 	return metadata, "etcd", nil
 }
 
+type v2ObjectRouteDeps struct {
+	getDynamicNodes              func(c *gin.Context) ([]string, []string, error)
+	writeReplicationWithMetadata func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error)
+	loadMetadata                 func(ctx context.Context, key string) (map[string]interface{}, string, error)
+	readReplication              func(ctx context.Context, replicaNodes []string, key string) ([]byte, error)
+	readEC                       func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error)
+	now                          func() time.Time
+}
+
+func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
+	nowFn := deps.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+
+	router.PUT("/v2/objects/:id", func(c *gin.Context) {
+		start := nowFn()
+		objectID := strings.TrimSpace(c.Param("id"))
+		if objectID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
+			return
+		}
+
+		replicaNodes, _, err := deps.getDynamicNodes(c)
+		if err != nil {
+			return
+		}
+
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
+			return
+		}
+		contentType := strings.TrimSpace(c.GetHeader("Content-Type"))
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+
+		opResult, opErr := deps.writeReplicationWithMetadata(
+			c.Request.Context(),
+			replicaNodes,
+			objectID,
+			bodyBytes,
+			map[string]interface{}{
+				"content_type": contentType,
+			},
+		)
+		if opErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": opErr.Error()})
+			return
+		}
+		if opResult == nil {
+			opResult = map[string]interface{}{}
+		}
+
+		opResult["status"] = "ok"
+		opResult["object_id"] = objectID
+		opResult["tier"] = "HOT"
+		opResult["strategy"] = string(config.StrategyReplication)
+		opResult["size_bytes"] = len(bodyBytes)
+		opResult["content_type"] = contentType
+		opResult["latency_ms"] = nowFn().Sub(start).Milliseconds()
+		c.JSON(http.StatusCreated, opResult)
+	})
+
+	router.GET("/v2/objects/:id", func(c *gin.Context) {
+		objectID := strings.TrimSpace(c.Param("id"))
+		if objectID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
+			return
+		}
+
+		replicaNodes, ecNodes, err := deps.getDynamicNodes(c)
+		if err != nil {
+			return
+		}
+
+		metadata, _, err := deps.loadMetadata(c.Request.Context(), objectID)
+		if err != nil {
+			if errors.Is(err, errMetadataNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("Metadata not found for key '%s'", objectID)})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		strategyStr, _ := metadata["strategy"].(string)
+		var dataBytes []byte
+		switch config.StorageStrategy(strategyStr) {
+		case config.StrategyReplication:
+			dataBytes, err = deps.readReplication(c.Request.Context(), replicaNodes, objectID)
+		case config.StrategyEC:
+			dataBytes, err = deps.readEC(c.Request.Context(), ecNodes, metadata)
+		default:
+			c.JSON(http.StatusConflict, gin.H{
+				"error":    "object is not binary-readable via /v2/objects",
+				"strategy": strategyStr,
+			})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"detail": err.Error()})
+			return
+		}
+
+		contentType := "application/octet-stream"
+		if ct, ok := metadata["content_type"].(string); ok && strings.TrimSpace(ct) != "" {
+			contentType = strings.TrimSpace(ct)
+		}
+		c.Data(http.StatusOK, contentType, dataBytes)
+	})
+}
+
 func main() {
 	log.Printf("%sAPI Gateway (PID: %d) Starting...%s\n", config.Colors["GREEN"], os.Getpid(), config.Colors["RESET"])
 
@@ -451,102 +565,17 @@ func main() {
 	router.Use(PanicRecoveryMiddleware)
 
 	// --- v2 Generic Object Endpoints (binary body, replication-first) ---
-	router.PUT("/v2/objects/:id", func(c *gin.Context) {
-		start := time.Now()
-		objectID := strings.TrimSpace(c.Param("id"))
-		if objectID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
-			return
-		}
-
-		replicaNodes, _, err := getDynamicNodes(c)
-		if err != nil {
-			return
-		}
-
-		bodyBytes, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
-			return
-		}
-		contentType := strings.TrimSpace(c.GetHeader("Content-Type"))
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
-
-		opResult, opErr := writeSvc.WriteReplicationWithMetadata(
-			c.Request.Context(),
-			replicaNodes,
-			objectID,
-			bodyBytes,
-			map[string]interface{}{
-				"content_type": contentType,
-			},
-		)
-		if opErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": opErr.Error()})
-			return
-		}
-		if opResult == nil {
-			opResult = map[string]interface{}{}
-		}
-
-		opResult["status"] = "ok"
-		opResult["object_id"] = objectID
-		opResult["tier"] = "HOT"
-		opResult["strategy"] = string(config.StrategyReplication)
-		opResult["size_bytes"] = len(bodyBytes)
-		opResult["content_type"] = contentType
-		opResult["latency_ms"] = time.Since(start).Milliseconds()
-		c.JSON(http.StatusCreated, opResult)
-	})
-
-	router.GET("/v2/objects/:id", func(c *gin.Context) {
-		objectID := strings.TrimSpace(c.Param("id"))
-		if objectID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
-			return
-		}
-
-		replicaNodes, ecNodes, err := getDynamicNodes(c)
-		if err != nil {
-			return
-		}
-
-		metadata, _, err := loadMetadata(c.Request.Context(), objectID, etcdClient, metaStore, config.MetaSource)
-		if err != nil {
-			if errors.Is(err, errMetadataNotFound) {
-				c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("Metadata not found for key '%s'", objectID)})
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		strategyStr, _ := metadata["strategy"].(string)
-		var dataBytes []byte
-		switch config.StorageStrategy(strategyStr) {
-		case config.StrategyReplication:
-			dataBytes, err = readSvc.ReadReplication(c.Request.Context(), replicaNodes, objectID)
-		case config.StrategyEC:
-			dataBytes, err = readSvc.ReadEC(c.Request.Context(), ecNodes, metadata)
-		default:
-			c.JSON(http.StatusConflict, gin.H{
-				"error":    "object is not binary-readable via /v2/objects",
-				"strategy": strategyStr,
-			})
-			return
-		}
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"detail": err.Error()})
-			return
-		}
-
-		contentType := "application/octet-stream"
-		if ct, ok := metadata["content_type"].(string); ok && strings.TrimSpace(ct) != "" {
-			contentType = strings.TrimSpace(ct)
-		}
-		c.Data(http.StatusOK, contentType, dataBytes)
+	registerV2ObjectRoutes(router, v2ObjectRouteDeps{
+		getDynamicNodes: getDynamicNodes,
+		writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
+			return writeSvc.WriteReplicationWithMetadata(ctx, replicaNodes, key, data, metadata)
+		},
+		loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+			return loadMetadata(ctx, key, etcdClient, metaStore, config.MetaSource)
+		},
+		readReplication: readSvc.ReadReplication,
+		readEC:          readSvc.ReadEC,
+		now:             time.Now,
 	})
 
 	// --- Write Endpoint ---

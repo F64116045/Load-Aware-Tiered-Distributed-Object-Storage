@@ -458,3 +458,15 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 2. Validation target:
    - verifies `WriteReplicationWithMetadata(...)` commits `content_type`
    - verifies `original_length` metadata is persisted as expected
+
+## 2026-03-03 (Milestone 6 API handler test coverage, step 21)
+
+1. Refactored v2 object route registration for testability:
+   - extracted `registerV2ObjectRoutes(...)` in `cmd/api/main.go`
+   - added dependency-injection struct `v2ObjectRouteDeps`
+2. Added `cmd/api/v2_objects_test.go` coverage:
+   - `PUT /v2/objects/:id` success path + default `Content-Type`
+   - `GET /v2/objects/:id` replication path + EC path
+   - `GET /v2/objects/:id` metadata-not-found and strategy-conflict paths
+3. Verification:
+   - `go test ./cmd/api` passes
