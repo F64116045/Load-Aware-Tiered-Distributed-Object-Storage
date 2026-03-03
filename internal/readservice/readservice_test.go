@@ -62,7 +62,7 @@ type MockEcDriver struct {
 }
 
 func (m *MockEcDriver) Split(data []byte) ([][]byte, error) { return nil, nil }
-func (m *MockEcDriver) Encode(shards [][]byte) error       { return nil }
+func (m *MockEcDriver) Encode(shards [][]byte) error        { return nil }
 
 func (m *MockEcDriver) Reconstruct(shards [][]byte) error {
 	if m.ShouldFail {
@@ -270,9 +270,9 @@ func TestReadFieldHybrid_Success(t *testing.T) {
 	prefix := "test_hybrid_cold_"
 	mockHttp.SetResponse("http://n1/retrieve/test_hybrid_cold_0", 200, string(part1))
 	mockHttp.SetResponse("http://n2/retrieve/test_hybrid_cold_1", 200, string(part2))
-	// Simulate missing other shards to force Reconstruct logic (though mockEcHybrid handles logic)
-	mockHttp.SetResponse("http://n3/retrieve/test_hybrid_cold_2", 404, "")
-	mockHttp.SetResponse("http://n4/retrieve/test_hybrid_cold_3", 404, "")
+	// Provide at least k shards to satisfy current ReadEC/GetExistingColdFields guard (healthyCount >= k).
+	mockHttp.SetResponse("http://n3/retrieve/test_hybrid_cold_2", 200, string([]byte{0, 0, 0}))
+	mockHttp.SetResponse("http://n4/retrieve/test_hybrid_cold_3", 200, string([]byte{0, 0, 0}))
 	mockHttp.SetResponse("http://n5/retrieve/test_hybrid_cold_4", 404, "")
 	mockHttp.SetResponse("http://n6/retrieve/test_hybrid_cold_5", 404, "")
 

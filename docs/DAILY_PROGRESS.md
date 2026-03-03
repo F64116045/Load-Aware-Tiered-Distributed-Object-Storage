@@ -480,3 +480,12 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `GET /v2/objects/:id` EC read failure -> `404`
 2. Verification:
    - `go test ./cmd/api` passes
+
+## 2026-03-03 (Milestone 6 test-suite stabilization, step 23)
+
+1. Fixed `internal/readservice` test fixture drift:
+   - `TestReadFieldHybrid_Success` now provides at least `k` healthy cold shards
+   - matches current `ReadEC/GetExistingColdFields` guard (`healthyCount >= k`)
+2. Verification:
+   - `go test ./internal/readservice` passes
+   - `go test ./...` passes
