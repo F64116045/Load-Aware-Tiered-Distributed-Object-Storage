@@ -503,3 +503,23 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 3. Verification:
    - `go test ./cmd/api` passes
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 WAL optionalization, step 25)
+
+1. Added WAL feature flag:
+   - `WAL_ENABLED` config in `internal/config/config.go`
+   - default: `false` (postgres-first profile)
+2. Write path behavior update:
+   - `createWALEntry(...)` now skips Redpanda when `WAL_ENABLED=false`
+   - write commit path continues through metadata commit (Postgres/Etcd compatibility path)
+3. API bootstrap update:
+   - `cmd/api/main.go` only initializes Redpanda client when `WAL_ENABLED=true`
+   - avoids startup failure when Redpanda is not present
+4. Test & compose updates:
+   - added `TestWriteReplication_WALDisabled_AllowsNilMQClient`
+   - `docker-compose.yaml` sets `WAL_ENABLED=false` for `api`
+   - removed `api -> redpanda` startup dependency
+5. Verification:
+   - `go test ./internal/writeservice` passes
+   - `go test ./...` passes
+   - `docker compose config -q` passes

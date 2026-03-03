@@ -678,9 +678,14 @@ func main() {
 		}
 	}()
 
-	// [FIX] Initialize Redpanda Client with isConsumer=false
-	mqClient := mq.NewClient(false)
-	defer mqClient.Close()
+	// Initialize WAL client only when synchronous WAL is enabled.
+	var mqClient *mq.Client
+	if config.WALEnabled {
+		mqClient = mq.NewClient(false)
+		defer mqClient.Close()
+	} else {
+		log.Printf("[API] WAL disabled (WAL_ENABLED=false). Skipping Redpanda client init.")
+	}
 
 	utilsSvc := utils.NewService()
 	ecDriver := ec.NewService()

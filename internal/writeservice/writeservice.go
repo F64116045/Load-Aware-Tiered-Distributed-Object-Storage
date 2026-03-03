@@ -120,6 +120,10 @@ func (s *Service) createWALEntry(
 	strategy config.StorageStrategy,
 	metadataDetails map[string]interface{},
 ) (string, error) {
+	if !config.WALEnabled {
+		// WAL is intentionally disabled in postgres-first profile.
+		return "", nil
+	}
 
 	txnID := fmt.Sprintf("txn:%s", uuid.New().String())
 

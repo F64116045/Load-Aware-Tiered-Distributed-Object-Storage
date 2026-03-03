@@ -14,6 +14,7 @@ import (
 	etcd "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 
+	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/interfaces"
 )
 
@@ -238,5 +239,28 @@ func TestWriteReplicationWithMetadata_PersistsContentTypeAndLength(t *testing.T)
 	}
 	if int(gotLen) != len(payload) {
 		t.Fatalf("original_length mismatch, got=%d want=%d", int(gotLen), len(payload))
+	}
+}
+
+func TestWriteReplication_WALDisabled_AllowsNilMQClient(t *testing.T) {
+	etcdServer, etcdClient := startEmbeddedEtcd(t)
+	defer etcdServer.Close()
+	defer etcdClient.Close()
+
+	mockHttp := &MockHttpClient{
+		StatusCode: 200,
+		ShouldFail: false,
+	}
+
+	origWALEnabled := config.WALEnabled
+	defer func() { config.WALEnabled = origWALEnabled }()
+	config.WALEnabled = false
+
+	// Create service with nil MQ client and default walProduce closure from NewService.
+	writerSvc := NewService(etcdClient, nil, mockHttp, &MockReadService{}, &MockEcDriver{}, &MockUtilsSvc{}, nil)
+
+	_, err := writerSvc.WriteReplication(context.Background(), []string{"http://node1"}, "wal_off_key", []byte("data"))
+	if err != nil {
+		t.Fatalf("WriteReplication() expected success with WAL disabled, got error: %v", err)
 	}
 }
