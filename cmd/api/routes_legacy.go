@@ -21,18 +21,15 @@ type legacyRouteDeps struct {
 
 	writeReplication func(ctx context.Context, replicaNodes []string, key string, value []byte) (map[string]interface{}, error)
 	writeEC          func(ctx context.Context, ecNodes []string, key string, value []byte) (map[string]interface{}, error)
-	writeFieldHybrid func(ctx context.Context, replicaNodes, ecNodes []string, key string, dataDict map[string]interface{}, hotOnly bool) (map[string]interface{}, error)
 
 	serialize   func(data map[string]interface{}) ([]byte, error)
 	deserialize func(data []byte) (map[string]interface{}, error)
 
 	readReplication func(ctx context.Context, replicaNodes []string, key string) ([]byte, error)
 	readEC          func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error)
-	readFieldHybrid func(ctx context.Context, replicaNodes, ecNodes []string, metadata map[string]interface{}) (map[string]interface{}, error)
 
 	deleteReplication func(ctx context.Context, replicaNodes []string, key string) (int, error)
 	deleteEC          func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (int, error)
-	deleteFieldHybrid func(ctx context.Context, replicaNodes, ecNodes []string, metadata map[string]interface{}) (int, int, error)
 
 	deleteNormalizedMetadata func(ctx context.Context, key string) error
 	deleteEtcdMetadata       func(ctx context.Context, key string) error
@@ -45,8 +42,6 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 		start := time.Now()
 		key := c.Query("key")
 		strategy := config.StorageStrategy(c.DefaultQuery("strategy", string(config.StrategyReplication)))
-		hotOnlyStr := c.Query("hot_only")
-		isHotOnly := strings.ToLower(hotOnlyStr) == "true"
 
 		replicaNodes, ecNodes, err := deps.getDynamicNodes(c)
 		if err != nil {
@@ -86,10 +81,11 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			} else {
 				opResult, opErr = deps.writeEC(c.Request.Context(), ecNodes, key, bodyBytes)
 			}
-		case config.StrategyFieldHybrid:
-			opResult, opErr = deps.writeFieldHybrid(c.Request.Context(), replicaNodes, ecNodes, key, dataDict, isHotOnly)
 		default:
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Invalid strategy"})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":  "Invalid strategy",
+				"detail": "supported strategies: replication, ec (field_hybrid is deprecated)",
+			})
 			return
 		}
 
@@ -156,12 +152,11 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			c.JSON(http.StatusOK, dataDict)
 
 		case config.StrategyFieldHybrid:
-			dataDict, err := deps.readFieldHybrid(c.Request.Context(), replicaNodes, ecNodes, metadata)
-			if err != nil {
-				c.JSON(http.StatusNotFound, gin.H{"detail": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, dataDict)
+			c.JSON(http.StatusConflict, gin.H{
+				"error":    "field_hybrid is deprecated",
+				"strategy": strategyStr,
+			})
+			return
 
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Unknown strategy in metadata: %s", strategyStr)})
@@ -201,9 +196,11 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 				coldCount, delErr = deps.deleteEC(c.Request.Context(), ecNodes, metadata)
 				result["chunks_deleted"] = coldCount
 			case config.StrategyFieldHybrid:
-				hotCount, coldCount, delErr = deps.deleteFieldHybrid(c.Request.Context(), replicaNodes, ecNodes, metadata)
-				result["hot_nodes_deleted"] = hotCount
-				result["cold_chunks_deleted"] = coldCount
+				c.JSON(http.StatusConflict, gin.H{
+					"error":    "field_hybrid is deprecated",
+					"strategy": strategyStr,
+				})
+				return
 			default:
 				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Unknown strategy: %s", strategyStr)})
 				return
@@ -227,7 +224,6 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			blindMetadata := map[string]interface{}{"key_name": key}
 			deps.deleteReplication(c.Request.Context(), replicaNodes, key)
 			deps.deleteEC(c.Request.Context(), ecNodes, blindMetadata)
-			deps.deleteFieldHybrid(c.Request.Context(), replicaNodes, ecNodes, blindMetadata)
 			result["detail"] = "key_not_found_or_zombie_cleaned"
 		}
 

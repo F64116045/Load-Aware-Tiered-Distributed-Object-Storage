@@ -168,15 +168,12 @@ func buildRouter(rt *appRuntime) *gin.Engine {
 		},
 		writeReplication:  rt.writeSvc.WriteReplication,
 		writeEC:           rt.writeSvc.WriteEC,
-		writeFieldHybrid:  rt.writeSvc.WriteFieldHybrid,
 		serialize:         rt.utilsSvc.Serialize,
 		deserialize:       rt.utilsSvc.Deserialize,
 		readReplication:   rt.readSvc.ReadReplication,
 		readEC:            rt.readSvc.ReadEC,
-		readFieldHybrid:   rt.readSvc.ReadFieldHybrid,
 		deleteReplication: rt.storageOpsSvc.DeleteReplication,
 		deleteEC:          rt.storageOpsSvc.DeleteEC,
-		deleteFieldHybrid: rt.storageOpsSvc.DeleteFieldHybrid,
 		deleteNormalizedMetadata: func(ctx context.Context, key string) error {
 			if !config.MetaEnabled || rt.metaStore == nil {
 				return nil

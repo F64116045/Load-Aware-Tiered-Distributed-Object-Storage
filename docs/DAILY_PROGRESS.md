@@ -571,3 +571,19 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 4. Verification:
    - `go test ./cmd/api` passes
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 field_hybrid deprecation at API layer, step 29)
+
+1. Converged legacy API strategy surface:
+   - `/write` no longer accepts `strategy=field_hybrid` (returns `422`)
+   - `/read/:key` returns `409` for metadata strategy `field_hybrid`
+   - `/delete/:key` returns `409` for metadata strategy `field_hybrid`
+2. Simplified legacy route dependency wiring:
+   - removed direct `field_hybrid` read/write/delete function dependencies from `legacyRouteDeps`
+3. Added tests:
+   - `cmd/api/routes_legacy_test.go` covers write/read/delete deprecation behavior
+4. Documentation:
+   - updated `docs/API.md` strategy notes for `/write`, `/read`, `/delete`
+5. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes

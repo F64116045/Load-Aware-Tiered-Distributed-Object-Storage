@@ -23,8 +23,8 @@ Writes a JSON object or binary data to the distributed store.
 - **Headers**: `Content-Type: application/json`
 - **Query Parameters**:
     - `key` (Required): Unique identifier for the object.
-    - `strategy` (Optional): `replication`, `ec`, or `field_hybrid` (default: `replication`).
-    - `hot_only` (Optional): `true` to force a hot-only update (debug use).
+    - `strategy` (Optional): `replication` or `ec` (default: `replication`).
+    - `hot_only` is deprecated together with `field_hybrid`.
 
 **Request Body (Example)**:
 
@@ -59,6 +59,8 @@ Retrieves data. The system automatically determines the storage strategy and rec
 
 - **URL**: `/read/:key`
 - **Method**: `GET`
+- **Note**:
+  - metadata with `strategy=field_hybrid` is deprecated and returns conflict in current profile.
 
 **Success Response (200 OK)**:
 Returns the original JSON object.
@@ -78,6 +80,8 @@ Permanently removes the object metadata and physical files.
 
 - **URL**: `/delete/:key`
 - **Method**: `DELETE`
+- **Note**:
+  - metadata with `strategy=field_hybrid` is deprecated and returns conflict in current profile.
 
 **Success Response (200 OK)**:
 
