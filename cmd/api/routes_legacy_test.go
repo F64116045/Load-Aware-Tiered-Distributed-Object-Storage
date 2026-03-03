@@ -68,6 +68,20 @@ func TestLegacyWrite_FieldHybridRejected(t *testing.T) {
 	}
 }
 
+func TestLegacyWrite_ECRejected(t *testing.T) {
+	deps := baseLegacyDeps()
+	router := newLegacyTestRouter(deps)
+
+	req := httptest.NewRequest(http.MethodPost, "/write?key=k1&strategy=ec", strings.NewReader(`{"a":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected %d got %d body=%s", http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	}
+}
+
 func TestLegacyReadAndDelete_FieldHybridRejected(t *testing.T) {
 	t.Run("read", func(t *testing.T) {
 		deps := baseLegacyDeps()

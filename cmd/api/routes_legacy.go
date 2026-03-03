@@ -43,7 +43,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 		key := c.Query("key")
 		strategy := config.StorageStrategy(c.DefaultQuery("strategy", string(config.StrategyReplication)))
 
-		replicaNodes, ecNodes, err := deps.getDynamicNodes(c)
+		replicaNodes, _, err := deps.getDynamicNodes(c)
 		if err != nil {
 			return
 		}
@@ -71,20 +71,22 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 		}
 
 		switch strategy {
-		case config.StrategyReplication, config.StrategyEC:
+		case config.StrategyReplication:
 			bodyBytes, errSer := deps.serialize(dataDict)
 			if errSer != nil {
 				panic(fmt.Errorf("JSON serialization failed: %v", errSer))
 			}
-			if strategy == config.StrategyReplication {
-				opResult, opErr = deps.writeReplication(c.Request.Context(), replicaNodes, key, bodyBytes)
-			} else {
-				opResult, opErr = deps.writeEC(c.Request.Context(), ecNodes, key, bodyBytes)
-			}
+			opResult, opErr = deps.writeReplication(c.Request.Context(), replicaNodes, key, bodyBytes)
+		case config.StrategyEC:
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":  "Invalid strategy",
+				"detail": "direct ec write is deprecated; use replication write and background tiering",
+			})
+			return
 		default:
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"error":  "Invalid strategy",
-				"detail": "supported strategies: replication, ec (field_hybrid is deprecated)",
+				"detail": "supported strategy: replication (field_hybrid/ec direct write are deprecated)",
 			})
 			return
 		}

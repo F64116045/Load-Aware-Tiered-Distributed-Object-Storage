@@ -23,8 +23,10 @@ Writes a JSON object or binary data to the distributed store.
 - **Headers**: `Content-Type: application/json`
 - **Query Parameters**:
     - `key` (Required): Unique identifier for the object.
-    - `strategy` (Optional): `replication` or `ec` (default: `replication`).
+    - `strategy` (Optional): `replication` only (default: `replication`).
     - `hot_only` is deprecated together with `field_hybrid`.
+- **Deprecation note**:
+  - direct `ec` write via `/write` is deprecated; use replication write + background tiering worker.
 
 **Request Body (Example)**:
 

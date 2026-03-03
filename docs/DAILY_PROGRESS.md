@@ -587,3 +587,18 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 5. Verification:
    - `go test ./cmd/api` passes
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 replication-only legacy write convergence, step 30)
+
+1. Converged legacy `/write` to replication-only:
+   - `strategy=replication` remains supported
+   - `strategy=ec` now returns `422` (direct EC write deprecated)
+   - `strategy=field_hybrid` remains deprecated (`422`)
+2. Added/updated tests:
+   - `TestLegacyWrite_ECRejected`
+   - existing `field_hybrid` rejection test remains
+3. Documentation:
+   - updated `/write` strategy note in `docs/API.md`
+4. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes
