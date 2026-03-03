@@ -12,6 +12,11 @@ Runtime profile note (Docker workflow):
   - `redpanda` is behind legacy profiles (`legacy-wal` / `legacy-etcd`)
 - If you need legacy WAL path, explicitly enable profile + API WAL env override.
 
+Build note (legacy hybrid isolation):
+- Legacy hybrid implementation files are guarded by build constraint:
+  - default: included
+  - exclude from build: `-tags no_legacy_hybrid`
+
 ## Data Plane Endpoints
 
 ### 1. Write Data

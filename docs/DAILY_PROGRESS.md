@@ -645,3 +645,17 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 4. Verification:
    - `go test ./internal/writeservice` passes
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 optional legacy-hybrid build gate, step 34)
+
+1. Added optional build exclusion gate for legacy hybrid files:
+   - `internal/writeservice/writeservice_legacy_hybrid.go`
+   - `internal/readservice/readservice_legacy_hybrid.go`
+   - `internal/storageops/storageops_legacy_hybrid.go`
+2. Build constraint:
+   - default: legacy hybrid code included
+   - optional exclusion: build with `-tags no_legacy_hybrid`
+3. Documentation:
+   - added build note in `docs/API.md`
+4. Verification:
+   - `go test ./...` passes

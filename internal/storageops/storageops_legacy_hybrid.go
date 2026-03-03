@@ -1,3 +1,6 @@
+//go:build !no_legacy_hybrid
+// +build !no_legacy_hybrid
+
 package storageops
 
 import (
