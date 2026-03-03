@@ -21,15 +21,7 @@ import (
 	etcd "go.etcd.io/etcd/client/v3"
 
 	"hybrid_distributed_store/internal/config"
-	"hybrid_distributed_store/internal/ec"
-	etcdclient "hybrid_distributed_store/internal/etcd"
-	"hybrid_distributed_store/internal/httpclient"
 	"hybrid_distributed_store/internal/meta"
-	"hybrid_distributed_store/internal/mq"
-	"hybrid_distributed_store/internal/readservice"
-	"hybrid_distributed_store/internal/storageops"
-	"hybrid_distributed_store/internal/utils"
-	"hybrid_distributed_store/internal/writeservice"
 )
 
 // --- Service Discovery Globals ---
@@ -624,176 +616,14 @@ func registerAdminTaskRoutes(router gin.IRoutes, deps adminTaskRouteDeps) {
 
 func main() {
 	log.Printf("%sAPI Gateway (PID: %d) Starting...%s\n", config.Colors["GREEN"], os.Getpid(), config.Colors["RESET"])
+	runtime, cleanup := initAppRuntime()
+	defer cleanup()
 
-	// 1. Initialize Services
-	var etcdClient *etcd.Client
-	requiresEtcd := !(config.MetaSource == "postgres" && config.NodeDiscoverySource == "postgres")
-	if requiresEtcd {
-		etcdClient = etcdclient.GetClient()
-	}
-	httpClient := httpclient.GetClient()
-
-	metadataStatus := "disabled"
-	metadataErr := ""
-	nodeDiscoveryActive := config.NodeDiscoverySource
-	metaStore, err := meta.NewStore(meta.Config{
-		Enabled:         config.MetaEnabled,
-		Driver:          config.MetaDriver,
-		DSN:             config.MetaDSN,
-		MaxOpenConns:    config.MetaMaxOpenConns,
-		MaxIdleConns:    config.MetaMaxIdleConns,
-		ConnMaxLifetime: config.MetaConnMaxLifetime,
-	})
-	if err != nil {
-		metadataStatus = "down"
-		metadataErr = err.Error()
-		log.Printf("[API] Metadata init failed: %v", err)
-	} else if config.MetaEnabled {
-		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer pingCancel()
-		if pingErr := metaStore.Ping(pingCtx); pingErr != nil {
-			metadataStatus = "down"
-			metadataErr = pingErr.Error()
-			log.Printf("[API] Metadata ping failed: %v", pingErr)
-		} else {
-			metadataStatus = "up"
-			if config.MetaAutoMigrate {
-				migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer migrateCancel()
-				if migrateErr := meta.NewMigrator(metaStore).Up(migrateCtx); migrateErr != nil {
-					metadataStatus = "down"
-					metadataErr = fmt.Sprintf("auto_migrate_failed: %v", migrateErr)
-					log.Printf("[API] Metadata auto migration failed: %v", migrateErr)
-				} else {
-					log.Printf("[API] Metadata auto migration completed.")
-				}
-			}
-		}
-	}
-	defer func() {
-		if metaStore != nil {
-			_ = metaStore.Close()
-		}
-	}()
-
-	// Initialize WAL client only when synchronous WAL is enabled.
-	var mqClient *mq.Client
-	if config.WALEnabled {
-		mqClient = mq.NewClient(false)
-		defer mqClient.Close()
-	} else {
-		log.Printf("[API] WAL disabled (WAL_ENABLED=false). Skipping Redpanda client init.")
-	}
-
-	utilsSvc := utils.NewService()
-	ecDriver := ec.NewService()
-	storageOpsSvc := storageops.NewService(httpClient)
-
-	readSvc := readservice.NewService(httpClient, ecDriver, utilsSvc)
-
-	// Inject mqClient into WriteService
-	writeSvc := writeservice.NewService(etcdClient, mqClient, httpClient, readSvc, ecDriver, utilsSvc, metaStore)
-
-	// 2. Start Service Discovery
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	switch config.NodeDiscoverySource {
-	case "postgres":
-		if config.MetaEnabled && metaStore != nil {
-			go watchNodesFromPostgres(ctx, metaStore)
-		} else {
-			nodeDiscoveryActive = "etcd_fallback"
-			log.Printf("%s[API] NODE_DISCOVERY_SOURCE=postgres but metadata is unavailable, fallback to etcd%s\n", config.Colors["YELLOW"], config.Colors["RESET"])
-			if etcdClient != nil {
-				go watchNodesTask(ctx, etcdClient)
-			}
-		}
-	case "etcd":
-		if etcdClient != nil {
-			go watchNodesTask(ctx, etcdClient)
-		}
-	default: // auto
-		if config.MetaEnabled && metaStore != nil {
-			nodeDiscoveryActive = "postgres"
-			go watchNodesFromPostgres(ctx, metaStore)
-		} else {
-			nodeDiscoveryActive = "etcd"
-			if etcdClient != nil {
-				go watchNodesTask(ctx, etcdClient)
-			}
-		}
-	}
+	startNodeDiscovery(ctx, runtime)
 
-	// 3. Setup Router
-	// Use gin.New() to avoid default Logger middleware which impacts performance benchmarks
-	gin.SetMode(gin.ReleaseMode)
-	router := gin.New()
-	router.Use(gin.Recovery()) // Keep recovery for stability
-	router.Use(PanicRecoveryMiddleware)
-
-	// --- v2 Generic Object Endpoints (binary body, replication-first) ---
-	registerV2ObjectRoutes(router, v2ObjectRouteDeps{
-		getDynamicNodes: getDynamicNodes,
-		writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
-			return writeSvc.WriteReplicationWithMetadata(ctx, replicaNodes, key, data, metadata)
-		},
-		loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-			return loadMetadata(ctx, key, etcdClient, metaStore, config.MetaSource)
-		},
-		readReplication: readSvc.ReadReplication,
-		readEC:          readSvc.ReadEC,
-		now:             time.Now,
-	})
-
-	registerLegacyRoutes(router, legacyRouteDeps{
-		getDynamicNodes: getDynamicNodes,
-		loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-			return loadMetadata(ctx, key, etcdClient, metaStore, config.MetaSource)
-		},
-		writeReplication:  writeSvc.WriteReplication,
-		writeEC:           writeSvc.WriteEC,
-		writeFieldHybrid:  writeSvc.WriteFieldHybrid,
-		serialize:         utilsSvc.Serialize,
-		deserialize:       utilsSvc.Deserialize,
-		readReplication:   readSvc.ReadReplication,
-		readEC:            readSvc.ReadEC,
-		readFieldHybrid:   readSvc.ReadFieldHybrid,
-		deleteReplication: storageOpsSvc.DeleteReplication,
-		deleteEC:          storageOpsSvc.DeleteEC,
-		deleteFieldHybrid: storageOpsSvc.DeleteFieldHybrid,
-		deleteNormalizedMetadata: func(ctx context.Context, key string) error {
-			if !config.MetaEnabled || metaStore == nil {
-				return nil
-			}
-			return metaStore.DeleteNormalizedMetadata(ctx, key)
-		},
-		deleteEtcdMetadata: func(ctx context.Context, key string) error {
-			if config.MetaSource == "postgres" || etcdClient == nil {
-				return nil
-			}
-			_, err := etcdClient.Delete(ctx, fmt.Sprintf("metadata/%s", key))
-			return err
-		},
-		getActiveNodes: getActiveNodeURLs,
-	})
-
-	registerAdminObservabilityRoutes(router, adminObservabilityRouteDeps{
-		metadataStatus:      metadataStatus,
-		metadataErr:         metadataErr,
-		nodeDiscoveryActive: nodeDiscoveryActive,
-		getActiveNodeCount:  getActiveNodeCount,
-		metaStore:           metaStore,
-	})
-
-	registerAdminTaskRoutes(router, adminTaskRouteDeps{
-		metadataAvailable: func() bool { return config.MetaEnabled && metaStore != nil },
-		listTasks:         metaStore.ListTieringTasks,
-		listStateCounts:   metaStore.ListTieringTaskStateCounts,
-		requeueNow:        metaStore.RequeueTieringTaskNow,
-		cancelTask:        metaStore.CancelTieringTask,
-	})
-
-	registerAdminMetadataRoutes(router, metaStore)
+	router := buildRouter(runtime)
 
 	// 4. Start Server
 	log.Println("[API] Starting Gin Server on 0.0.0.0:8000...")

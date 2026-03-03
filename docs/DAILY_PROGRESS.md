@@ -554,3 +554,20 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
 3. Verification:
    - `go test ./cmd/api` passes
    - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 API bootstrap/runtime extraction, step 28)
+
+1. Extracted API runtime bootstrap from `cmd/api/main.go` into `cmd/api/bootstrap_runtime.go`:
+   - `initAppRuntime()`: etcd/meta/mq/service initialization + cleanup closure
+   - `startNodeDiscovery(...)`: discovery source selection and watcher startup
+   - `buildRouter(...)`: route wiring composition
+2. `main.go` is now reduced to high-level flow:
+   - init runtime
+   - start discovery
+   - build router
+   - run server
+3. Safety hardening during extraction:
+   - admin task deps now use nil-safe closures (avoid method-value panic when metadata is unavailable)
+4. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes
