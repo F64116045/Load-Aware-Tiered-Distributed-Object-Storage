@@ -1,6 +1,6 @@
 YCSB_BIN="./bin/go-ycsb"
 ENDPOINT="http://localhost:8000"
-STRATEGY="field_hybrid"
+STRATEGY="replication"
 DRIVER="hybridstore"
 WORKLOAD_FILE="workloads/workloada"
 
@@ -9,10 +9,10 @@ THREADS=10
 REC_COUNT=10000
 OPS_COUNT=10000
 
-OUTPUT_FILE="result_hybrid3.txt"
-LOAD_LOG="load_hybrid3.log"
+OUTPUT_FILE="result_replication.txt"
+LOAD_LOG="load_replication.log"
 
-echo "=== [3/3] Testing Strategy: Field Hybrid ==="
+echo "=== Testing Strategy: Replication ==="
 echo "Config: Records=$REC_COUNT, Operations=$OPS_COUNT, Threads=$THREADS"
 
 

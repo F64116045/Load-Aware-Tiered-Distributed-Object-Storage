@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -62,7 +61,7 @@ type MockEcDriver struct {
 }
 
 func (m *MockEcDriver) Split(data []byte) ([][]byte, error) { return nil, nil }
-func (m *MockEcDriver) Encode(shards [][]byte) error       { return nil }
+func (m *MockEcDriver) Encode(shards [][]byte) error        { return nil }
 
 func (m *MockEcDriver) Reconstruct(shards [][]byte) error {
 	if m.ShouldFail {
@@ -83,9 +82,6 @@ func (m *MockEcDriver) Reconstruct(shards [][]byte) error {
 // MockUtilsSvc simulates serialization and field logic.
 type MockUtilsSvc struct{}
 
-func (m *MockUtilsSvc) SeparateHotColdFields(data map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
-	return nil, nil
-}
 func (m *MockUtilsSvc) Serialize(data map[string]interface{}) ([]byte, error) { return nil, nil }
 func (m *MockUtilsSvc) MapsAreEqual(map1, map2 map[string]interface{}) bool   { return true }
 
@@ -98,17 +94,6 @@ func (m *MockUtilsSvc) Deserialize(data []byte) (map[string]interface{}, error) 
 		return nil, err
 	}
 	return result, nil
-}
-
-func (m *MockUtilsSvc) MergeHotColdFields(hotFields, coldFields map[string]interface{}) map[string]interface{} {
-	merged := make(map[string]interface{}, len(hotFields)+len(coldFields))
-	for k, v := range coldFields {
-		merged[k] = v
-	}
-	for k, v := range hotFields {
-		merged[k] = v
-	}
-	return merged
 }
 
 // Helper to create service with mocks
@@ -232,72 +217,5 @@ func TestReadEC_Fails_NotEnoughChunks(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "insufficient chunks") && !strings.Contains(err.Error(), "chunks 不足") {
 		// Note: Check against English or Chinese error message depending on implementation
 		t.Logf("Got expected error: %v", err)
-	}
-}
-
-func TestReadFieldHybrid_Success(t *testing.T) {
-	mockHttp := NewMockHttpClient()
-	mockUtils := &MockUtilsSvc{}
-
-	nodes := []string{
-		"http://n1", "http://n2", "http://n3",
-		"http://n4", "http://n5", "http://n6",
-	}
-
-	// A. Mock Hot Data (ReadReplication)
-	mockHttp.SetResponse("http://n1/retrieve/test_hybrid_hot", 200, `{"like_count": 100}`)
-
-	// B. Mock Cold Data (ReadEC)
-	// We use simple English strings to avoid UTF-8 byte counting confusion in tests.
-	// JSON to reconstruct: {"content": "cold-data", "desc": "B"}
-	// Part 1: `{"content": "cold-data"` (23 bytes)
-	// Part 2: `, "desc": "B"}` (13 bytes)
-	// Total: 36 bytes
-	part1 := []byte(`{"content": "cold-data"`)
-	part2 := []byte(`, "desc": "B"}`)
-	totalLen := len(part1) + len(part2)
-
-	mockEcHybrid := &MockEcDriver{
-		ReconstructFunc: func(shards [][]byte) error {
-			shards[0] = part1
-			shards[1] = part2
-			shards[2] = []byte{0, 0, 0} // Padding
-			shards[3] = []byte{0, 0, 0} // Padding
-			return nil
-		},
-	}
-
-	prefix := "test_hybrid_cold_"
-	mockHttp.SetResponse("http://n1/retrieve/test_hybrid_cold_0", 200, string(part1))
-	mockHttp.SetResponse("http://n2/retrieve/test_hybrid_cold_1", 200, string(part2))
-	// Simulate missing other shards to force Reconstruct logic (though mockEcHybrid handles logic)
-	mockHttp.SetResponse("http://n3/retrieve/test_hybrid_cold_2", 404, "")
-	mockHttp.SetResponse("http://n4/retrieve/test_hybrid_cold_3", 404, "")
-	mockHttp.SetResponse("http://n5/retrieve/test_hybrid_cold_4", 404, "")
-	mockHttp.SetResponse("http://n6/retrieve/test_hybrid_cold_5", 404, "")
-
-	metadata := map[string]interface{}{
-		"k":               4.0,
-		"m":               2.0,
-		"hot_key":         "test_hybrid_hot",
-		"cold_prefix":     prefix,
-		"original_length": float64(totalLen), // Must match exact bytes for strict truncation
-	}
-
-	readSvc := createMockService(mockHttp, mockEcHybrid, mockUtils)
-
-	mergedMap, err := readSvc.ReadFieldHybrid(context.Background(), nodes, nodes, metadata)
-	if err != nil {
-		t.Fatalf("ReadFieldHybrid() expected success, got error: %v", err)
-	}
-
-	expectedMap := map[string]interface{}{
-		"like_count": float64(100),
-		"content":    "cold-data",
-		"desc":       "B",
-	}
-
-	if !reflect.DeepEqual(mergedMap, expectedMap) {
-		t.Errorf("ReadFieldHybrid() mismatch:\nExpected: %v\nActual:   %v", expectedMap, mergedMap)
 	}
 }

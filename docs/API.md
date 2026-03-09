@@ -5,6 +5,17 @@ Base URL: `http://localhost:8000`
 Migration note (Docker workflow):
 - Run metadata migrations before starting/rolling API after schema changes:
   - `docker compose run --rm meta_migrate`
+- One-command v2 smoke flow:
+  - `scripts/smoke_e2e_v2.sh`
+
+Runtime profile note (Docker workflow):
+- Default profile is postgres-first and does not require Redpanda:
+  - `WAL_ENABLED=false` on `api`
+  - `redpanda` is behind legacy profiles (`legacy-wal` / `legacy-etcd`)
+- If you need legacy WAL path, explicitly enable profile + API WAL env override.
+
+Build note:
+- Current mainline build no longer includes legacy `field_hybrid` implementation paths.
 
 ## Data Plane Endpoints
 
@@ -17,8 +28,9 @@ Writes a JSON object or binary data to the distributed store.
 - **Headers**: `Content-Type: application/json`
 - **Query Parameters**:
     - `key` (Required): Unique identifier for the object.
-    - `strategy` (Optional): `replication`, `ec`, or `field_hybrid` (default: `replication`).
-    - `hot_only` (Optional): `true` to force a hot-only update (debug use).
+    - `strategy` (Optional): `replication` only (default: `replication`).
+- **Deprecation note**:
+  - direct `ec` write via `/write` is deprecated; use replication write + background tiering worker.
 
 **Request Body (Example)**:
 
@@ -38,11 +50,14 @@ Writes a JSON object or binary data to the distributed store.
 {
     "status": "ok",
     "key": "user:12345",
-    "strategy": "field_hybrid",
+    "strategy": "replication",
     "latency_ms": 15,
-    "is_pure_hot_update": false,
-    "hot_nodes_written": 3,
-    "cold_chunks_written": 6
+    "nodes_written": [
+      "http://storage_node_1:8001",
+      "http://storage_node_2:8002",
+      "http://storage_node_3:8003"
+    ],
+    "partial": false
 }
 
 ```
@@ -53,6 +68,8 @@ Retrieves data. The system automatically determines the storage strategy and rec
 
 - **URL**: `/read/:key`
 - **Method**: `GET`
+- **Note**:
+  - `field_hybrid` strategy is removed from mainline implementation.
 
 **Success Response (200 OK)**:
 Returns the original JSON object.
@@ -72,6 +89,8 @@ Permanently removes the object metadata and physical files.
 
 - **URL**: `/delete/:key`
 - **Method**: `DELETE`
+- **Note**:
+  - `field_hybrid` strategy is removed from mainline implementation.
 
 **Success Response (200 OK)**:
 
@@ -79,9 +98,8 @@ Permanently removes the object metadata and physical files.
 {
     "status": "ok",
     "key": "user:12345",
-    "strategy": "field_hybrid",
-    "hot_nodes_deleted": 3,
-    "cold_chunks_deleted": 6
+    "strategy": "replication",
+    "nodes_deleted": 3
 }
 
 ```
@@ -204,4 +222,4 @@ Permanently removes the object metadata and physical files.
   - `replication`
   - `ec`
 - **Not supported in this endpoint (current)**:
-  - `field_hybrid` (returns conflict/error)
+  - removed legacy strategies

@@ -115,20 +115,7 @@ The API Gateway is exposed at `http://localhost:8000`.
 
 You can choose a storage strategy via the `strategy` query parameter.
 
-**Option A: Hybrid Storage (Recommended for JSON)**
-This strategy automatically keeps "Hot Fields" (defined in config) on replicas and moves other fields to EC nodes.
-
-```
-curl -X POST "http://localhost:8000/write?key=user:1001&strategy=field_hybrid" \
-     -H "Content-Type: application/json" \
-     -d '{
-           "user_id": 1001,
-           "view_count": 50,
-           "biography": "Long text data that belongs to cold storage..."
-         }'
-```
-
-**Option B: Erasure Coding (For large files)**
+**Option A: Erasure Coding (For large files)**
 
 ```
 curl -X POST "http://localhost:8000/write?key=image.png&strategy=ec" \
@@ -136,7 +123,7 @@ curl -X POST "http://localhost:8000/write?key=image.png&strategy=ec" \
      -d '{"binary_data": "..."}'
 ```
 
-**Option C: Replication (For critical data)** Best for small, critical data that requires low latency. Stores full copies on 3 nodes.
+**Option B: Replication (For critical data)** Best for small, critical data that requires low latency. Stores full copies on 3 nodes.
 
 ```
 curl -X POST "http://localhost:8000/write?key=config:settings&strategy=replication" \
@@ -168,24 +155,17 @@ Key system parameters are defined in `internal/config/config.go`.
 | --- | --- | --- |
 | `K` | 4 | Number of Data Shards (Reed-Solomon). |
 | `M` | 2 | Number of Parity Shards. |
-| `HotFields` | `view_count`, `like_count`... | Fields that are kept in Replication storage during Hybrid writes. |
+| `HOT_WRITE_QUORUM` | `2` | Minimum replica acknowledgements required before foreground write ACK. |
 
 ## Testing
 
 Simple integration tests are provided in the `test/` directory.
 
 **Run the functional test suite:**
-This script verifies all strategies (Replication, EC, Hybrid) and edge cases (invalid inputs, updates, deletes).
-For all strategies
+This script verifies active strategies (Replication, EC) and edge cases (invalid inputs, deletes).
 
 ```
 python3 test/simple_test.py
-```
-
-For only hybrid strategies
-
-```
-python3 test/hybrid_only.py
 ```
 
 ![Success1](./img/Success1.png)
@@ -198,17 +178,17 @@ The system significantly reduces storage overhead for large objects. We use test
 
 ### Payload (IoT Telemetry)
 
-The test writes JSON objects with the following structure to simulate "Hot" metadata and "Cold" bulk logs:
+The test writes JSON objects with mixed small fields and one large payload field:
 
 ```
 {
-  "device_id": "sensor-gh-0001",    // Hot (Replicated)
-  "battery_level": 85,              // Hot (Replicated)
-  "status_code": 200,               // Hot (Replicated)
-  "is_active": true,                // Hot (Replicated)
-  "last_sync_ts": 1734842400,       // Hot (Replicated)
-  "firmware_version": "v2.4.1",     // Hot (Replicated)
-  "sensor_raw_log": "xxxx..."       // Cold (Erasure Coded, 800KB)
+  "device_id": "sensor-gh-0001",
+  "battery_level": 85,
+  "status_code": 200,
+  "is_active": true,
+  "last_sync_ts": 1734842400,
+  "firmware_version": "v2.4.1",
+  "sensor_raw_log": "xxxx..."
 }
 ```
 
@@ -223,7 +203,6 @@ python3 test/verify_storage.py
 | --- | --- |
 | **Replication** | **3.0000x** | 
 | **Erasure Coding** | **1.5000x** | 
-| **Field Hybrid** | **~1.5000x** |
 ![Storage](./img/Storage.png)
 
 ## Project Structure

@@ -2,6 +2,7 @@ package writeservice
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	etcd "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 
+	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/interfaces"
 )
 
@@ -37,25 +39,6 @@ func (m *MockHttpClient) Do(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// MockReadService implements IReadService.
-type MockReadService struct{}
-
-func (m *MockReadService) CheckFirstWrite(ctx context.Context, replicaNodes []string, hotKey string) (bool, error) {
-	return true, nil
-}
-func (m *MockReadService) GetExistingColdFields(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (map[string]interface{}, error) {
-	return nil, nil
-}
-func (m *MockReadService) ReadReplication(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
-	return nil, nil
-}
-func (m *MockReadService) ReadEC(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
-	return nil, nil
-}
-func (m *MockReadService) ReadFieldHybrid(ctx context.Context, replicaNodes, ecNodes []string, metadata map[string]interface{}) (map[string]interface{}, error) {
-	return nil, nil
-}
-
 // MockEcDriver implements IEcDriver.
 type MockEcDriver struct{}
 
@@ -66,15 +49,9 @@ func (m *MockEcDriver) Reconstruct(shards [][]byte) error   { return nil }
 // MockUtilsSvc implements IUtilsSvc.
 type MockUtilsSvc struct{}
 
-func (m *MockUtilsSvc) SeparateHotColdFields(data map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
-	return nil, nil
-}
 func (m *MockUtilsSvc) Serialize(data map[string]interface{}) ([]byte, error)   { return nil, nil }
 func (m *MockUtilsSvc) Deserialize(data []byte) (map[string]interface{}, error) { return nil, nil }
 func (m *MockUtilsSvc) MapsAreEqual(map1, map2 map[string]interface{}) bool     { return true }
-func (m *MockUtilsSvc) MergeHotColdFields(hotFields, coldFields map[string]interface{}) map[string]interface{} {
-	return nil
-}
 
 // --- Helper: Start Embedded Etcd ---
 // This starts a real, in-memory Etcd server for testing WAL transactions.
@@ -116,11 +93,10 @@ func startEmbeddedEtcd(t *testing.T) (*embed.Etcd, *etcd.Client) {
 
 // Helper: Create service with dependencies
 func createMockService(etcdClient interfaces.IEtcdClient, httpClient interfaces.IHttpClient) *Service {
-	mockRead := &MockReadService{}
 	mockEc := &MockEcDriver{}
 	mockUtils := &MockUtilsSvc{}
 
-	svc := NewService(etcdClient, nil, httpClient, mockRead, mockEc, mockUtils, nil)
+	svc := NewService(etcdClient, nil, httpClient, mockEc, mockUtils, nil)
 	svc.walProduce = func(ctx context.Context, key string, value []byte) error {
 		return nil
 	}
@@ -185,5 +161,80 @@ func TestWriteReplication_StorageFails(t *testing.T) {
 	resp, _ := etcdClient.Get(context.Background(), "metadata/test_key")
 	if len(resp.Kvs) != 0 {
 		t.Errorf("WriteReplication() failed, but metadata/test_key was still written")
+	}
+}
+
+func TestWriteReplicationWithMetadata_PersistsContentTypeAndLength(t *testing.T) {
+	// 1. Arrange
+	etcdServer, etcdClient := startEmbeddedEtcd(t)
+	defer etcdServer.Close()
+	defer etcdClient.Close()
+
+	mockHttp := &MockHttpClient{
+		StatusCode: 200,
+		ShouldFail: false,
+	}
+	writerSvc := createMockService(etcdClient, mockHttp)
+
+	payload := []byte("binary-payload-123")
+	extraMeta := map[string]interface{}{
+		"content_type": "image/png",
+	}
+
+	// 2. Act
+	nodes := []string{"http://node1"}
+	_, err := writerSvc.WriteReplicationWithMetadata(context.Background(), nodes, "bin_key", payload, extraMeta)
+	if err != nil {
+		t.Fatalf("WriteReplicationWithMetadata() expected success, got error: %v", err)
+	}
+
+	// 3. Assert
+	resp, err := etcdClient.Get(context.Background(), "metadata/bin_key")
+	if err != nil {
+		t.Fatalf("failed to get metadata/bin_key: %v", err)
+	}
+	if len(resp.Kvs) == 0 {
+		t.Fatalf("metadata/bin_key not found")
+	}
+
+	var meta map[string]interface{}
+	if err := json.Unmarshal(resp.Kvs[0].Value, &meta); err != nil {
+		t.Fatalf("failed to parse metadata JSON: %v", err)
+	}
+
+	if got, _ := meta["content_type"].(string); got != "image/png" {
+		t.Fatalf("content_type mismatch, got=%q want=%q", got, "image/png")
+	}
+
+	// JSON numbers are decoded as float64.
+	gotLen, ok := meta["original_length"].(float64)
+	if !ok {
+		t.Fatalf("original_length missing or wrong type, got=%T", meta["original_length"])
+	}
+	if int(gotLen) != len(payload) {
+		t.Fatalf("original_length mismatch, got=%d want=%d", int(gotLen), len(payload))
+	}
+}
+
+func TestWriteReplication_WALDisabled_AllowsNilMQClient(t *testing.T) {
+	etcdServer, etcdClient := startEmbeddedEtcd(t)
+	defer etcdServer.Close()
+	defer etcdClient.Close()
+
+	mockHttp := &MockHttpClient{
+		StatusCode: 200,
+		ShouldFail: false,
+	}
+
+	origWALEnabled := config.WALEnabled
+	defer func() { config.WALEnabled = origWALEnabled }()
+	config.WALEnabled = false
+
+	// Create service with nil MQ client and default walProduce closure from NewService.
+	writerSvc := NewService(etcdClient, nil, mockHttp, &MockEcDriver{}, &MockUtilsSvc{}, nil)
+
+	_, err := writerSvc.WriteReplication(context.Background(), []string{"http://node1"}, "wal_off_key", []byte("data"))
+	if err != nil {
+		t.Fatalf("WriteReplication() expected success with WAL disabled, got error: %v", err)
 	}
 }

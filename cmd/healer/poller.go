@@ -114,25 +114,6 @@ func (h *HealerService) healObject(ctx context.Context, etcdKey string, etcdValu
 			healthErr = h.auditAndRepairEC(prefix, mainKey)
 		}
 
-	case config.StrategyFieldHybrid:
-		if details == nil {
-			healthErr = fmt.Errorf("missing details for Hybrid strategy")
-		} else {
-			hotKey, _ := details["hot_key"].(string)
-			chunkPrefix, _ := details["cold_prefix"].(string)
-
-			// Hybrid is healthy only if BOTH parts are healthy
-			if hotKey != "" {
-				if err := h.auditAndRepairReplication(hotKey); err != nil {
-					healthErr = err
-				}
-			}
-			if healthErr == nil && chunkPrefix != "" {
-				if err := h.auditAndRepairEC(chunkPrefix, mainKey); err != nil {
-					healthErr = err
-				}
-			}
-		}
 	}
 
 	// 3. Clear Dirty Flag if Healthy
@@ -140,7 +121,7 @@ func (h *HealerService) healObject(ctx context.Context, etcdKey string, etcdValu
 	if isDirty && healthErr == nil {
 		log.Printf("[Healer] Cleaning dirty flag for %s...", mainKey)
 		delete(meta, "is_dirty") // Remove the flag
-		
+
 		// Update Etcd
 		newMetaBytes, _ := json.Marshal(meta)
 		if _, err := h.etcd.Put(ctx, etcdKey, string(newMetaBytes)); err != nil {

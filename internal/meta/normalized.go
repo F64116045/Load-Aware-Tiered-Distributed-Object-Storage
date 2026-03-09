@@ -315,6 +315,7 @@ func strategyFromTier(tier string) string {
 	case "EC":
 		return string(config.StrategyEC)
 	default:
-		return string(config.StrategyFieldHybrid)
+		// Fallback to active default strategy for unexpected/legacy tier values.
+		return string(config.StrategyReplication)
 	}
 }

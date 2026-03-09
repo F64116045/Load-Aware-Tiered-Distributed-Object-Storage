@@ -30,19 +30,7 @@ type StorageStrategy string
 const (
 	StrategyReplication StorageStrategy = "replication"
 	StrategyEC          StorageStrategy = "ec"
-	StrategyFieldHybrid StorageStrategy = "field_hybrid"
 )
-
-// HotFields defines specific fields that are frequently updated
-// Used for the FieldHybrid strategy logic
-var HotFields = map[string]bool{
-	"like_count":      true,
-	"view_count":      true,
-	"inventory_count": true,
-	"update_count":    true,
-	"status_code":     true,
-	"battery_level":   true,
-}
 
 // Etcd related constants for keys and prefixes
 const (
@@ -66,6 +54,8 @@ const (
 var ExpectedNodeNames = map[string]bool{}
 
 var (
+	// WALEnabled controls whether synchronous WAL (Redpanda) is enabled on write path.
+	WALEnabled = getEnvBool("WAL_ENABLED", false)
 	// MetaEnabled controls whether PostgreSQL-backed metadata service is enabled.
 	MetaEnabled = getEnvBool("META_ENABLED", false)
 	// MetaAutoMigrate controls whether API runs metadata migration on startup.

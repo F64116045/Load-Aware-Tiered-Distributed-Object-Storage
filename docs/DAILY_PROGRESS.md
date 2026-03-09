@@ -450,3 +450,287 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - runs `META_MIGRATE_ACTION=up` by default
 3. Result:
    - schema migration can be executed in full-Docker workflow without local Go runtime
+
+## 2026-02-21 (Milestone 6 binary metadata test coverage, step 20)
+
+1. Added writeservice unit test:
+   - `TestWriteReplicationWithMetadata_PersistsContentTypeAndLength`
+2. Validation target:
+   - verifies `WriteReplicationWithMetadata(...)` commits `content_type`
+   - verifies `original_length` metadata is persisted as expected
+
+## 2026-03-03 (Milestone 6 API handler test coverage, step 21)
+
+1. Refactored v2 object route registration for testability:
+   - extracted `registerV2ObjectRoutes(...)` in `cmd/api/main.go`
+   - added dependency-injection struct `v2ObjectRouteDeps`
+2. Added `cmd/api/v2_objects_test.go` coverage:
+   - `PUT /v2/objects/:id` success path + default `Content-Type`
+   - `GET /v2/objects/:id` replication path + EC path
+   - `GET /v2/objects/:id` metadata-not-found and strategy-conflict paths
+3. Verification:
+   - `go test ./cmd/api` passes
+
+## 2026-03-03 (Milestone 6 API error-path test coverage, step 22)
+
+1. Expanded `cmd/api/v2_objects_test.go` with error-path coverage:
+   - `PUT /v2/objects/:id` write failure -> `500`
+   - `GET /v2/objects/:id` metadata internal error -> `500`
+   - `GET /v2/objects/:id` replication read failure -> `404`
+   - `GET /v2/objects/:id` EC read failure -> `404`
+2. Verification:
+   - `go test ./cmd/api` passes
+
+## 2026-03-03 (Milestone 6 test-suite stabilization, step 23)
+
+1. Fixed `internal/readservice` test fixture drift:
+   - `TestReadFieldHybrid_Success` now provides at least `k` healthy cold shards
+   - matches current `ReadEC/GetExistingColdFields` guard (`healthyCount >= k`)
+2. Verification:
+   - `go test ./internal/readservice` passes
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 admin-task handler test coverage, step 24)
+
+1. Refactored admin task routes for testability:
+   - extracted `registerAdminTaskRoutes(...)` in `cmd/api/main.go`
+   - added dependency-injection struct `adminTaskRouteDeps`
+2. Added `cmd/api/admin_tasks_test.go` coverage:
+   - `GET /v2/admin/tasks` success path (`filters`, `state_counts`, `actions`)
+   - `GET /v2/admin/tasks` invalid limit (`400`) and metadata unavailable (`503`)
+   - `POST /v2/admin/tasks/:id/retry-now` success/not-found/internal-error
+   - `POST /v2/admin/tasks/:id/cancel` default reason/query reason/not-found
+3. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 WAL optionalization, step 25)
+
+1. Added WAL feature flag:
+   - `WAL_ENABLED` config in `internal/config/config.go`
+   - default: `false` (postgres-first profile)
+2. Write path behavior update:
+   - `createWALEntry(...)` now skips Redpanda when `WAL_ENABLED=false`
+   - write commit path continues through metadata commit (Postgres/Etcd compatibility path)
+3. API bootstrap update:
+   - `cmd/api/main.go` only initializes Redpanda client when `WAL_ENABLED=true`
+   - avoids startup failure when Redpanda is not present
+4. Test & compose updates:
+   - added `TestWriteReplication_WALDisabled_AllowsNilMQClient`
+   - `docker-compose.yaml` sets `WAL_ENABLED=false` for `api`
+   - removed `api -> redpanda` startup dependency
+5. Verification:
+   - `go test ./internal/writeservice` passes
+   - `go test ./...` passes
+   - `docker compose config -q` passes
+
+## 2026-03-03 (Milestone 6 Redpanda default-off profile cleanup, step 26)
+
+1. Updated Docker default runtime to postgres-first profile:
+   - `api` no longer exports `WAL_BROKER` / `WAL_TOPIC` in default env
+   - `redpanda` moved behind compose profiles: `legacy-wal`, `legacy-etcd`
+2. Result:
+   - default `docker compose up` no longer requires Redpanda for API startup
+   - legacy WAL path is explicit profile opt-in
+3. Documentation:
+   - added runtime profile note to `docs/API.md`
+4. Verification:
+   - `docker compose config -q` passes
+
+## 2026-03-03 (Milestone 6 API structure cleanup, step 27)
+
+1. Split route-heavy `cmd/api/main.go` into focused files (no behavior change):
+   - `cmd/api/routes_legacy.go`
+     - `/write`, `/read/:key`, `/delete/:key`
+     - `/node_status`, `/storage_usage`
+   - `cmd/api/routes_admin_misc.go`
+     - `/health`, `/v2/admin/metrics-snapshot`
+     - `/v2/admin/nodes`, `/v2/admin/objects/:id`
+   - `cmd/api/node_registry.go`
+     - active-node snapshot helpers for route usage
+2. Kept existing testable route modules intact:
+   - `registerV2ObjectRoutes(...)`
+   - `registerAdminTaskRoutes(...)`
+3. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 API bootstrap/runtime extraction, step 28)
+
+1. Extracted API runtime bootstrap from `cmd/api/main.go` into `cmd/api/bootstrap_runtime.go`:
+   - `initAppRuntime()`: etcd/meta/mq/service initialization + cleanup closure
+   - `startNodeDiscovery(...)`: discovery source selection and watcher startup
+   - `buildRouter(...)`: route wiring composition
+2. `main.go` is now reduced to high-level flow:
+   - init runtime
+   - start discovery
+   - build router
+   - run server
+3. Safety hardening during extraction:
+   - admin task deps now use nil-safe closures (avoid method-value panic when metadata is unavailable)
+4. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 field_hybrid deprecation at API layer, step 29)
+
+1. Converged legacy API strategy surface:
+   - `/write` no longer accepts `strategy=field_hybrid` (returns `422`)
+   - `/read/:key` returns `409` for metadata strategy `field_hybrid`
+   - `/delete/:key` returns `409` for metadata strategy `field_hybrid`
+2. Simplified legacy route dependency wiring:
+   - removed direct `field_hybrid` read/write/delete function dependencies from `legacyRouteDeps`
+3. Added tests:
+   - `cmd/api/routes_legacy_test.go` covers write/read/delete deprecation behavior
+4. Documentation:
+   - updated `docs/API.md` strategy notes for `/write`, `/read`, `/delete`
+5. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 replication-only legacy write convergence, step 30)
+
+1. Converged legacy `/write` to replication-only:
+   - `strategy=replication` remains supported
+   - `strategy=ec` now returns `422` (direct EC write deprecated)
+   - `strategy=field_hybrid` remains deprecated (`422`)
+2. Added/updated tests:
+   - `TestLegacyWrite_ECRejected`
+   - existing `field_hybrid` rejection test remains
+3. Documentation:
+   - updated `/write` strategy note in `docs/API.md`
+4. Verification:
+   - `go test ./cmd/api` passes
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 hybrid implementation isolation, step 31)
+
+1. Isolated `field_hybrid` implementation into legacy files (no behavior change):
+   - `internal/writeservice/writeservice_legacy_hybrid.go`
+   - `internal/readservice/readservice_legacy_hybrid.go`
+   - `internal/storageops/storageops_legacy_hybrid.go`
+2. Main strategy files now focus on active paths (`replication` / `ec`).
+3. Added explicit deprecation comments on legacy hybrid methods:
+   - `WriteFieldHybrid`
+   - `GetExistingColdFields`
+   - `ReadFieldHybrid`
+   - `DeleteFieldHybrid`
+4. Verification:
+   - `go test ./internal/writeservice ./internal/readservice ./internal/storageops` passes
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 active interface convergence, step 32)
+
+1. Narrowed core interfaces to active strategies only:
+   - `internal/interfaces/IReadService` now exposes:
+     - `CheckFirstWrite`
+     - `ReadReplication`
+     - `ReadEC`
+   - `internal/interfaces/IStorageOps` now exposes:
+     - `DeleteReplication`
+     - `DeleteEC`
+2. Legacy hybrid methods remain implemented on concrete services in legacy files, but are no longer part of active core contracts.
+3. Verification:
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 writeservice dependency trim, step 33)
+
+1. Removed unused read dependency from `writeservice.Service`:
+   - dropped `read` field
+   - simplified `writeservice.NewService(...)` signature
+2. Updated call sites:
+   - `cmd/api/bootstrap_runtime.go`
+   - `internal/writeservice/writeservice_test.go`
+3. Cleaned obsolete read mocks in writeservice tests.
+4. Verification:
+   - `go test ./internal/writeservice` passes
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 optional legacy-hybrid build gate, step 34)
+
+1. Added optional build exclusion gate for legacy hybrid files:
+   - `internal/writeservice/writeservice_legacy_hybrid.go`
+   - `internal/readservice/readservice_legacy_hybrid.go`
+   - `internal/storageops/storageops_legacy_hybrid.go`
+2. Build constraint:
+   - default: legacy hybrid code included
+   - optional exclusion: build with `-tags no_legacy_hybrid`
+3. Documentation:
+   - added build note in `docs/API.md`
+4. Verification:
+   - `go test ./...` passes
+
+## 2026-03-03 (Milestone 6 legacy hybrid hard removal, step 35)
+
+1. Removed legacy hybrid implementation files:
+   - `internal/writeservice/writeservice_legacy_hybrid.go`
+   - `internal/readservice/readservice_legacy_hybrid.go`
+   - `internal/storageops/storageops_legacy_hybrid.go`
+2. Removed hybrid-focused unit tests that depended on deleted methods:
+   - `TestReadFieldHybrid_Success`
+   - `TestDeleteFieldHybrid`
+   - `TestDeleteFieldHybrid_BlindDelete`
+3. Updated docs to reflect hard removal state.
+4. Verification:
+   - `go test ./...` passes
+   - `go test -tags no_legacy_hybrid ./...` passes
+
+## 2026-03-03 (Milestone 6 one-command v2 e2e smoke flow, step 36)
+
+1. Added executable script:
+   - `scripts/smoke_e2e_v2.sh`
+2. Covered flow:
+   - `meta_migrate` run
+   - optional compose startup
+   - `PUT /v2/objects/:id` (binary)
+   - tiering task existence + admin task visibility check
+   - optional force-schedule task
+   - wait for `EC_ACTIVE` + `tier=EC` + task `DONE`
+   - `GET /v2/objects/:id` payload validation
+3. Config knobs:
+   - `START_STACK`, `FORCE_TASK_NOW`, `API_BASE`, `TIMEOUT_SEC`
+4. Documentation:
+   - updated `docs/API.md` with smoke entry point
+
+## 2026-03-10 (Milestone 6 hygiene cleanup pass, step 37)
+
+1. Cleaned non-functional noise and stale wording:
+   - updated outdated writeservice header comments to match current architecture
+   - normalized `ReadEC` debug log wording
+   - replaced storage-node Chinese debug comment with concise English diagnostic comment
+2. Fixed stale API examples:
+   - `/write` success example now uses `replication` response shape
+   - `/delete` success example no longer references removed `field_hybrid` fields
+3. Verification:
+   - `go test ./...` passes
+
+## 2026-03-10 (Milestone 6 field_hybrid symbol purge, step 38)
+
+1. Removed remaining `field_hybrid` symbols from active code:
+   - deleted `StrategyFieldHybrid` constant from `internal/config/config.go`
+   - removed obsolete `HotFields` configuration
+   - removed hybrid-only utility APIs from `IUtilsSvc` and `utils.Service`
+2. Simplified compatibility handling:
+   - legacy API conflict checks now use string compatibility guard (`"field_hybrid"`)
+   - normalized metadata tier fallback now returns active default strategy (`replication`)
+3. Updated stale tests/docs:
+   - removed hybrid-only utility tests
+   - removed hybrid-specific mock methods in read/write service tests
+   - refreshed API/Healer docs wording to reflect removal
+4. Verification:
+   - `go test ./...` passes
+
+## 2026-03-10 (Milestone 6 field_hybrid ecosystem cleanup, step 39)
+
+1. Cleaned remaining ecosystem references that could mislead active usage:
+   - updated `Readme.md` usage/testing sections to remove `field_hybrid` guidance
+   - removed obsolete `test/hybrid_only.py`
+   - converted `test/simple_test.py` hybrid scenario into deprecated-strategy negative check (`422`)
+2. Updated benchmark defaults away from removed strategy:
+   - `benchmark/k6/read_latency.js` default strategy now `replication`
+   - removed hybrid run path from `benchmark/k6/benchmark.js`
+   - `benchmark/go-ycsb/db/hybridstore/db.go` default strategy now `replication`
+   - refreshed `benchmark/go-ycsb` helper scripts/comments that referenced `field_hybrid`
+   - removed hybrid row from `test/verify_storage.py` report output
+3. Verification:
+   - pending full test pass in next step (`go test ./...`)
