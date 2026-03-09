@@ -703,3 +703,34 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `/delete` success example no longer references removed `field_hybrid` fields
 3. Verification:
    - `go test ./...` passes
+
+## 2026-03-10 (Milestone 6 field_hybrid symbol purge, step 38)
+
+1. Removed remaining `field_hybrid` symbols from active code:
+   - deleted `StrategyFieldHybrid` constant from `internal/config/config.go`
+   - removed obsolete `HotFields` configuration
+   - removed hybrid-only utility APIs from `IUtilsSvc` and `utils.Service`
+2. Simplified compatibility handling:
+   - legacy API conflict checks now use string compatibility guard (`"field_hybrid"`)
+   - normalized metadata tier fallback now returns active default strategy (`replication`)
+3. Updated stale tests/docs:
+   - removed hybrid-only utility tests
+   - removed hybrid-specific mock methods in read/write service tests
+   - refreshed API/Healer docs wording to reflect removal
+4. Verification:
+   - `go test ./...` passes
+
+## 2026-03-10 (Milestone 6 field_hybrid ecosystem cleanup, step 39)
+
+1. Cleaned remaining ecosystem references that could mislead active usage:
+   - updated `Readme.md` usage/testing sections to remove `field_hybrid` guidance
+   - removed obsolete `test/hybrid_only.py`
+   - converted `test/simple_test.py` hybrid scenario into deprecated-strategy negative check (`422`)
+2. Updated benchmark defaults away from removed strategy:
+   - `benchmark/k6/read_latency.js` default strategy now `replication`
+   - removed hybrid run path from `benchmark/k6/benchmark.js`
+   - `benchmark/go-ycsb/db/hybridstore/db.go` default strategy now `replication`
+   - refreshed `benchmark/go-ycsb` helper scripts/comments that referenced `field_hybrid`
+   - removed hybrid row from `test/verify_storage.py` report output
+3. Verification:
+   - pending full test pass in next step (`go test ./...`)

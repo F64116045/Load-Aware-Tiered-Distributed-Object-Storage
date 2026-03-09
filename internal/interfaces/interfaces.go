@@ -45,16 +45,10 @@ type IEcDriver interface {
 
 // IUtilsSvc defines helper utilities for data processing.
 type IUtilsSvc interface {
-	// SeparateHotColdFields splits data into hot (frequently accessed) and cold (infrequently accessed) maps.
-	SeparateHotColdFields(data map[string]interface{}) (map[string]interface{}, map[string]interface{})
-
 	Serialize(data map[string]interface{}) ([]byte, error)
 	Deserialize(data []byte) (map[string]interface{}, error)
 
 	MapsAreEqual(map1, map2 map[string]interface{}) bool
-
-	// MergeHotColdFields combines hot and cold maps back into a single structure.
-	MergeHotColdFields(hotFields, coldFields map[string]interface{}) map[string]interface{}
 }
 
 // IStorageOps defines active deletion operations across storage strategies.

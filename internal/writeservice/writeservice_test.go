@@ -49,15 +49,9 @@ func (m *MockEcDriver) Reconstruct(shards [][]byte) error   { return nil }
 // MockUtilsSvc implements IUtilsSvc.
 type MockUtilsSvc struct{}
 
-func (m *MockUtilsSvc) SeparateHotColdFields(data map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
-	return nil, nil
-}
 func (m *MockUtilsSvc) Serialize(data map[string]interface{}) ([]byte, error)   { return nil, nil }
 func (m *MockUtilsSvc) Deserialize(data []byte) (map[string]interface{}, error) { return nil, nil }
 func (m *MockUtilsSvc) MapsAreEqual(map1, map2 map[string]interface{}) bool     { return true }
-func (m *MockUtilsSvc) MergeHotColdFields(hotFields, coldFields map[string]interface{}) map[string]interface{} {
-	return nil
-}
 
 // --- Helper: Start Embedded Etcd ---
 // This starts a real, in-memory Etcd server for testing WAL transactions.

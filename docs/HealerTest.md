@@ -93,7 +93,7 @@ docker-compose exec storage_node_1 ls /data/node1/repair_rep_test
 Write a large object to trigger the EC strategy.
 
 ```
-curl -X POST "http://localhost:8000/write?key=repair_ec_test&strategy=field_hybrid" \
+curl -X POST "http://localhost:8000/write?key=repair_ec_test&strategy=replication" \
      -H "Content-Type: application/json" \
      -d '{
            "hot_field": 123,

@@ -17,7 +17,7 @@ func (h *HealerService) runWALConsumer(ctx context.Context, cfg Config) {
 	// Subscribe to WAL events
 	err := h.mq.Consume(ctx, func(key, value []byte) error {
 		// Deferred Verification: Wait for API Gateway to potentially finish writing
-		
+
 		// Copy data to avoid closure race conditions
 		valCopy := make([]byte, len(value))
 		copy(valCopy, value)
@@ -46,7 +46,7 @@ func (h *HealerService) verifyAndRecover(ctx context.Context, key string, walVal
 	}
 
 	mainKey := logEntry["key_name"].(string)
-	
+
 	// 1. Check Etcd: Did the API Gateway succeed?
 	metaKey := fmt.Sprintf("metadata/%s", mainKey)
 	resp, err := h.etcd.Get(ctx, metaKey)
@@ -57,7 +57,7 @@ func (h *HealerService) verifyAndRecover(ctx context.Context, key string, walVal
 
 	// Case A: Metadata exists -> Transaction was successful. Ignore.
 	if len(resp.Kvs) > 0 {
-		return 
+		return
 	}
 
 	// Case B: Metadata missing -> Orphaned transaction found.
@@ -98,33 +98,22 @@ func (h *HealerService) resurrectData(ctx context.Context, key string, logEntry 
 				log.Printf("[Recovery] Found sufficient EC chunks for %s.", key)
 			}
 		}
-	
-	case config.StrategyFieldHybrid:
-		// For Hybrid, checking Hot Key existence is usually enough to resurrect
-		if hotKey, ok := details["hot_key"].(string); ok {
-			nodes, _ := h.getSortedNodes()
-			for _, node := range nodes {
-				if h.checkFileExists(node, hotKey) {
-					exists = true
-					break
-				}
-			}
-		}
+
 	}
 
 	// If data exists but metadata is missing -> Resurrect Metadata
 	if exists {
 		log.Printf("%s[Recovery] Data exists on disk! Resurrecting Metadata for %s...%s", config.Colors["GREEN"], key, config.Colors["RESET"])
-		
+
 		// Reconstruct metadata from WAL entry
 		meta := map[string]interface{}{
 			"strategy":       string(strategy),
 			"details":        details,
 			"resurrected_by": "healer",
 			// IMPORTANT: Mark as dirty so Polling Loop will fix replica counts later
-			"is_dirty":       true, 
+			"is_dirty": true,
 		}
-		
+
 		metaBytes, _ := json.Marshal(meta)
 		if _, err := h.etcd.Put(ctx, "metadata/"+key, string(metaBytes)); err != nil {
 			log.Printf("[Recovery] Failed to write metadata: %v", err)

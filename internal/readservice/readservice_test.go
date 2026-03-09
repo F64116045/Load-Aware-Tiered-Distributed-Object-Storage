@@ -82,9 +82,6 @@ func (m *MockEcDriver) Reconstruct(shards [][]byte) error {
 // MockUtilsSvc simulates serialization and field logic.
 type MockUtilsSvc struct{}
 
-func (m *MockUtilsSvc) SeparateHotColdFields(data map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
-	return nil, nil
-}
 func (m *MockUtilsSvc) Serialize(data map[string]interface{}) ([]byte, error) { return nil, nil }
 func (m *MockUtilsSvc) MapsAreEqual(map1, map2 map[string]interface{}) bool   { return true }
 
@@ -97,17 +94,6 @@ func (m *MockUtilsSvc) Deserialize(data []byte) (map[string]interface{}, error) 
 		return nil, err
 	}
 	return result, nil
-}
-
-func (m *MockUtilsSvc) MergeHotColdFields(hotFields, coldFields map[string]interface{}) map[string]interface{} {
-	merged := make(map[string]interface{}, len(hotFields)+len(coldFields))
-	for k, v := range coldFields {
-		merged[k] = v
-	}
-	for k, v := range hotFields {
-		merged[k] = v
-	}
-	return merged
 }
 
 // Helper to create service with mocks

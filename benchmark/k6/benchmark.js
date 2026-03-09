@@ -40,7 +40,7 @@ export const options = {
             vus: 10, 
             duration: '20s',  
             exec: MODE === 'replication' ? 'runReplication' : 
-                  MODE === 'ec' ? 'runEC' : 'runHybridHot',
+                  'runEC',
         }
     },
     thresholds: { http_req_failed: ['rate<0.05'] },
@@ -58,7 +58,7 @@ export function setup() {
             status_flags: 1, 
             description: COLD_DATA_STRING 
         });
-        http.post(`${BASE_URL}/write?key=${PRE_GENERATED_KEYS[i]}&strategy=field_hybrid`, payload, params);
+        http.post(`${BASE_URL}/write?key=${PRE_GENERATED_KEYS[i]}&strategy=${MODE}`, payload, params);
         
         // Brief pause to allow WSL2 I/O to stabilize
         sleep(0.5); 
@@ -81,21 +81,4 @@ export function runEC() {
         description: COLD_DATA_STRING 
     });
     http.post(`${BASE_URL}/write?key=${randomKey}&strategy=ec`, payload, params);
-}
-
-export function runHybridHot() {
-    const randomKey = PRE_GENERATED_KEYS[Math.floor(Math.random() * PRE_GENERATED_KEYS.length)];
-    
-    // Update hot field (status_flags) only; cold field remains identical
-    const payload = JSON.stringify({ 
-        status_flags: Math.floor(Math.random() * 1000), 
-        description: COLD_DATA_STRING 
-    });
-    
-    const res = http.post(`${BASE_URL}/write?key=${randomKey}&strategy=field_hybrid`, payload, params);
-    
-    // Verify optimization path via response metadata
-    check(res, { 
-        'Is Pure Hot': (r) => r.status === 200 && (r.json('is_pure_hot_update') === true || r.json('operation_type') === 'Pure Hot Update') 
-    });
 }

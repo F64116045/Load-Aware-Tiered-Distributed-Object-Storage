@@ -86,7 +86,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 		default:
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"error":  "Invalid strategy",
-				"detail": "supported strategy: replication (field_hybrid/ec direct write are deprecated)",
+				"detail": "supported strategy: replication (direct ec write is deprecated)",
 			})
 			return
 		}
@@ -153,7 +153,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			}
 			c.JSON(http.StatusOK, dataDict)
 
-		case config.StrategyFieldHybrid:
+		case config.StorageStrategy("field_hybrid"):
 			c.JSON(http.StatusConflict, gin.H{
 				"error":    "field_hybrid is deprecated",
 				"strategy": strategyStr,
@@ -197,7 +197,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			case config.StrategyEC:
 				coldCount, delErr = deps.deleteEC(c.Request.Context(), ecNodes, metadata)
 				result["chunks_deleted"] = coldCount
-			case config.StrategyFieldHybrid:
+			case config.StorageStrategy("field_hybrid"):
 				c.JSON(http.StatusConflict, gin.H{
 					"error":    "field_hybrid is deprecated",
 					"strategy": strategyStr,

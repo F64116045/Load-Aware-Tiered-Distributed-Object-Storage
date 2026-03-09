@@ -9,8 +9,6 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-
-	"hybrid_distributed_store/internal/config"
 )
 
 func newLegacyTestRouter(deps legacyRouteDeps) *gin.Engine {
@@ -86,7 +84,7 @@ func TestLegacyReadAndDelete_FieldHybridRejected(t *testing.T) {
 	t.Run("read", func(t *testing.T) {
 		deps := baseLegacyDeps()
 		deps.loadMetadata = func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-			return map[string]interface{}{"strategy": string(config.StrategyFieldHybrid)}, "postgres_normalized", nil
+			return map[string]interface{}{"strategy": "field_hybrid"}, "postgres_normalized", nil
 		}
 		router := newLegacyTestRouter(deps)
 
@@ -102,7 +100,7 @@ func TestLegacyReadAndDelete_FieldHybridRejected(t *testing.T) {
 	t.Run("delete", func(t *testing.T) {
 		deps := baseLegacyDeps()
 		deps.loadMetadata = func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-			return map[string]interface{}{"strategy": string(config.StrategyFieldHybrid)}, "postgres_normalized", nil
+			return map[string]interface{}{"strategy": "field_hybrid"}, "postgres_normalized", nil
 		}
 		router := newLegacyTestRouter(deps)
 

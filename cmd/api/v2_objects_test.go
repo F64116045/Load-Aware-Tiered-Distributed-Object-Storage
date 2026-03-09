@@ -195,7 +195,7 @@ func TestV2GetObject_MetadataNotFoundAndConflict(t *testing.T) {
 				return nil, nil
 			},
 			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-				return map[string]interface{}{"strategy": string(config.StrategyFieldHybrid)}, "postgres_normalized", nil
+				return map[string]interface{}{"strategy": "field_hybrid"}, "postgres_normalized", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return nil, errors.New("should not be called")
