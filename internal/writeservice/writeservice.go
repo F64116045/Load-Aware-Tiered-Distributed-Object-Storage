@@ -21,8 +21,8 @@ import (
 	"hybrid_distributed_store/internal/mq"
 )
 
-// Service implements the write logic using Redpanda for WAL (Write-Ahead Log)
-// and Etcd for Metadata storage.
+// Service implements write logic for active strategies (replication/ec),
+// with optional WAL and metadata persistence.
 type Service struct {
 	etcd       interfaces.IEtcdClient
 	mq         *mq.Client

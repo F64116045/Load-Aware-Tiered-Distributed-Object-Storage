@@ -691,3 +691,15 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `START_STACK`, `FORCE_TASK_NOW`, `API_BASE`, `TIMEOUT_SEC`
 4. Documentation:
    - updated `docs/API.md` with smoke entry point
+
+## 2026-03-10 (Milestone 6 hygiene cleanup pass, step 37)
+
+1. Cleaned non-functional noise and stale wording:
+   - updated outdated writeservice header comments to match current architecture
+   - normalized `ReadEC` debug log wording
+   - replaced storage-node Chinese debug comment with concise English diagnostic comment
+2. Fixed stale API examples:
+   - `/write` success example now uses `replication` response shape
+   - `/delete` success example no longer references removed `field_hybrid` fields
+3. Verification:
+   - `go test ./...` passes

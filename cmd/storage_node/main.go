@@ -127,7 +127,7 @@ func (s *storageEngine) retrieve(key string) ([]byte, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// [DEBUG] 印出路徑資訊，這行是為了解決 404 問題的關鍵
+			// Log resolved path details for not-found diagnostics.
 			log.Printf("[Storage Debug] 404 Not Found. Key: '%s' | Resolved Path: '%s' | BaseDir: '%s'", key, filePath, s.storageDir)
 			return nil, nil
 		}

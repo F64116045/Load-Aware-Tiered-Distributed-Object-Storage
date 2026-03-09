@@ -51,11 +51,14 @@ Writes a JSON object or binary data to the distributed store.
 {
     "status": "ok",
     "key": "user:12345",
-    "strategy": "field_hybrid",
+    "strategy": "replication",
     "latency_ms": 15,
-    "is_pure_hot_update": false,
-    "hot_nodes_written": 3,
-    "cold_chunks_written": 6
+    "nodes_written": [
+      "http://storage_node_1:8001",
+      "http://storage_node_2:8002",
+      "http://storage_node_3:8003"
+    ],
+    "partial": false
 }
 
 ```
@@ -96,9 +99,8 @@ Permanently removes the object metadata and physical files.
 {
     "status": "ok",
     "key": "user:12345",
-    "strategy": "field_hybrid",
-    "hot_nodes_deleted": 3,
-    "cold_chunks_deleted": 6
+    "strategy": "replication",
+    "nodes_deleted": 3
 }
 
 ```

@@ -208,7 +208,7 @@ func (s *Service) ReadEC(ctx context.Context, ecNodes []string, metadata map[str
 
 	// Truncate logic
 	unpaddedData = unpaddedData[:originalLength]
-	log.Printf("  %s[DEBUG] ReadEC: Truncated data length = %d%s\n", config.Colors["YELLOW"], len(unpaddedData), config.Colors["RESET"])
+	log.Printf("  %s[ReadService] ReadEC truncated data length = %d%s\n", config.Colors["YELLOW"], len(unpaddedData), config.Colors["RESET"])
 
 	return unpaddedData, nil
 }
