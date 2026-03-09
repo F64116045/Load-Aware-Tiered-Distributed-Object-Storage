@@ -18,12 +18,11 @@ COPY . .
 RUN go mod tidy
 
 # 3. Build Microservices
-# We build separate binaries: API Gateway, Storage Node, Healer, Tiering Worker, and Meta Migrator.
+# We build separate binaries: API Gateway, Storage Node, Tiering Worker, and Meta Migrator.
 # CGO_ENABLED=0 ensures static linking .
 # -ldflags="-s -w" strips debug information to reduce binary size.
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/api ./cmd/api
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/storage_node ./cmd/storage_node
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/healer ./cmd/healer
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/tiering_worker ./cmd/tiering_worker
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/meta_migrate ./cmd/meta_migrate
 
@@ -39,7 +38,6 @@ RUN apk add --no-cache ca-certificates
 # Copy the compiled binaries from the builder stage
 COPY --from=builder /usr/local/bin/api /usr/local/bin/api
 COPY --from=builder /usr/local/bin/storage_node /usr/local/bin/storage_node
-COPY --from=builder /usr/local/bin/healer /usr/local/bin/healer
 COPY --from=builder /usr/local/bin/tiering_worker /usr/local/bin/tiering_worker
 COPY --from=builder /usr/local/bin/meta_migrate /usr/local/bin/meta_migrate
 

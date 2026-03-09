@@ -734,3 +734,16 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - removed hybrid row from `test/verify_storage.py` report output
 3. Verification:
    - pending full test pass in next step (`go test ./...`)
+
+## 2026-03-10 (Milestone 6 legacy healer removal, step 40)
+
+1. Removed legacy healer runtime path:
+   - deleted `cmd/healer/*`
+   - removed healer binary build/copy stages from `Dockerfile`
+   - removed `healer` service from `docker-compose.yaml`
+2. Cleaned associated references:
+   - removed obsolete healer lock constant from `internal/config/config.go`
+   - updated architecture and benchmark docs to no longer require healer operations
+   - removed `docs/HealerTest.md` (legacy)
+3. Verification:
+   - `go test ./...` passes

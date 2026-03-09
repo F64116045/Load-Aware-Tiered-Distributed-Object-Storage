@@ -350,29 +350,6 @@ services:
     networks:
       - storage_net
 
-  # ---------------------------------------------------------------------------
-  # Healer Service
-  # ---------------------------------------------------------------------------
-  healer:
-    profiles: ["legacy-etcd"]
-    build:
-      context: .
-      dockerfile: Dockerfile
-    deploy:
-      replicas: 0 # Disabled during benchmarking
-    command: ["/usr/local/bin/healer"]
-    environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
-      - WAL_BROKER=redpanda:9092
-      - WAL_TOPIC=wal-events
-      - HOSTNAME=healer
-    depends_on:
-      - api
-      - redpanda
-    networks:
-      - storage_net
-
 networks:
   storage_net:
     driver: bridge

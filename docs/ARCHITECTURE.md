@@ -36,7 +36,7 @@ Legend:
 | Admin API `/v2/admin/nodes` | `DONE` | heartbeat-based node visibility with staleness flag. |
 | Admin API `/v2/admin/objects/:id` | `DONE` | object state + current version placement view. |
 | Full spec policy variants A2/A3 + threshold trigger | `TODO` | only A1 periodic path is implemented now. |
-| Repair/reconciliation worker for missing shards/replicas | `PARTIAL` | legacy healer exists, v2 repair model not fully converged yet. |
+| Repair/reconciliation worker for missing shards/replicas | `TODO` | legacy healer path removed; v2 repair model still to be implemented. |
 | Benchmark one-command reproducible v2 matrix | `PARTIAL` | benchmark assets exist, v2 matrix integration still pending cleanup. |
 
 ## Runtime Components (Current)
@@ -54,5 +54,5 @@ Legend:
    - authoritative metadata and task store
 5. `redpanda`
    - WAL/event path still present for existing write flow compatibility
-6. `etcd` + `healer`
+6. `etcd`
    - behind `legacy-etcd` compose profile (non-default path)

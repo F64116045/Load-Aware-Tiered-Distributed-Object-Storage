@@ -211,7 +211,6 @@ python3 test/verify_storage.py
 .
 ├── cmd/                       # Entry points
 │   ├── api/                   # API Gateway (Main Entry)
-│   ├── healer/                # Self-healing service
 │   └── storage_node/          # Async I/O Data Node
 ├── internal/                  # Private library code
 │   ├── config/                # Configuration constants

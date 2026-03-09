@@ -27,7 +27,7 @@ To obtain accurate benchmarks, you must eliminate background noise and accumulat
 ### Why Reset?
 
 - **Data accumulation**: Previous tests fill up storage and Etcd keys, potentially slowing down subsequent I/O.
-- **Background Noise**: The `healer` service consumes CPU and locks while checking for inconsistencies. This interferes with pure write/read performance measurements.
+- **Background Noise**: avoid running unrelated load/tools during benchmark execution.
 
 ### The Standard Testing Workflow
 
@@ -49,14 +49,7 @@ Start the cluster. **This will occupy the terminal** to stream logs.
     
     ```
     
-3. **Stop Background Services (Terminal 2)OPEN A NEW TERMINAL.** The Healer service competes for Etcd locks and CPU. Stop it to measure pure API performance.
-    
-    ```
-    docker-compose stop healer
-    
-    ```
-    
-4. **Warm-up / Wait**
+3. **Warm-up / Wait**
 Wait ~10-15 seconds for Etcd leader election and API Gateway initialization.
 
 ## 4. Scenarios and Expected Results
@@ -68,7 +61,6 @@ This benchmark includes three main modes, corresponding to the system's three wr
 - **Reset & Prep:**
     1. **Terminal 1:** `docker-compose down -v`
     2. **Terminal 1:** `docker-compose up --build` (Wait for logs to flow)
-    3. **Terminal 2:** `docker-compose stop healer`
 - **Command (Terminal 2)**:
     
     ```
@@ -84,7 +76,6 @@ This benchmark includes three main modes, corresponding to the system's three wr
 - **Reset & Prep:**
     1. **Terminal 1:** `docker-compose down -v`
     2. **Terminal 1:** `docker-compose up --build` (Wait for logs to flow)
-    3. **Terminal 2:** `docker-compose stop healer`
 - **Command (Terminal 2)**:
     
     ```
@@ -103,7 +94,6 @@ This benchmark includes three main modes, corresponding to the system's three wr
 - **Reset & Prep:**
     1. **Terminal 1:** `docker-compose down -v`
     2. **Terminal 1:** `docker-compose up --build` (Wait for logs to flow)
-    3. **Terminal 2:** `docker-compose stop healer`
 - **Command (Terminal 2)**:
     
     ```

@@ -46,8 +46,6 @@ const (
 	// Example: "txn/uuid-123"
 	EtcdWALPrefix = "txn/"
 
-	// EtcdHealerLock: Key used for healer service leader election
-	EtcdHealerLock = "healer_leader_lock"
 )
 
 // ExpectedNodeNames stores the set of valid storage node identifiers
