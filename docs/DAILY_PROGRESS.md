@@ -764,3 +764,23 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - refreshed `Readme.md`, `docs/API.md`, `docs/ARCHITECTURE.md`
 5. Verification:
    - `go test ./...` passes
+
+## 2026-03-17 (Milestone 6 postgres-only metadata/discovery convergence, step 42)
+
+1. Removed etcd fallback from active API/runtime paths:
+   - `cmd/api/bootstrap_runtime.go` no longer initializes etcd client
+   - node discovery startup is postgres-heartbeat only
+   - metadata lookup now queries PostgreSQL normalized tables only
+2. Removed etcd compatibility writes from write path:
+   - `internal/writeservice/writeservice.go` no longer writes compatibility metadata to etcd
+   - legacy route deletion path no longer calls `deleteEtcdMetadata`
+3. Removed legacy etcd code and compose services:
+   - deleted `internal/etcd/client.go`
+   - removed etcd services/volumes and `META_SOURCE`/`NODE_DISCOVERY_SOURCE` env usage from `docker-compose.yaml`
+4. Cleanup and alignment:
+   - simplified interfaces (`internal/interfaces/interfaces.go`) by removing `IEtcdClient`
+   - updated write service tests to match postgres-first behavior
+   - refreshed `Readme.md` and `docs/ARCHITECTURE.md` wording for postgres-only mainline
+   - ran `go mod tidy` to drop obsolete dependencies
+5. Verification:
+   - `go test ./...` passes

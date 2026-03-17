@@ -5,8 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -21,7 +19,6 @@ import (
 // Service implements write logic for active strategies (replication/ec),
 // with metadata persistence.
 type Service struct {
-	etcd  interfaces.IEtcdClient
 	http  interfaces.IHttpClient
 	ec    interfaces.IEcDriver
 	utils interfaces.IUtilsSvc
@@ -30,14 +27,12 @@ type Service struct {
 
 // NewService creates a new WriteService.
 func NewService(
-	etcd interfaces.IEtcdClient,
 	http interfaces.IHttpClient,
 	ec interfaces.IEcDriver,
 	utils interfaces.IUtilsSvc,
 	metaStore *meta.Store,
 ) *Service {
 	return &Service{
-		etcd:  etcd,
 		http:  http,
 		ec:    ec,
 		utils: utils,
@@ -50,81 +45,24 @@ func computeSHA256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-var errMetadataNotFound = errors.New("metadata not found")
-
-func (s *Service) loadExistingMetadata(ctx context.Context, key string) (map[string]interface{}, string, error) {
-	metaKey := fmt.Sprintf("metadata/%s", key)
-
-	readFromPostgres := config.MetaSource == "auto" || config.MetaSource == "postgres"
-	readFromEtcd := config.MetaSource == "auto" || config.MetaSource == "etcd"
-
-	if readFromPostgres && config.MetaEnabled && s.meta != nil {
-		pgNormalizedMeta, err := s.meta.GetNormalizedMetadata(ctx, key)
-		if err != nil {
-			return nil, "", err
-		}
-		if len(pgNormalizedMeta) > 0 {
-			return pgNormalizedMeta, "postgres_normalized", nil
-		}
-		if config.MetaSource == "postgres" {
-			return nil, "", errMetadataNotFound
-		}
-	}
-
-	if !readFromEtcd {
-		return nil, "", errMetadataNotFound
-	}
-	if s.etcd == nil {
-		if config.MetaSource == "etcd" {
-			return nil, "", fmt.Errorf("etcd client unavailable")
-		}
-		return nil, "", errMetadataNotFound
-	}
-
-	resp, err := s.etcd.Get(ctx, metaKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("etcd query failed: %v", err)
-	}
-	if len(resp.Kvs) == 0 {
-		return nil, "", errMetadataNotFound
-	}
-
-	var metadata map[string]interface{}
-	if err := json.Unmarshal(resp.Kvs[0].Value, &metadata); err != nil {
-		return nil, "", fmt.Errorf("metadata parse failed: %v", err)
-	}
-	return metadata, "etcd", nil
-}
-
 func (s *Service) finalizeMetadata(
 	ctx context.Context,
 	mainKey string,
 	metadata map[string]interface{},
 ) error {
-	metaKey := fmt.Sprintf("metadata/%s", mainKey)
-	metaBytes, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("failed to serialize final metadata: %v", err)
+	if !config.MetaEnabled {
+		return nil
+	}
+	if s.meta == nil {
+		return fmt.Errorf("metadata store unavailable")
 	}
 
-	if config.MetaEnabled && s.meta != nil {
-		if err := s.meta.UpsertNormalizedMetadata(ctx, mainKey, metadata); err != nil {
-			return fmt.Errorf("failed to commit normalized metadata to Postgres: %v", err)
-		}
-		if err := s.enqueueTieringTaskIfEligible(ctx, mainKey, metadata); err != nil {
-			// Tiering is best effort for now; foreground write must remain available.
-			log.Printf("[TieringEnqueue] skip key=%s: %v", mainKey, err)
-		}
+	if err := s.meta.UpsertNormalizedMetadata(ctx, mainKey, metadata); err != nil {
+		return fmt.Errorf("failed to commit normalized metadata to Postgres: %v", err)
 	}
-
-	if config.MetaSource != "postgres" {
-		if s.etcd == nil {
-			return fmt.Errorf("etcd client unavailable for metadata compatibility write")
-		}
-		_, err = s.etcd.Put(ctx, metaKey, string(metaBytes))
-		if err != nil {
-			return fmt.Errorf("failed to commit metadata to Etcd: %v", err)
-		}
+	if err := s.enqueueTieringTaskIfEligible(ctx, mainKey, metadata); err != nil {
+		// Tiering is best effort for now; foreground write must remain available.
+		log.Printf("[TieringEnqueue] skip key=%s: %v", mainKey, err)
 	}
 
 	return nil

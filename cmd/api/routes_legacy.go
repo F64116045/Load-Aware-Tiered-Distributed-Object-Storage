@@ -32,7 +32,6 @@ type legacyRouteDeps struct {
 	deleteEC          func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (int, error)
 
 	deleteNormalizedMetadata func(ctx context.Context, key string) error
-	deleteEtcdMetadata       func(ctx context.Context, key string) error
 
 	getActiveNodes func() []string
 }
@@ -213,10 +212,6 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			}
 			if err := deps.deleteNormalizedMetadata(c.Request.Context(), key); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Postgres normalized) deletion failed: %v", err)})
-				return
-			}
-			if err := deps.deleteEtcdMetadata(c.Request.Context(), key); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Etcd) deletion failed: %v", err)})
 				return
 			}
 		} else {

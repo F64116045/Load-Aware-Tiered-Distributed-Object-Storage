@@ -215,7 +215,6 @@ python3 test/verify_storage.py
 ├── internal/                  # Private library code
 │   ├── config/                # Configuration constants
 │   ├── ec/                    # Reed-Solomon wrapper
-│   ├── etcd/                  # Etcd client wrapper
 │   ├── httpclient/            # Connection pooling client
 │   ├── interfaces/            # Interface definitions
 │   ├── monitoringservice/     # Node status logic

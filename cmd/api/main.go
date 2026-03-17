@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +17,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	etcd "go.etcd.io/etcd/client/v3"
 
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/meta"
@@ -36,7 +34,6 @@ var errMetadataNotFound = errors.New("metadata not found")
 
 type metadataLookupMetrics struct {
 	postgresNormalizedHit uint64
-	etcdHit               uint64
 	notFound              uint64
 	errorCount            uint64
 }
@@ -47,8 +44,6 @@ func recordMetadataLookupHit(source string) {
 	switch source {
 	case "postgres_normalized":
 		atomic.AddUint64(&lookupMetrics.postgresNormalizedHit, 1)
-	case "etcd":
-		atomic.AddUint64(&lookupMetrics.etcdHit, 1)
 	}
 }
 
@@ -63,7 +58,6 @@ func recordMetadataLookupError() {
 func metadataLookupSnapshot() gin.H {
 	return gin.H{
 		"postgres_normalized_hit": atomic.LoadUint64(&lookupMetrics.postgresNormalizedHit),
-		"etcd_hit":                atomic.LoadUint64(&lookupMetrics.etcdHit),
 		"not_found":               atomic.LoadUint64(&lookupMetrics.notFound),
 		"error_count":             atomic.LoadUint64(&lookupMetrics.errorCount),
 	}
@@ -89,92 +83,6 @@ func replaceActiveNodes(nodeURLs []string) {
 		NodesReadyEvent = make(chan struct{})
 	}
 	NodeListLock.Unlock()
-}
-
-// watchNodesTask monitors Etcd for storage node registration/deregistration.
-func watchNodesTask(ctx context.Context, etcdClient *etcd.Client) {
-	keyPrefix := "nodes/health/"
-	log.Printf("%s[API] Service Discovery started. Watching prefix: '%s'%s\n", config.Colors["CYAN"], keyPrefix, config.Colors["RESET"])
-
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("%s[API-Watcher] PANIC: %v%s\n", config.Colors["RED"], r, config.Colors["RESET"])
-			log.Println(string(debug.Stack()))
-		}
-		log.Printf("%s[API-Watcher] Service Discovery stopped.%s\n", config.Colors["RED"], config.Colors["RESET"])
-	}()
-
-	// 1. Initial Fetch
-	rangeResp, err := etcdClient.Get(ctx, keyPrefix, etcd.WithPrefix())
-	if err != nil {
-		log.Printf("%s[API] Initial node fetch failed: %v%s\n", config.Colors["RED"], err, config.Colors["RESET"])
-	} else {
-		NodeListLock.Lock()
-		ActiveNodeURLs = make(map[string]string)
-		for _, kv := range rangeResp.Kvs {
-			parts := strings.Split(string(kv.Key), "/")
-			if len(parts) < 3 {
-				continue
-			}
-			nodeName := parts[2]
-			nodeURL := string(kv.Value)
-			if _, ok := config.ExpectedNodeNames[nodeName]; ok {
-				ActiveNodeURLs[nodeName] = nodeURL
-			}
-		}
-		log.Printf("%s[API] Initial Nodes: %v%s\n", config.Colors["CYAN"], getKeys(ActiveNodeURLs), config.Colors["RESET"])
-
-		if len(ActiveNodeURLs) >= config.K && !nodesReady {
-			nodesReady = true
-			close(NodesReadyEvent)
-		}
-		NodeListLock.Unlock()
-	}
-
-	// 2. Watch Loop
-	watchChan := etcdClient.Watch(ctx, keyPrefix, etcd.WithPrefix())
-	for watchResp := range watchChan {
-		if err := watchResp.Err(); err != nil {
-			log.Printf("%s[API] Watch error: %v%s\n", config.Colors["RED"], err, config.Colors["RESET"])
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		NodeListLock.Lock()
-		for _, event := range watchResp.Events {
-			parts := strings.Split(string(event.Kv.Key), "/")
-			if len(parts) < 3 {
-				continue
-			}
-			nodeName := parts[2]
-
-			if _, ok := config.ExpectedNodeNames[nodeName]; !ok {
-				continue
-			}
-
-			if event.Type == etcd.EventTypePut {
-				nodeURL := string(event.Kv.Value)
-				if _, exists := ActiveNodeURLs[nodeName]; !exists {
-					log.Printf("%s[API] New Node Detected: %s%s\n", config.Colors["GREEN"], nodeName, config.Colors["RESET"])
-					ActiveNodeURLs[nodeName] = nodeURL
-					if len(ActiveNodeURLs) >= config.K && !nodesReady {
-						nodesReady = true
-						close(NodesReadyEvent)
-					}
-				}
-			} else if event.Type == etcd.EventTypeDelete {
-				if _, exists := ActiveNodeURLs[nodeName]; exists {
-					log.Printf("%s[API] Node Lost: %s%s\n", config.Colors["RED"], nodeName, config.Colors["RESET"])
-					delete(ActiveNodeURLs, nodeName)
-					if len(ActiveNodeURLs) < config.K && nodesReady {
-						nodesReady = false
-						NodesReadyEvent = make(chan struct{})
-					}
-				}
-			}
-		}
-		NodeListLock.Unlock()
-	}
 }
 
 // watchNodesFromPostgres polls node heartbeats and updates active node list.
@@ -275,65 +183,24 @@ func PanicRecoveryMiddleware(c *gin.Context) {
 	c.Next()
 }
 
-func getKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func loadMetadata(ctx context.Context, key string, etcdClient *etcd.Client, metaStore *meta.Store, source string) (map[string]interface{}, string, error) {
-	readFromPostgres := source == "auto" || source == "postgres"
-	readFromEtcd := source == "auto" || source == "etcd"
-
-	if readFromPostgres && config.MetaEnabled && metaStore != nil {
-		pgNormalizedMeta, err := metaStore.GetNormalizedMetadata(ctx, key)
-		if err != nil {
-			recordMetadataLookupError()
-			return nil, "", err
-		}
-		if len(pgNormalizedMeta) > 0 {
-			recordMetadataLookupHit("postgres_normalized")
-			return pgNormalizedMeta, "postgres_normalized", nil
-		}
-		if source == "postgres" {
-			recordMetadataLookupNotFound()
-			return nil, "", errMetadataNotFound
-		}
+func loadMetadata(ctx context.Context, key string, metaStore *meta.Store) (map[string]interface{}, string, error) {
+	if !config.MetaEnabled || metaStore == nil {
+		recordMetadataLookupError()
+		return nil, "", fmt.Errorf("metadata store unavailable")
 	}
 
-	if !readFromEtcd {
-		recordMetadataLookupNotFound()
-		return nil, "", errMetadataNotFound
-	}
-	if etcdClient == nil {
-		if source == "etcd" {
-			recordMetadataLookupError()
-			return nil, "", fmt.Errorf("etcd client unavailable")
-		}
-		recordMetadataLookupNotFound()
-		return nil, "", errMetadataNotFound
-	}
-
-	rangeResp, err := etcdClient.Get(ctx, fmt.Sprintf("metadata/%s", key))
+	pgNormalizedMeta, err := metaStore.GetNormalizedMetadata(ctx, key)
 	if err != nil {
 		recordMetadataLookupError()
-		return nil, "", fmt.Errorf("etcd query failed: %v", err)
+		return nil, "", err
 	}
-	if len(rangeResp.Kvs) == 0 {
+	if len(pgNormalizedMeta) == 0 {
 		recordMetadataLookupNotFound()
 		return nil, "", errMetadataNotFound
 	}
 
-	var metadata map[string]interface{}
-	if err := json.Unmarshal(rangeResp.Kvs[0].Value, &metadata); err != nil {
-		recordMetadataLookupError()
-		return nil, "", fmt.Errorf("metadata parse failed: %v", err)
-	}
-	recordMetadataLookupHit("etcd")
-	return metadata, "etcd", nil
+	recordMetadataLookupHit("postgres_normalized")
+	return pgNormalizedMeta, "postgres_normalized", nil
 }
 
 type v2ObjectRouteDeps struct {

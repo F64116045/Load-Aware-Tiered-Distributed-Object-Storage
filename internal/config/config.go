@@ -32,17 +32,6 @@ const (
 	StrategyEC          StorageStrategy = "ec"
 )
 
-// Etcd related constants for keys and prefixes
-const (
-	// EtcdNodePrefix: Prefix for storage node health registration
-	// Example: "nodes/health/storage_node_1"
-	EtcdNodePrefix = "nodes/health/"
-
-	// EtcdMetadataPrefix: Prefix for storing object metadata
-	// Example: "metadata/my_key"
-	EtcdMetadataPrefix = "metadata/"
-)
-
 // ExpectedNodeNames stores the set of valid storage node identifiers
 var ExpectedNodeNames = map[string]bool{}
 
@@ -53,8 +42,6 @@ var (
 	MetaAutoMigrate = getEnvBool("META_AUTO_MIGRATE", false)
 	// MetaDriver is the database/sql driver name.
 	MetaDriver = getEnv("META_DRIVER", "postgres")
-	// MetaSource controls read source selection for metadata: postgres|etcd|auto.
-	MetaSource = normalizeMetaSource(getEnv("META_SOURCE", "auto"))
 	// MetaDSN is the metadata DB connection string.
 	MetaDSN = getEnv("META_DSN", "")
 	// MetaMaxOpenConns controls the DB pool max open connections.
@@ -63,8 +50,6 @@ var (
 	MetaMaxIdleConns = getEnvInt("META_MAX_IDLE_CONNS", 10)
 	// MetaConnMaxLifetime controls DB connection max lifetime.
 	MetaConnMaxLifetime = time.Duration(getEnvInt("META_CONN_MAX_LIFETIME_SEC", 300)) * time.Second
-	// NodeDiscoverySource controls node discovery source: postgres|etcd|auto.
-	NodeDiscoverySource = normalizeNodeDiscoverySource(getEnv("NODE_DISCOVERY_SOURCE", "auto"))
 	// NodeHeartbeatInterval controls storage-node heartbeat report interval.
 	NodeHeartbeatInterval = time.Duration(getEnvInt("NODE_HEARTBEAT_INTERVAL_SEC", 3)) * time.Second
 	// NodeHeartbeatStaleSec defines staleness threshold when listing healthy nodes.
@@ -121,23 +106,5 @@ func getEnvBool(key string, fallback bool) bool {
 		return false
 	default:
 		return fallback
-	}
-}
-
-func normalizeMetaSource(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "postgres", "etcd", "auto":
-		return strings.ToLower(strings.TrimSpace(v))
-	default:
-		return "auto"
-	}
-}
-
-func normalizeNodeDiscoverySource(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "postgres", "etcd", "auto":
-		return strings.ToLower(strings.TrimSpace(v))
-	default:
-		return "auto"
 	}
 }

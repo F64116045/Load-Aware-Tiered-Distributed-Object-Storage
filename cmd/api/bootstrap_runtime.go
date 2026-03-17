@@ -7,11 +7,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	etcd "go.etcd.io/etcd/client/v3"
 
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/ec"
-	etcdclient "hybrid_distributed_store/internal/etcd"
 	"hybrid_distributed_store/internal/httpclient"
 	"hybrid_distributed_store/internal/interfaces"
 	"hybrid_distributed_store/internal/meta"
@@ -22,8 +20,7 @@ import (
 )
 
 type appRuntime struct {
-	etcdClient *etcd.Client
-	metaStore  *meta.Store
+	metaStore *meta.Store
 
 	utilsSvc      interfaces.IUtilsSvc
 	readSvc       interfaces.IReadService
@@ -38,12 +35,7 @@ type appRuntime struct {
 func initAppRuntime() (*appRuntime, func()) {
 	rt := &appRuntime{
 		metadataStatus:      "disabled",
-		nodeDiscoveryActive: config.NodeDiscoverySource,
-	}
-
-	requiresEtcd := !(config.MetaSource == "postgres" && config.NodeDiscoverySource == "postgres")
-	if requiresEtcd {
-		rt.etcdClient = etcdclient.GetClient()
+		nodeDiscoveryActive: "postgres",
 	}
 	httpClient := httpclient.GetClient()
 
@@ -89,7 +81,7 @@ func initAppRuntime() (*appRuntime, func()) {
 	ecDriver := ec.NewService()
 	rt.storageOpsSvc = storageops.NewService(httpClient)
 	rt.readSvc = readservice.NewService(httpClient, ecDriver, rt.utilsSvc)
-	rt.writeSvc = writeservice.NewService(rt.etcdClient, httpClient, ecDriver, rt.utilsSvc, rt.metaStore)
+	rt.writeSvc = writeservice.NewService(httpClient, ecDriver, rt.utilsSvc, rt.metaStore)
 
 	cleanup := func() {
 		if rt.metaStore != nil {
@@ -103,32 +95,12 @@ func startNodeDiscovery(ctx context.Context, rt *appRuntime) {
 	if rt == nil {
 		return
 	}
-	switch config.NodeDiscoverySource {
-	case "postgres":
-		if config.MetaEnabled && rt.metaStore != nil {
-			go watchNodesFromPostgres(ctx, rt.metaStore)
-		} else {
-			rt.nodeDiscoveryActive = "etcd_fallback"
-			log.Printf("%s[API] NODE_DISCOVERY_SOURCE=postgres but metadata is unavailable, fallback to etcd%s\n", config.Colors["YELLOW"], config.Colors["RESET"])
-			if rt.etcdClient != nil {
-				go watchNodesTask(ctx, rt.etcdClient)
-			}
-		}
-	case "etcd":
-		if rt.etcdClient != nil {
-			go watchNodesTask(ctx, rt.etcdClient)
-		}
-	default: // auto
-		if config.MetaEnabled && rt.metaStore != nil {
-			rt.nodeDiscoveryActive = "postgres"
-			go watchNodesFromPostgres(ctx, rt.metaStore)
-		} else {
-			rt.nodeDiscoveryActive = "etcd"
-			if rt.etcdClient != nil {
-				go watchNodesTask(ctx, rt.etcdClient)
-			}
-		}
+	if config.MetaEnabled && rt.metaStore != nil {
+		go watchNodesFromPostgres(ctx, rt.metaStore)
+		return
 	}
+	rt.nodeDiscoveryActive = "postgres_unavailable"
+	log.Printf("%s[API] metadata unavailable; node discovery not started%s\n", config.Colors["YELLOW"], config.Colors["RESET"])
 }
 
 func buildRouter(rt *appRuntime) *gin.Engine {
@@ -143,7 +115,7 @@ func buildRouter(rt *appRuntime) *gin.Engine {
 			return rt.writeSvc.WriteReplicationWithMetadata(ctx, replicaNodes, key, data, metadata)
 		},
 		loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-			return loadMetadata(ctx, key, rt.etcdClient, rt.metaStore, config.MetaSource)
+			return loadMetadata(ctx, key, rt.metaStore)
 		},
 		readReplication: rt.readSvc.ReadReplication,
 		readEC:          rt.readSvc.ReadEC,
@@ -153,7 +125,7 @@ func buildRouter(rt *appRuntime) *gin.Engine {
 	registerLegacyRoutes(router, legacyRouteDeps{
 		getDynamicNodes: getDynamicNodes,
 		loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-			return loadMetadata(ctx, key, rt.etcdClient, rt.metaStore, config.MetaSource)
+			return loadMetadata(ctx, key, rt.metaStore)
 		},
 		writeReplication:  rt.writeSvc.WriteReplication,
 		writeEC:           rt.writeSvc.WriteEC,
@@ -168,13 +140,6 @@ func buildRouter(rt *appRuntime) *gin.Engine {
 				return nil
 			}
 			return rt.metaStore.DeleteNormalizedMetadata(ctx, key)
-		},
-		deleteEtcdMetadata: func(ctx context.Context, key string) error {
-			if config.MetaSource == "postgres" || rt.etcdClient == nil {
-				return nil
-			}
-			_, err := rt.etcdClient.Delete(ctx, fmt.Sprintf("metadata/%s", key))
-			return err
 		},
 		getActiveNodes: getActiveNodeURLs,
 	})

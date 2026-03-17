@@ -5,7 +5,7 @@ This repository now tracks architecture in two versions:
 1. `docs/ARCHITECTURE_V2_FREEZE.md` (current, authoritative)
    - PostgreSQL-first metadata architecture
    - Tiered hot-write + background EC migration model
-   - Node discovery source switch (`postgres|etcd|auto`)
+   - PostgreSQL heartbeat-based node discovery
 2. `docs/ARCHITECTURE_V1_LEGACY.md` (historical reference)
    - Original log-centric/etcd-heavy architecture used in early prototype stage
 
@@ -22,8 +22,8 @@ Legend:
 |---|---|---|
 | API data plane (`/write`, `/read/:key`, `/delete/:key`) | `DONE` | Routed in `cmd/api/main.go`; write/read/delete paths are active. |
 | Metadata primary store (PostgreSQL normalized tables) | `DONE` | `objects` + `object_versions` as main source; runtime no longer depends on `metadata_kv`. |
-| Metadata fallback source switch (`META_SOURCE`) | `DONE` | `postgres|etcd|auto` supported. |
-| Node discovery source switch (`NODE_DISCOVERY_SOURCE`) | `DONE` | `postgres|etcd|auto` supported; postgres-first default path in compose. |
+| Metadata source | `DONE` | PostgreSQL normalized tables only (no etcd fallback in mainline). |
+| Node discovery source | `DONE` | PostgreSQL heartbeats only in mainline. |
 | Storage node heartbeat to PostgreSQL | `DONE` | `node_heartbeats` upsert from each storage node. |
 | Foreground replication metadata placement (`replica_locations`) | `DONE` | replication write now persists successful node placements. |
 | Tiering task queue (`tiering_tasks`) | `DONE` | enqueue/claim/retry/done lifecycle with SKIP LOCKED claim. |
@@ -52,5 +52,3 @@ Legend:
    - executes REPL->EC migration flow
 4. `postgres`
    - authoritative metadata and task store
-5. `etcd`
-   - behind `legacy-etcd` compose profile (non-default path)

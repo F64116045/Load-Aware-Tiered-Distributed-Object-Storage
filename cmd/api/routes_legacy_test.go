@@ -47,7 +47,6 @@ func baseLegacyDeps() legacyRouteDeps {
 			return 1, nil
 		},
 		deleteNormalizedMetadata: func(ctx context.Context, key string) error { return nil },
-		deleteEtcdMetadata:       func(ctx context.Context, key string) error { return nil },
 		getActiveNodes:           func() []string { return nil },
 	}
 }

@@ -70,12 +70,10 @@ services:
       - NODE_NAMES_CSV=storage_node_1,storage_node_2,storage_node_3,storage_node_4,storage_node_5,storage_node_6
       - META_ENABLED=true
       - META_DRIVER=postgres
-      - META_SOURCE=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=20
       - META_MAX_IDLE_CONNS=10
       - META_CONN_MAX_LIFETIME_SEC=300
-      - NODE_DISCOVERY_SOURCE=postgres
       - NODE_HEARTBEAT_STALE_SEC=15
     depends_on:
       postgres:
@@ -97,63 +95,6 @@ services:
       - storage_net
 
   # ---------------------------------------------------------------------------
-  # Etcd Cluster (Metadata Store)
-  # ---------------------------------------------------------------------------
-  etcd0:
-    profiles: ["legacy-etcd"]
-    image: 'bitnamilegacy/etcd:3.5.16'
-    environment:
-      - ALLOW_NONE_AUTHENTICATION=yes
-      - ETCD_NAME=etcd0
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd0:2380
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd0:2379
-      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster-1
-      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd0:2380,etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
-      - ETCD_INITIAL_CLUSTER_STATE=new
-    volumes:
-      - etcd_data_0:/bitnami/etcd
-    networks:
-      - storage_net
-
-  etcd1:
-    profiles: ["legacy-etcd"]
-    image: 'bitnamilegacy/etcd:3.5.16'
-    environment:
-      - ALLOW_NONE_AUTHENTICATION=yes
-      - ETCD_NAME=etcd1
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd1:2380
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd1:2379
-      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster-1
-      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd0:2380,etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
-      - ETCD_INITIAL_CLUSTER_STATE=new
-    volumes:
-      - etcd_data_1:/bitnami/etcd
-    networks:
-      - storage_net
-
-  etcd2:
-    profiles: ["legacy-etcd"]
-    image: 'bitnamilegacy/etcd:3.5.16'
-    environment:
-      - ALLOW_NONE_AUTHENTICATION=yes
-      - ETCD_NAME=etcd2
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd2:2380
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd2:2379
-      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster-1
-      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd0:2380,etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
-      - ETCD_INITIAL_CLUSTER_STATE=new
-    volumes:
-      - etcd_data_2:/bitnami/etcd
-    networks:
-      - storage_net
-
-  # ---------------------------------------------------------------------------
   # Storage Nodes (Data Layer)
   # ---------------------------------------------------------------------------
   storage_node_1:
@@ -171,7 +112,6 @@ services:
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
-      - NODE_DISCOVERY_SOURCE=postgres
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_1:/data/node1
@@ -193,7 +133,6 @@ services:
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
-      - NODE_DISCOVERY_SOURCE=postgres
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_2:/data/node2
@@ -215,7 +154,6 @@ services:
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
-      - NODE_DISCOVERY_SOURCE=postgres
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_3:/data/node3
@@ -237,7 +175,6 @@ services:
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
-      - NODE_DISCOVERY_SOURCE=postgres
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_4:/data/node4
@@ -259,7 +196,6 @@ services:
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
-      - NODE_DISCOVERY_SOURCE=postgres
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_5:/data/node5
@@ -281,7 +217,6 @@ services:
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
-      - NODE_DISCOVERY_SOURCE=postgres
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_6:/data/node6
@@ -321,9 +256,6 @@ networks:
 
 volumes:
   postgres_data:
-  etcd_data_0:
-  etcd_data_1:
-  etcd_data_2:
   storage_data_1:
   storage_data_2:
   storage_data_3:
