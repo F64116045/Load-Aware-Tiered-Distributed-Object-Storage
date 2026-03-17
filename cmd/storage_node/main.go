@@ -8,16 +8,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"hybrid_distributed_store/internal/config"
-	etcd "hybrid_distributed_store/internal/etcd"
+	"hybrid_distributed_store/internal/meta"
 )
 
 // WriteTask represents an asynchronous write operation payload.
@@ -125,7 +124,7 @@ func (s *storageEngine) retrieve(key string) ([]byte, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// [DEBUG] 印出路徑資訊，這行是為了解決 404 問題的關鍵
+			// Log resolved path details for not-found diagnostics.
 			log.Printf("[Storage Debug] 404 Not Found. Key: '%s' | Resolved Path: '%s' | BaseDir: '%s'", key, filePath, s.storageDir)
 			return nil, nil
 		}
@@ -188,68 +187,47 @@ func (s *storageEngine) getInfo() (map[string]interface{}, error) {
 	}, nil
 }
 
-// --- Service Registration & Heartbeat ---
+func getFreeBytes(path string) int64 {
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(path, &fs); err != nil {
+		return 0
+	}
+	return int64(fs.Bavail) * int64(fs.Bsize)
+}
 
-func registerAndHeartbeat(ctx context.Context, etcdClient *clientv3.Client, nodeName, nodeURL string) {
-	log.Printf("[%s] Starting Service Registration...", nodeName)
+func registerAndHeartbeatMeta(ctx context.Context, metaStore *meta.Store, nodeURL string, storage *storageEngine) {
+	if metaStore == nil {
+		return
+	}
+	log.Printf("[%s] Starting PostgreSQL heartbeat...", nodeURL)
 
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("%s[%s] Heartbeat PANIC: %v%s\n", config.Colors["RED"], nodeName, r, config.Colors["RESET"])
-			log.Println(string(debug.Stack()))
+	ticker := time.NewTicker(config.NodeHeartbeatInterval)
+	defer ticker.Stop()
+
+	upsert := func(status string) {
+		hbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		err := metaStore.UpsertNodeHeartbeat(
+			hbCtx,
+			nodeURL, // Keep URL as node_id so API can directly use it as endpoint.
+			getFreeBytes(storage.storageDir),
+			len(storage.writeQueue),
+			0, // TODO: wire actual cpu load in phase-2.
+			status,
+		)
+		if err != nil {
+			log.Printf("[%s] PostgreSQL heartbeat failed: %v", nodeURL, err)
 		}
-		log.Printf("%s[%s] Heartbeat stopped.%s\n", config.Colors["RED"], nodeName, config.Colors["RESET"])
-	}()
+	}
 
+	upsert("UP")
 	for {
-		var leaseID clientv3.LeaseID = 0
-
-	tryLease:
-		for {
-			leaseResp, err := etcdClient.Grant(ctx, 10) // 10 seconds TTL
-			if err != nil {
-				log.Printf("[%s] Warning: Failed to grant lease: %v. Retrying in 2s...", nodeName, err)
-				time.Sleep(2 * time.Second)
-				continue tryLease
-			}
-			leaseID = leaseResp.ID
-			break
-		}
-
-		key := fmt.Sprintf("nodes/health/%s", nodeName)
-		_, err := etcdClient.Put(ctx, key, nodeURL, clientv3.WithLease(leaseID))
-		if err != nil {
-			log.Printf("[%s] Warning: Failed to register: %v. Retrying in 2s...", nodeName, err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		log.Printf("[%s] Registered successfully (LeaseID: %x). Starting KeepAlive.", nodeName, leaseID)
-
-		keepAliveChan, err := etcdClient.KeepAlive(ctx, leaseID)
-		if err != nil {
-			log.Printf("[%s] Warning: Failed to start KeepAlive: %v. Retrying in 2s...", nodeName, err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		// [FIX] 使用 Label Loop 來修復無限重試導致的 CPU 飆高與日誌洗版
-	KeepAliveLoop:
-		for {
-			select {
-			case <-ctx.Done():
-				etcdClient.Revoke(context.Background(), leaseID)
-				log.Printf("[%s] Shutting down, lease revoked.", nodeName)
-				return
-
-			case ka, ok := <-keepAliveChan:
-				if !ok {
-					log.Printf("[%s] Warning: KeepAlive channel closed. Re-registering...", nodeName)
-					time.Sleep(1 * time.Second) // 避免瞬斷時瘋狂重試
-					break KeepAliveLoop         // 跳出內層迴圈，觸發外層迴圈重新註冊
-				}
-				_ = ka
-			}
+		select {
+		case <-ctx.Done():
+			upsert("DOWN")
+			return
+		case <-ticker.C:
+			upsert("UP")
 		}
 	}
 }
@@ -267,18 +245,37 @@ func main() {
 		log.Fatal("Error: NODE_PORT, NODE_NAME, and STORAGE_DIR must be set.")
 	}
 
-	etcdClient := etcd.GetClient()
-	if etcdClient == nil {
-		log.Fatalf("Failed to connect to Etcd. Cannot start Storage Node.")
+	metaStore, metaErr := meta.NewStore(meta.Config{
+		Enabled:         config.MetaEnabled,
+		Driver:          config.MetaDriver,
+		DSN:             config.MetaDSN,
+		MaxOpenConns:    config.MetaMaxOpenConns,
+		MaxIdleConns:    config.MetaMaxIdleConns,
+		ConnMaxLifetime: config.MetaConnMaxLifetime,
+	})
+	if metaErr != nil {
+		log.Printf("Metadata store init failed: %v", metaErr)
+		metaStore = nil
+	} else if config.MetaEnabled {
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := metaStore.Ping(pingCtx); err != nil {
+			log.Printf("Metadata ping failed: %v", err)
+			metaStore = nil
+		}
+		pingCancel()
 	}
-	defer etcd.CloseClient()
+	defer func() {
+		if metaStore != nil {
+			_ = metaStore.Close()
+		}
+	}()
 
 	storage := newStorageEngine(nodePort, nodeName, storageDir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	internalURL := fmt.Sprintf("http://%s:%s", nodeName, nodePort)
-	go registerAndHeartbeat(ctx, etcdClient, nodeName, internalURL)
+	go registerAndHeartbeatMeta(ctx, metaStore, internalURL, storage)
 
 	// 5. Start Gin Server
 	gin.SetMode(gin.ReleaseMode)

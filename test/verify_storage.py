@@ -104,13 +104,9 @@ if __name__ == "__main__":
     # Execute benchmarks for each strategy
     ratio_rep = run_test("Replication", "replication")
     ratio_ec = run_test("Erasure Coding", "ec")
-    ratio_hybrid = run_test("Field Hybrid", "field_hybrid")
-    
     print("\n=== Final Report: Storage Amplification Factor ===")
     print(f"{'Strategy':<20} | {'Overhead':<10} | {'Expected':<10}")
     print("-" * 50)
     print(f"{'Replication':<20} | {ratio_rep:.2f}x       | ~3.00x")
     print(f"{'Erasure Coding':<20} | {ratio_ec:.2f}x       | ~1.50x")
-    print(f"{'Field Hybrid':<20} | {ratio_hybrid:.2f}x       | ~1.50x")
     print("-" * 50)
-    print("Note: Hybrid overhead is slightly > 1.50x due to replicated metadata.")

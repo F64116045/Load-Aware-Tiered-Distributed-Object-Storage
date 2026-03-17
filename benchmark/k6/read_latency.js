@@ -5,7 +5,7 @@ import { SharedArray } from 'k6/data';
 
 
 const BASE_URL = 'http://localhost:8000';
-const STRATEGY = __ENV.STRATEGY || 'field_hybrid'; 
+const STRATEGY = __ENV.STRATEGY || 'replication';
 const SIZE_LABEL = __ENV.SIZE || '800kb';
 const KEYS_COUNT = 30; 
 

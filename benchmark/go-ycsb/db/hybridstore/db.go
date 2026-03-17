@@ -8,9 +8,8 @@ import (
 	"net/http"
 	"time"
 
-
 	"github.com/magiconair/properties"
-	
+
 	"github.com/pingcap/go-ycsb/pkg/ycsb"
 )
 
@@ -22,9 +21,8 @@ type hybridDB struct {
 
 func (db *hybridDB) Close() error { return nil }
 
-
-func (db *hybridDB) InitThread(ctx context.Context, _ int, _ int) context.Context { 
-	return ctx 
+func (db *hybridDB) InitThread(ctx context.Context, _ int, _ int) context.Context {
+	return ctx
 }
 
 func (db *hybridDB) CleanupThread(_ context.Context) {}
@@ -53,7 +51,7 @@ func (db *hybridDB) Insert(ctx context.Context, table string, key string, values
 	data["battery_level"] = 0
 	data["status_code"] = 0
 
-	rawLog := make([]byte, 1500 * 1024)
+	rawLog := make([]byte, 1500*1024)
 	for i := range rawLog {
 		rawLog[i] = 'A'
 	}
@@ -67,18 +65,18 @@ func (db *hybridDB) Update(ctx context.Context, table string, key string, values
 
 	data["battery_level"] = time.Now().Unix()
 	data["status_code"] = time.Now().Unix()
-	
-    mutationRate := 0.2 
-    
-    rawLog := make([]byte, 1500 * 1024)
-    for i := range rawLog {
-        rawLog[i] = 'A'
-    }
 
-    if rand.Float64() < mutationRate {
-        now := time.Now().UnixNano()
-        binary.LittleEndian.PutUint64(rawLog[0:8], uint64(now))
-    }
+	mutationRate := 0.2
+
+	rawLog := make([]byte, 1500*1024)
+	for i := range rawLog {
+		rawLog[i] = 'A'
+	}
+
+	if rand.Float64() < mutationRate {
+		now := time.Now().UnixNano()
+		binary.LittleEndian.PutUint64(rawLog[0:8], uint64(now))
+	}
 
 	data["sensor_raw_log"] = string(rawLog)
 	return db.sendRequest(ctx, key, data)
@@ -119,8 +117,8 @@ type hybridDBCreator struct{}
 
 func (c hybridDBCreator) Create(p *properties.Properties) (ycsb.DB, error) {
 	endpoint := p.GetString("hybridstore.endpoint", "http://localhost:8000")
-	strategy := p.GetString("hybridstore.strategy", "field_hybrid")
-	
+	strategy := p.GetString("hybridstore.strategy", "replication")
+
 	return &hybridDB{
 		endpoint: endpoint,
 		strategy: strategy,

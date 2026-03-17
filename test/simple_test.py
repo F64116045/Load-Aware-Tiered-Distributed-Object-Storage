@@ -18,19 +18,6 @@ class Colors:
 # --- Configuration (BASE_URL will be set by main function) ---
 BASE_URL = "http://127.0.0.1:8000"
 
-# Test data for hybrid strategy (JSON format)
-TEST_DATA_HYBRID = {
-    "like_count": 1500,
-    "view_count": 50000,
-    "inventory_count": 100,
-    "update_count": 25,
-    "content": "This is test article content with large text data." * 10,
-    "author_id": "user_12345",
-    "description": "Product description",
-    "specifications": {"size": "L", "color": "blue", "material": "cotton"},
-    "create_time": "2025-10-31T12:00:00Z"
-}
-
 class TestRunner:
     """
     Test runner class to manage test execution and results tracking
@@ -100,7 +87,7 @@ def check_system_health():
 def cleanup_test_keys(runner: TestRunner):
     """Clean up test keys before starting tests to ensure clean environment"""
     runner.print_section("Environment Cleanup (Pre-Test Cleanup)")
-    keys_to_clean = ["test_replication", "test_ec", "test_hybrid", "invalid_key"]
+    keys_to_clean = ["test_replication", "test_ec", "invalid_key"]
     
     for key in keys_to_clean:
         try:
@@ -228,92 +215,6 @@ def test_ec_strategy(runner: TestRunner):
     except Exception as e:
         runner.assert_test(False, "Delete data (EC)", f"Error: {e}")
 
-def test_field_hybrid_strategy(runner: TestRunner):
-    """Test Strategy C: Field-level Hybrid"""
-    runner.print_section("Strategy C: Field-level Hybrid")
-    
-    key = "test_hybrid"
-    
-    # 1. Initial write test
-    try:
-        response = requests.post(
-            f"{BASE_URL}/write",
-            params={"key": key, "strategy": "field_hybrid"},
-            json=TEST_DATA_HYBRID
-        )
-        data = response.json()
-        runner.assert_test(
-            response.status_code == 200,
-            "Initial write (Hybrid)",
-            f"Operation: {data.get('operation_type')}"
-        )
-    except Exception as e:
-        runner.assert_test(False, "Initial write (Hybrid)", f"Error: {e}")
-
-    # 2. Read test
-    try:
-        response = requests.get(f"{BASE_URL}/read/{key}")
-        data = response.json() 
-        runner.assert_test(
-            response.status_code == 200 and data == TEST_DATA_HYBRID,
-            "Read data (Hybrid - full verification)",
-            f"Field count: {len(data)}, Data exact match: {data == TEST_DATA_HYBRID}"
-        )
-    except Exception as e:
-        runner.assert_test(False, "Read data (Hybrid)", f"Error: {e}")
-    
-    # 3. Hot update test
-    updated_data_hot = TEST_DATA_HYBRID.copy()
-    updated_data_hot['like_count'] = 2000
-    updated_data_hot['view_count'] = 60000
-    
-    try:
-        response = requests.post(
-            f"{BASE_URL}/write",
-            params={"key": key, "strategy": "field_hybrid", "hot_only": True},
-            json=updated_data_hot
-        )
-        data = response.json()
-        runner.assert_test(
-            response.status_code == 200 and data.get('is_pure_hot_update'),
-            "Hot update (only hot fields)",
-            f"Pure hot update: {data.get('is_pure_hot_update')}, Cold chunks written: {data.get('cold_chunks_written')}"
-        )
-    except Exception as e:
-        runner.assert_test(False, "Hot update", f"Error: {e}")
-    
-    # 4. Mixed update test
-    updated_data_mixed = TEST_DATA_HYBRID.copy()
-    updated_data_mixed['like_count'] = 2500
-    updated_data_mixed['description'] = "This is a new product description"
-    
-    try:
-        response = requests.post(
-            f"{BASE_URL}/write",
-            params={"key": key, "strategy": "field_hybrid"}, 
-            json=updated_data_mixed
-        )
-        data = response.json()
-        runner.assert_test(
-            response.status_code == 200 and not data.get('is_pure_hot_update'),
-            "Mixed update (update hot+cold fields)",
-            f"Should trigger cold write (pure hot update: {data.get('is_pure_hot_update')})"
-        )
-    except Exception as e:
-        runner.assert_test(False, "Mixed update", f"Error: {e}")
-        
-    # 5. Delete test
-    try:
-        response = requests.delete(f"{BASE_URL}/delete/{key}")
-        data = response.json()
-        runner.assert_test(
-            response.status_code == 200,
-            "Delete data (Hybrid)",
-            f"Deletion strategy: {data.get('strategy', 'N/A')}"
-        )
-    except Exception as e:
-        runner.assert_test(False, "Delete data (Hybrid)", f"Error: {e}")
-
 def test_system_monitoring(runner: TestRunner):
     """Test monitoring features"""
     runner.print_section("System Monitoring and Cleanup Verification")
@@ -371,8 +272,23 @@ def test_invalid_inputs(runner: TestRunner):
         )
     except Exception as e:
         runner.assert_test(False, "Use invalid strategy", f"Error: {e}")
+
+    # 3. Test deprecated field_hybrid strategy
+    try:
+        response = requests.post(
+            f"{BASE_URL}/write",
+            params={"key": "invalid_key", "strategy": "field_hybrid"},
+            json={"data": "test"}
+        )
+        runner.assert_test(
+            response.status_code == 422,
+            "Use deprecated field_hybrid (should be 422)",
+            f"Received status: {response.status_code}"
+        )
+    except Exception as e:
+        runner.assert_test(False, "Use deprecated field_hybrid", f"Error: {e}")
     
-    # 3. Test "invalid JSON Body" (sending raw string instead of JSON)
+    # 4. Test "invalid JSON Body" (sending raw string instead of JSON)
     try:
         response = requests.post(
             f"{BASE_URL}/write",
@@ -415,7 +331,6 @@ def main():
     
     test_replication_strategy(runner)
     test_ec_strategy(runner)
-    test_field_hybrid_strategy(runner)
     test_system_monitoring(runner)
     test_invalid_inputs(runner)
     

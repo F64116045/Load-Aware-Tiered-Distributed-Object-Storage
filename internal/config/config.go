@@ -30,36 +30,6 @@ type StorageStrategy string
 const (
 	StrategyReplication StorageStrategy = "replication"
 	StrategyEC          StorageStrategy = "ec"
-	StrategyFieldHybrid StorageStrategy = "field_hybrid"
-)
-
-// HotFields defines specific fields that are frequently updated
-// Used for the FieldHybrid strategy logic
-var HotFields = map[string]bool{
-	"like_count":      true,
-	"view_count":      true,
-	"inventory_count": true,
-	"update_count":    true,
-	"status_code":     true,
-	"battery_level":   true,
-}
-
-// Etcd related constants for keys and prefixes
-const (
-	// EtcdNodePrefix: Prefix for storage node health registration
-	// Example: "nodes/health/storage_node_1"
-	EtcdNodePrefix = "nodes/health/"
-
-	// EtcdMetadataPrefix: Prefix for storing object metadata
-	// Example: "metadata/my_key"
-	EtcdMetadataPrefix = "metadata/"
-
-	// EtcdWALPrefix: Prefix for Write-Ahead Log entries during transactions
-	// Example: "txn/uuid-123"
-	EtcdWALPrefix = "txn/"
-
-	// EtcdHealerLock: Key used for healer service leader election
-	EtcdHealerLock = "healer_leader_lock"
 )
 
 // ExpectedNodeNames stores the set of valid storage node identifiers
@@ -72,8 +42,6 @@ var (
 	MetaAutoMigrate = getEnvBool("META_AUTO_MIGRATE", false)
 	// MetaDriver is the database/sql driver name.
 	MetaDriver = getEnv("META_DRIVER", "postgres")
-	// MetaSource controls read source selection for metadata: postgres|etcd|auto.
-	MetaSource = normalizeMetaSource(getEnv("META_SOURCE", "auto"))
 	// MetaDSN is the metadata DB connection string.
 	MetaDSN = getEnv("META_DSN", "")
 	// MetaMaxOpenConns controls the DB pool max open connections.
@@ -82,6 +50,16 @@ var (
 	MetaMaxIdleConns = getEnvInt("META_MAX_IDLE_CONNS", 10)
 	// MetaConnMaxLifetime controls DB connection max lifetime.
 	MetaConnMaxLifetime = time.Duration(getEnvInt("META_CONN_MAX_LIFETIME_SEC", 300)) * time.Second
+	// NodeHeartbeatInterval controls storage-node heartbeat report interval.
+	NodeHeartbeatInterval = time.Duration(getEnvInt("NODE_HEARTBEAT_INTERVAL_SEC", 3)) * time.Second
+	// NodeHeartbeatStaleSec defines staleness threshold when listing healthy nodes.
+	NodeHeartbeatStaleSec = getEnvInt("NODE_HEARTBEAT_STALE_SEC", 15)
+	// AgeThresholdSec defines when HOT objects become eligible for tiering (A1 baseline).
+	AgeThresholdSec = getEnvInt("AGE_THRESHOLD_SEC", 3600)
+	// TieringPeriodSec defines periodic policy scan interval.
+	TieringPeriodSec = getEnvInt("TIERING_PERIOD_SEC", 300)
+	// MaxObjectsPerRound caps A1 periodic enqueue count per round.
+	MaxObjectsPerRound = getEnvInt("MAX_OBJECTS_PER_ROUND", 200)
 )
 
 func init() {
@@ -128,14 +106,5 @@ func getEnvBool(key string, fallback bool) bool {
 		return false
 	default:
 		return fallback
-	}
-}
-
-func normalizeMetaSource(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "postgres", "etcd", "auto":
-		return strings.ToLower(strings.TrimSpace(v))
-	default:
-		return "auto"
 	}
 }

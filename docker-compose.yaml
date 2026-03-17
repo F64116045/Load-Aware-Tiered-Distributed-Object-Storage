@@ -34,6 +34,29 @@ services:
       - storage_net
 
   # ---------------------------------------------------------------------------
+  # Metadata Migration (run-on-demand)
+  # ---------------------------------------------------------------------------
+  meta_migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/usr/local/bin/meta_migrate"]
+    environment:
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=5
+      - META_MAX_IDLE_CONNS=2
+      - META_CONN_MAX_LIFETIME_SEC=60
+      - META_MIGRATE_ACTION=up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - storage_net
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
   # API Gateway Cluster
   # ---------------------------------------------------------------------------
   api:
@@ -44,10 +67,6 @@ services:
     deploy:
       replicas: 3
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
-      - WAL_BROKER=redpanda:9092
-      - WAL_TOPIC=wal-events
       - NODE_NAMES_CSV=storage_node_1,storage_node_2,storage_node_3,storage_node_4,storage_node_5,storage_node_6
       - META_ENABLED=true
       - META_DRIVER=postgres
@@ -55,12 +74,9 @@ services:
       - META_MAX_OPEN_CONNS=20
       - META_MAX_IDLE_CONNS=10
       - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_STALE_SEC=15
     depends_on:
-      etcd0:
-        condition: service_started
       postgres:
-        condition: service_healthy
-      redpanda:
         condition: service_healthy
       storage_node_1:
         condition: service_started
@@ -79,93 +95,6 @@ services:
       - storage_net
 
   # ---------------------------------------------------------------------------
-  # WAL Service (Redpanda)
-  # ---------------------------------------------------------------------------
-  redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:v23.3.6
-    command:
-      - redpanda start
-      # Resource limits for local development environment
-      - --smp 1
-      - --memory 1G
-      - --reserve-memory 0M
-      - --overprovisioned
-      # Network configuration for internal (Docker) and external (Host) access
-      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
-      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
-      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
-    ports:
-      - 19092:19092
-      - 18081:18081
-      - 18082:18082
-      - 9644:9644
-    volumes:
-      - redpanda_data:/var/lib/redpanda/data
-    networks:
-      - storage_net
-    healthcheck:
-      test: ["CMD-SHELL", "rpk cluster info"]
-      interval: 10s
-      timeout: 5s
-      retries: 30    
-      start_period: 30s
-
-  # ---------------------------------------------------------------------------
-  # Etcd Cluster (Metadata Store)
-  # ---------------------------------------------------------------------------
-  etcd0:
-    image: 'bitnamilegacy/etcd:3.5.16'
-    environment:
-      - ALLOW_NONE_AUTHENTICATION=yes
-      - ETCD_NAME=etcd0
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd0:2380
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd0:2379
-      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster-1
-      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd0:2380,etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
-      - ETCD_INITIAL_CLUSTER_STATE=new
-    volumes:
-      - etcd_data_0:/bitnami/etcd
-    networks:
-      - storage_net
-
-  etcd1:
-    image: 'bitnamilegacy/etcd:3.5.16'
-    environment:
-      - ALLOW_NONE_AUTHENTICATION=yes
-      - ETCD_NAME=etcd1
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd1:2380
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd1:2379
-      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster-1
-      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd0:2380,etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
-      - ETCD_INITIAL_CLUSTER_STATE=new
-    volumes:
-      - etcd_data_1:/bitnami/etcd
-    networks:
-      - storage_net
-
-  etcd2:
-    image: 'bitnamilegacy/etcd:3.5.16'
-    environment:
-      - ALLOW_NONE_AUTHENTICATION=yes
-      - ETCD_NAME=etcd2
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd2:2380
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd2:2379
-      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster-1
-      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd0:2380,etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
-      - ETCD_INITIAL_CLUSTER_STATE=new
-    volumes:
-      - etcd_data_2:/bitnami/etcd
-    networks:
-      - storage_net
-
-  # ---------------------------------------------------------------------------
   # Storage Nodes (Data Layer)
   # ---------------------------------------------------------------------------
   storage_node_1:
@@ -174,11 +103,16 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_1
       - NODE_PORT=8001
       - STORAGE_DIR=/data/node1
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_1:/data/node1
     networks:
@@ -190,11 +124,16 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_2
       - NODE_PORT=8002
       - STORAGE_DIR=/data/node2
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_2:/data/node2
     networks:
@@ -206,11 +145,16 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_3
       - NODE_PORT=8003
       - STORAGE_DIR=/data/node3
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_3:/data/node3
     networks:
@@ -222,11 +166,16 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_4
       - NODE_PORT=8004
       - STORAGE_DIR=/data/node4
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_4:/data/node4
     networks:
@@ -238,11 +187,16 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_5
       - NODE_PORT=8005
       - STORAGE_DIR=/data/node5
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_5:/data/node5
     networks:
@@ -254,35 +208,45 @@ services:
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
       - NODE_NAME=storage_node_6
       - NODE_PORT=8006
       - STORAGE_DIR=/data/node6
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_6:/data/node6
     networks:
       - storage_net
 
   # ---------------------------------------------------------------------------
-  # Healer Service
+  # Tiering Worker
   # ---------------------------------------------------------------------------
-  healer:
+  tiering_worker:
     build:
       context: .
       dockerfile: Dockerfile
-    deploy:
-      replicas: 0 # Disabled during benchmarking
-    command: ["/usr/local/bin/healer"]
+    command: ["/usr/local/bin/tiering_worker"]
+    restart: on-failure
     environment:
-      - ETCD_HOST=etcd0
-      - ETCD_PORT=2379
-      - WAL_BROKER=redpanda:9092
-      - WAL_TOPIC=wal-events
-      - HOSTNAME=healer
+      - META_ENABLED=true
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - TIERING_WORKER_POLL_SEC=2
+      - TIERING_POLICY_PERIOD_SEC=300
+      - TIERING_WORKER_TASK_TYPE=REPL_TO_EC
     depends_on:
-      - api
-      - redpanda
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
     networks:
       - storage_net
 
@@ -292,13 +256,9 @@ networks:
 
 volumes:
   postgres_data:
-  etcd_data_0:
-  etcd_data_1:
-  etcd_data_2:
   storage_data_1:
   storage_data_2:
   storage_data_3:
   storage_data_4:
   storage_data_5:
   storage_data_6:
-  redpanda_data:

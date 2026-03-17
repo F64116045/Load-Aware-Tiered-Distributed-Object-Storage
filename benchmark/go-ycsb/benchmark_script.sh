@@ -1,6 +1,6 @@
 YCSB_BIN="./bin/go-ycsb"
 ENDPOINT="http://localhost:8000"
-# replication, ec, field_hybrid
+# replication, ec
 STRATEGY="replication" 
 DRIVER="hybridstore"
 WORKLOAD_FILE="workloads/workloada"

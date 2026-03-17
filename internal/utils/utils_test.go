@@ -6,138 +6,7 @@ import (
 	"log"
 	"reflect"
 	"testing"
-
-	"hybrid_distributed_store/internal/config"
 )
-
-func TestSeparateHotColdFields(t *testing.T) {
-	// 1. Arrange
-	svc := NewService()
-
-	// Mock config for testing
-	config.HotFields = map[string]bool{
-		"like_count": true,
-		"view_count": true,
-	}
-
-	testCases := []struct {
-		name       string
-		inputData  map[string]interface{}
-		expectHot  map[string]interface{}
-		expectCold map[string]interface{}
-	}{
-		{
-			name: "Mixed Data (Happy Path)",
-			inputData: map[string]interface{}{
-				"like_count": 100,
-				"content":    "This is a long article",
-				"view_count": 5000,
-			},
-			expectHot: map[string]interface{}{
-				"like_count": 100,
-				"view_count": 5000,
-			},
-			expectCold: map[string]interface{}{
-				"content": "This is a long article",
-			},
-		},
-		{
-			name: "All Cold Data",
-			inputData: map[string]interface{}{
-				"content":     "Long text",
-				"description": "Desc",
-			},
-			expectHot: map[string]interface{}{},
-			expectCold: map[string]interface{}{
-				"content":     "Long text",
-				"description": "Desc",
-			},
-		},
-		{
-			name: "All Hot Data",
-			inputData: map[string]interface{}{
-				"like_count": 100,
-				"view_count": 5000,
-			},
-			expectHot: map[string]interface{}{
-				"like_count": 100,
-				"view_count": 5000,
-			},
-			expectCold: map[string]interface{}{},
-		},
-		{
-			name:       "Empty Map",
-			inputData:  map[string]interface{}{},
-			expectHot:  map[string]interface{}{},
-			expectCold: map[string]interface{}{},
-		},
-	}
-
-	// 2. Act & 3. Assert
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			gotHot, gotCold := svc.SeparateHotColdFields(tc.inputData)
-
-			if !reflect.DeepEqual(gotHot, tc.expectHot) {
-				t.Errorf("Hot data mismatch:\nExpected: %v\nGot:      %v", tc.expectHot, gotHot)
-			}
-			if !reflect.DeepEqual(gotCold, tc.expectCold) {
-				t.Errorf("Cold data mismatch:\nExpected: %v\nGot:      %v", tc.expectCold, gotCold)
-			}
-		})
-	}
-}
-
-func TestMergeHotColdFields(t *testing.T) {
-	svc := NewService()
-
-	testCases := []struct {
-		name       string
-		hotData    map[string]interface{}
-		coldData   map[string]interface{}
-		expectData map[string]interface{}
-	}{
-		{
-			name:       "Standard Merge",
-			hotData:    map[string]interface{}{"a": 1},
-			coldData:   map[string]interface{}{"b": 2},
-			expectData: map[string]interface{}{"a": 1, "b": 2},
-		},
-		{
-			name:       "Key Conflict (Hot overwrites Cold)",
-			hotData:    map[string]interface{}{"a": "hot_val"},
-			coldData:   map[string]interface{}{"a": "cold_val", "b": 2},
-			expectData: map[string]interface{}{"a": "hot_val", "b": 2},
-		},
-		{
-			name:       "Empty Hot Map",
-			hotData:    map[string]interface{}{},
-			coldData:   map[string]interface{}{"b": 2},
-			expectData: map[string]interface{}{"b": 2},
-		},
-		{
-			name:       "Empty Cold Map",
-			hotData:    map[string]interface{}{"a": 1},
-			coldData:   map[string]interface{}{},
-			expectData: map[string]interface{}{"a": 1},
-		},
-		{
-			name:       "Both Empty",
-			hotData:    map[string]interface{}{},
-			coldData:   map[string]interface{}{},
-			expectData: map[string]interface{}{},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			gotData := svc.MergeHotColdFields(tc.hotData, tc.coldData)
-			if !reflect.DeepEqual(gotData, tc.expectData) {
-				t.Errorf("Merge mismatch:\nExpected: %v\nGot:      %v", tc.expectData, gotData)
-			}
-		})
-	}
-}
 
 func TestSerialize(t *testing.T) {
 	svc := NewService()
@@ -223,7 +92,7 @@ func TestDeserialize(t *testing.T) {
 		},
 		{
 			name:      "EC Padding (Trim NULL bytes)",
-			inputData: []byte("{\"b\": 123}\x00\x00\x00"), // 3 null bytes at end
+			inputData: []byte("{\"b\": 123}\x00\x00\x00"),        // 3 null bytes at end
 			expect:    map[string]interface{}{"b": float64(123)}, // JSON numbers are float64 by default
 			expectErr: false,
 		},

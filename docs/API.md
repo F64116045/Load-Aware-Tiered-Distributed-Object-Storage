@@ -2,7 +2,19 @@
 
 Base URL: `http://localhost:8000`
 
-## Endpoints
+Migration note (Docker workflow):
+- Run metadata migrations before starting/rolling API after schema changes:
+  - `docker compose run --rm meta_migrate`
+- One-command v2 smoke flow:
+  - `scripts/smoke_e2e_v2.sh`
+
+Runtime profile note (Docker workflow):
+- Default profile is postgres-first and does not require Redpanda/WAL services.
+
+Build note:
+- Current mainline build no longer includes legacy `field_hybrid` implementation paths.
+
+## Data Plane Endpoints
 
 ### 1. Write Data
 
@@ -13,8 +25,9 @@ Writes a JSON object or binary data to the distributed store.
 - **Headers**: `Content-Type: application/json`
 - **Query Parameters**:
     - `key` (Required): Unique identifier for the object.
-    - `strategy` (Optional): `replication`, `ec`, or `field_hybrid` (default: `replication`).
-    - `hot_only` (Optional): `true` to force a hot-only update (debug use).
+    - `strategy` (Optional): `replication` only (default: `replication`).
+- **Deprecation note**:
+  - direct `ec` write via `/write` is deprecated; use replication write + background tiering worker.
 
 **Request Body (Example)**:
 
@@ -34,11 +47,14 @@ Writes a JSON object or binary data to the distributed store.
 {
     "status": "ok",
     "key": "user:12345",
-    "strategy": "field_hybrid",
+    "strategy": "replication",
     "latency_ms": 15,
-    "is_pure_hot_update": false,
-    "hot_nodes_written": 3,
-    "cold_chunks_written": 6
+    "nodes_written": [
+      "http://storage_node_1:8001",
+      "http://storage_node_2:8002",
+      "http://storage_node_3:8003"
+    ],
+    "partial": false
 }
 
 ```
@@ -49,6 +65,8 @@ Retrieves data. The system automatically determines the storage strategy and rec
 
 - **URL**: `/read/:key`
 - **Method**: `GET`
+- **Note**:
+  - `field_hybrid` strategy is removed from mainline implementation.
 
 **Success Response (200 OK)**:
 Returns the original JSON object.
@@ -68,6 +86,8 @@ Permanently removes the object metadata and physical files.
 
 - **URL**: `/delete/:key`
 - **Method**: `DELETE`
+- **Note**:
+  - `field_hybrid` strategy is removed from mainline implementation.
 
 **Success Response (200 OK)**:
 
@@ -75,14 +95,15 @@ Permanently removes the object metadata and physical files.
 {
     "status": "ok",
     "key": "user:12345",
-    "strategy": "field_hybrid",
-    "hot_nodes_deleted": 3,
-    "cold_chunks_deleted": 6
+    "strategy": "replication",
+    "nodes_deleted": 3
 }
 
 ```
 
-### 4. System Status
+## Monitoring Endpoints
+
+### 4. Node Health
 
 **Node Health**:
 
@@ -90,8 +111,112 @@ Permanently removes the object metadata and physical files.
 - **Method**: `GET`
 - **Response**: Returns the status (Health/Size/Ops) of all active storage nodes.
 
+### 5. Storage Usage
+
 **Storage Usage**:
 
 - **URL**: `/storage_usage`
 - **Method**: `GET`
 - **Response**: Aggregated disk usage statistics.
+
+### 6. API Health
+
+- **URL**: `/health`
+- **Method**: `GET`
+- **Response**: API health, metadata health/source, node discovery source.
+
+### 7. Metrics Snapshot
+
+- **URL**: `/v2/admin/metrics-snapshot`
+- **Method**: `GET`
+- **Response**: metadata lookup counters + node discovery counters.
+
+## Admin v2 Endpoints
+
+### 8. List Tiering Tasks
+
+- **URL**: `/v2/admin/tasks`
+- **Method**: `GET`
+- **Query Parameters**:
+  - `state` (Optional): filter by task state, e.g. `PENDING`, `RUNNING`, `DONE`, `FAILED`, `RETRY_WAIT`.
+  - `task_type` (Optional): filter by type, currently `REPL_TO_EC`.
+  - `limit` (Optional): max rows returned, default `100`, max `1000`.
+
+**Response fields**:
+- `filters`: effective query filters.
+- `state_counts`: aggregated counts by state (filtered by `task_type` if provided).
+- `tasks[]`: task records with timestamps and action hints.
+  - `actions.retry_now` indicates if `POST /v2/admin/tasks/:id/retry-now` is allowed.
+  - `actions.cancel` indicates if `POST /v2/admin/tasks/:id/cancel` is allowed.
+
+### 9. Requeue Task Immediately
+
+- **URL**: `/v2/admin/tasks/:id/retry-now`
+- **Method**: `POST`
+- **Behavior**:
+  - sets task to `PENDING`
+  - sets `scheduled_at=NOW()`
+  - clears `started_at`, `finished_at`, `last_error`
+- **Allowed states**: `PENDING`, `RUNNING`, `RETRY_WAIT`, `FAILED`.
+- **Not allowed**: `DONE`.
+
+### 10. Cancel Task
+
+- **URL**: `/v2/admin/tasks/:id/cancel`
+- **Method**: `POST`
+- **Query Parameters / JSON Body**:
+  - `reason` (Optional)
+  - also accepted in body: `{"reason":"..."}`.
+- **Behavior**:
+  - sets task to `FAILED`
+  - writes reason to `last_error`
+  - sets `finished_at=NOW()`
+- **Allowed states**: `PENDING`, `RUNNING`, `RETRY_WAIT`.
+- **Not allowed**: `DONE`.
+
+### 11. List Node Heartbeats
+
+- **URL**: `/v2/admin/nodes`
+- **Method**: `GET`
+- **Query Parameters**:
+  - `limit` (Optional): default `100`, max `1000`.
+- **Response fields**:
+  - `node_id`, `status`, `last_seen_at`, `is_stale`
+  - `free_bytes`, `io_queue_depth`, `cpu_load`
+  - `stale_sec` (current staleness threshold).
+
+### 12. Get Object Metadata and Placement
+
+- **URL**: `/v2/admin/objects/:id`
+- **Method**: `GET`
+- **Response fields**:
+  - object header: `object_id`, `state`, `current_version`, `created_at`, `updated_at`
+  - current version metadata: `tier`, `checksum_sha256`, `encoding_k`, `encoding_m`, `size_bytes`
+  - `replica_locations[]` for current version
+  - `ec_shard_locations[]` for current version
+
+## v2 Generic Object Endpoints (Binary, Replication-First)
+
+### 13. Put Object (Binary)
+
+- **URL**: `/v2/objects/:id`
+- **Method**: `PUT`
+- **Body**: raw bytes (`--data-binary`)
+- **Current behavior**:
+  - stores object using replication strategy (HOT tier)
+  - does not require JSON
+- **Notes**:
+  - `Content-Type` is persisted in normalized metadata (`object_versions.content_type`) after running latest metadata migration.
+
+### 14. Get Object (Binary)
+
+- **URL**: `/v2/objects/:id`
+- **Method**: `GET`
+- **Response**: raw bytes
+- **Response Header**:
+  - `Content-Type` is returned from normalized metadata when available; fallback is `application/octet-stream`.
+- **Supported object strategies (current)**:
+  - `replication`
+  - `ec`
+- **Not supported in this endpoint (current)**:
+  - removed legacy strategies
