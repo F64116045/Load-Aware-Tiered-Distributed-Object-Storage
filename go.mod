@@ -9,7 +9,7 @@ go 1.24.0
 // 這些模組所需要的「間接」依賴 (例如 genproto)。
 require (
 	github.com/gin-gonic/gin v1.10.0
-	github.com/google/uuid v1.6.0
+	github.com/google/uuid v1.6.0 // indirect
 	// [Fix] 強制升級 compress 以解決 v1.18.1 的撤回警告
 	github.com/klauspost/compress v1.18.1 // indirect
 	github.com/klauspost/reedsolomon v1.12.1
@@ -18,6 +18,7 @@ require (
 
 require (
 	github.com/klauspost/cpuid/v2 v2.2.7
+	github.com/lib/pq v1.10.9
 	go.etcd.io/etcd/server/v3 v3.6.6
 )
 
@@ -52,13 +53,11 @@ require (
 	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
-	github.com/lib/pq v1.10.9 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
-	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/prometheus/client_golang v1.20.5 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
@@ -68,9 +67,6 @@ require (
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
-	github.com/twmb/franz-go v1.20.2 // indirect
-	github.com/twmb/franz-go/pkg/kadm v1.17.1 // indirect
-	github.com/twmb/franz-go/pkg/kmsg v1.12.0 // indirect
 	github.com/ugorji/go/codec v1.2.12 // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
 	go.etcd.io/bbolt v1.4.3 // indirect

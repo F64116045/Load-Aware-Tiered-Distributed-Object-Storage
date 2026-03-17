@@ -747,3 +747,20 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - removed `docs/HealerTest.md` (legacy)
 3. Verification:
    - `go test ./...` passes
+
+## 2026-03-17 (Milestone 6 WAL/Redpanda hard removal from runtime path, step 41)
+
+1. Removed WAL/Redpanda runtime dependencies from write path:
+   - deleted WAL helper flow from `internal/writeservice/writeservice.go`
+   - simplified metadata commit function naming (`finalizeMetadata`)
+   - removed `mq` dependency from `writeservice.NewService(...)`
+2. Removed API runtime initialization of mq client:
+   - `cmd/api/bootstrap_runtime.go` no longer imports/creates `internal/mq` client
+3. Removed legacy WAL package and config knobs:
+   - deleted `internal/mq/client.go`
+   - removed `WALEnabled` and `EtcdWALPrefix` from `internal/config/config.go`
+4. Compose and docs cleanup:
+   - removed `redpanda` service/volume and `WAL_ENABLED` env from `docker-compose.yaml`
+   - refreshed `Readme.md`, `docs/API.md`, `docs/ARCHITECTURE.md`
+5. Verification:
+   - `go test ./...` passes

@@ -67,7 +67,6 @@ services:
     deploy:
       replicas: 3
     environment:
-      - WAL_ENABLED=false
       - NODE_NAMES_CSV=storage_node_1,storage_node_2,storage_node_3,storage_node_4,storage_node_5,storage_node_6
       - META_ENABLED=true
       - META_DRIVER=postgres
@@ -96,40 +95,6 @@ services:
     command: ["/usr/local/bin/api"]
     networks:
       - storage_net
-
-  # ---------------------------------------------------------------------------
-  # WAL Service (Redpanda)
-  # ---------------------------------------------------------------------------
-  redpanda:
-    profiles: ["legacy-wal", "legacy-etcd"]
-    image: docker.redpanda.com/redpandadata/redpanda:v23.3.6
-    command:
-      - redpanda start
-      # Resource limits for local development environment
-      - --smp 1
-      - --memory 1G
-      - --reserve-memory 0M
-      - --overprovisioned
-      # Network configuration for internal (Docker) and external (Host) access
-      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
-      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
-      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
-    ports:
-      - 19092:19092
-      - 18081:18081
-      - 18082:18082
-      - 9644:9644
-    volumes:
-      - redpanda_data:/var/lib/redpanda/data
-    networks:
-      - storage_net
-    healthcheck:
-      test: ["CMD-SHELL", "rpk cluster info"]
-      interval: 10s
-      timeout: 5s
-      retries: 30    
-      start_period: 30s
 
   # ---------------------------------------------------------------------------
   # Etcd Cluster (Metadata Store)
@@ -365,4 +330,3 @@ volumes:
   storage_data_4:
   storage_data_5:
   storage_data_6:
-  redpanda_data:

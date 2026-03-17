@@ -14,7 +14,6 @@ import (
 	etcd "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 
-	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/interfaces"
 )
 
@@ -54,7 +53,7 @@ func (m *MockUtilsSvc) Deserialize(data []byte) (map[string]interface{}, error) 
 func (m *MockUtilsSvc) MapsAreEqual(map1, map2 map[string]interface{}) bool     { return true }
 
 // --- Helper: Start Embedded Etcd ---
-// This starts a real, in-memory Etcd server for testing WAL transactions.
+// This starts a real, in-memory Etcd server for metadata compatibility writes.
 func startEmbeddedEtcd(t *testing.T) (*embed.Etcd, *etcd.Client) {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir() // Use temporary directory
@@ -96,11 +95,7 @@ func createMockService(etcdClient interfaces.IEtcdClient, httpClient interfaces.
 	mockEc := &MockEcDriver{}
 	mockUtils := &MockUtilsSvc{}
 
-	svc := NewService(etcdClient, nil, httpClient, mockEc, mockUtils, nil)
-	svc.walProduce = func(ctx context.Context, key string, value []byte) error {
-		return nil
-	}
-	return svc
+	return NewService(etcdClient, httpClient, mockEc, mockUtils, nil)
 }
 
 // --- 2. Test Cases ---
@@ -213,28 +208,5 @@ func TestWriteReplicationWithMetadata_PersistsContentTypeAndLength(t *testing.T)
 	}
 	if int(gotLen) != len(payload) {
 		t.Fatalf("original_length mismatch, got=%d want=%d", int(gotLen), len(payload))
-	}
-}
-
-func TestWriteReplication_WALDisabled_AllowsNilMQClient(t *testing.T) {
-	etcdServer, etcdClient := startEmbeddedEtcd(t)
-	defer etcdServer.Close()
-	defer etcdClient.Close()
-
-	mockHttp := &MockHttpClient{
-		StatusCode: 200,
-		ShouldFail: false,
-	}
-
-	origWALEnabled := config.WALEnabled
-	defer func() { config.WALEnabled = origWALEnabled }()
-	config.WALEnabled = false
-
-	// Create service with nil MQ client and default walProduce closure from NewService.
-	writerSvc := NewService(etcdClient, nil, mockHttp, &MockEcDriver{}, &MockUtilsSvc{}, nil)
-
-	_, err := writerSvc.WriteReplication(context.Background(), []string{"http://node1"}, "wal_off_key", []byte("data"))
-	if err != nil {
-		t.Fatalf("WriteReplication() expected success with WAL disabled, got error: %v", err)
 	}
 }

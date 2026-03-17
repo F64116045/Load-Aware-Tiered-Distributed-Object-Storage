@@ -52,7 +52,5 @@ Legend:
    - executes REPL->EC migration flow
 4. `postgres`
    - authoritative metadata and task store
-5. `redpanda`
-   - WAL/event path still present for existing write flow compatibility
-6. `etcd`
+5. `etcd`
    - behind `legacy-etcd` compose profile (non-default path)

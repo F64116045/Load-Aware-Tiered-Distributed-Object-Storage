@@ -41,19 +41,12 @@ const (
 	// EtcdMetadataPrefix: Prefix for storing object metadata
 	// Example: "metadata/my_key"
 	EtcdMetadataPrefix = "metadata/"
-
-	// EtcdWALPrefix: Prefix for Write-Ahead Log entries during transactions
-	// Example: "txn/uuid-123"
-	EtcdWALPrefix = "txn/"
-
 )
 
 // ExpectedNodeNames stores the set of valid storage node identifiers
 var ExpectedNodeNames = map[string]bool{}
 
 var (
-	// WALEnabled controls whether synchronous WAL (Redpanda) is enabled on write path.
-	WALEnabled = getEnvBool("WAL_ENABLED", false)
 	// MetaEnabled controls whether PostgreSQL-backed metadata service is enabled.
 	MetaEnabled = getEnvBool("META_ENABLED", false)
 	// MetaAutoMigrate controls whether API runs metadata migration on startup.

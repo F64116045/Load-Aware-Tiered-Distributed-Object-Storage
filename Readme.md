@@ -1,26 +1,25 @@
 # Replication + Erasure Coding Object Store
 
-Fault-tolerant distributed object storage system written in Go. It features a novel **Field-Level Hybrid Storage** strategy, optimizing costs by automatically splitting object (JSON data) into "Hot" (Replicated) and "Cold" (Erasure Coded) partitions based on access patterns.
+Fault-tolerant distributed object storage system written in Go.
+The current mainline architecture is PostgreSQL-first:
+- foreground writes land in HOT replication
+- background workers migrate eligible objects to EC
+- metadata and task state are managed in normalized PostgreSQL tables
 
-This system addresses the write amplification problem inherent in traditional object storage systems when handling large, structured data with frequent metadata updates.
 
+## Features
 
-## **Features**
-
-- **Multi-Strategy Storage**
-    - **Replication**: Ensures high availability for critical data.
-    - **Erasure Coding (RS 4+2)**: Maximizes storage efficiency for larger data blobs.
-    - **Field Hybrid**: Automatically separates frequently accessed fields (Hot) from bulk data (Cold).
-        - **Automatic Tiering**: Automatically splits a JSON object into Hot Data (Replicated) and Cold Data (Erasure Coded RS 4+2).
-        - **Pure Hot Update**: Calculates SHA-256 hashes to detect if cold data remains unchanged. If matched, it skips expensive EC encoding and backend I/O.
-
-- **Self-Healing System**
-    - **Leader Election**: Background `Healer` nodes compete for leadership to prevent race conditions.
-    - **Active Polling (Maintenance)**: Periodically scans metadata to repair bit rot or insufficient replicas (Partial Writes).
-    - **Crash Recovery (WAL Consumer)**: Listens to the write-ahead log to detect and "resurrect" orphaned transactions caused by API Gateway failures.
-    - **Redpanda as WAL**: Decouples the Write-Ahead Log from metadata storage. Provides crash recovery guarantees.
-    - **Etcd for Metadata**: Acts as the single source of truth.
-    - **Best-Effort Availability**: The system accepts partial writes (e.g., 1/3 replicas) to ensure high availability, marking them as `dirty` for background repair (Eventual Consistency).
+- **Replication + EC tiering**
+  - **Replication**: low-latency HOT write path.
+  - **Erasure Coding (RS 4+2)**: storage-efficient cold tier.
+  - **Background tiering**: periodic policy enqueues REPL->EC tasks.
+- **PostgreSQL metadata source of truth**
+  - object/version/state tracking
+  - node heartbeat tracking
+  - task queue lifecycle for tiering
+- **Admin observability**
+  - task list/requeue/cancel
+  - object and node metadata inspection
 
 
 ## Architecture
@@ -33,8 +32,9 @@ graph TD
     LB --> API[API Gateway Cluster x3]
 
     subgraph Control_Plane [Control Plane]
-        API -->|WAL Append | RP[Redpanda]
-        API -->|Metadata Commit | Etcd[Etcd Cluster x3]
+        API -->|Metadata Commit| PG[(PostgreSQL)]
+        API -->|Task Enqueue| PG
+        TW[Tiering Worker] -->|Claim/Update Tasks| PG
     end
 
     subgraph Data_Plane [Data Plane]
@@ -57,12 +57,13 @@ graph TD
         end
     end
 
-    subgraph Reliability [Reliability]
-        Healer[Healer Service] -.->|Consume WAL| RP
-        Healer -.->|Poll Metadata| Etcd
-        Healer -.->|Repair| SN1
-        Healer -.->|Repair| SN2
-        Healer -.->|Repair| SN_N
+    subgraph Background [Background Processing]
+        API -->|Write HOT Replicas| SN1
+        API -->|Write HOT Replicas| SN2
+        API -->|Write HOT Replicas| SN_N
+        TW -->|Read HOT / Write EC Shards| SN1
+        TW -->|Read HOT / Write EC Shards| SN2
+        TW -->|Read HOT / Write EC Shards| SN_N
     end
 ```
 
@@ -70,11 +71,10 @@ graph TD
 
 | Service | Scale | Description |
 | --- | --- | --- |
-| **API Gateway** | 3x | Traffic entry point. Handles Hash calculation, EC sharding, and coordinates WAL/Storage writes. |
-| **Redpanda** | 1x | **Distributed WAL**. Stores write intents (PENDING state) with high throughput using Kafka protocol. |
-| **Etcd Cluster** | 3x | **Metadata Store**. Stores object locations and commit states. |
-| **Storage Node** | 6x | **Data Warehouse**. Stores actual data blobs using non-blocking buffered writes (Async I/O). |
-| **Healer** | 2x | **Recovery**. Dual-Track Recovery. Combines Polling (for maintenance) and WAL Consuming (for crash recovery) to ensure zero data loss. |
+| **API Gateway** | 3x | Traffic entry point. Handles foreground writes and v2/admin APIs. |
+| **PostgreSQL** | 1x | Metadata and task store (`objects`, `object_versions`, `tiering_tasks`, etc.). |
+| **Storage Node** | 6x | Stores object replicas and EC shard blobs. |
+| **Tiering Worker** | 1x | Background policy scan + REPL->EC migration processor. |
 
 ## Getting Started
 
@@ -219,11 +219,10 @@ python3 test/verify_storage.py
 │   ├── httpclient/            # Connection pooling client
 │   ├── interfaces/            # Interface definitions
 │   ├── monitoringservice/     # Node status logic
-│   ├── mq/                    # Redpanda/Kafka Client Wrapper
 │   ├── readservice/           # Read path logic
 │   ├── storageops/            # Low-level operations
 │   ├── utils/                 # Hashing & Serialization Tools
-│   └── writeservice/          # Write path logic (WAL, Hybrid)
+│   └── writeservice/          # Write path logic (replication + EC)
 ├── docs/                      # Documentation
 ├── test/                      # Legacy Python tests
 ├── benchmark.js               # K6 Performance Test Suite

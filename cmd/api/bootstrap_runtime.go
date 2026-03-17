@@ -15,7 +15,6 @@ import (
 	"hybrid_distributed_store/internal/httpclient"
 	"hybrid_distributed_store/internal/interfaces"
 	"hybrid_distributed_store/internal/meta"
-	"hybrid_distributed_store/internal/mq"
 	"hybrid_distributed_store/internal/readservice"
 	"hybrid_distributed_store/internal/storageops"
 	"hybrid_distributed_store/internal/utils"
@@ -25,7 +24,6 @@ import (
 type appRuntime struct {
 	etcdClient *etcd.Client
 	metaStore  *meta.Store
-	mqClient   *mq.Client
 
 	utilsSvc      interfaces.IUtilsSvc
 	readSvc       interfaces.IReadService
@@ -87,22 +85,13 @@ func initAppRuntime() (*appRuntime, func()) {
 	}
 	rt.metaStore = metaStore
 
-	if config.WALEnabled {
-		rt.mqClient = mq.NewClient(false)
-	} else {
-		log.Printf("[API] WAL disabled (WAL_ENABLED=false). Skipping Redpanda client init.")
-	}
-
 	rt.utilsSvc = utils.NewService()
 	ecDriver := ec.NewService()
 	rt.storageOpsSvc = storageops.NewService(httpClient)
 	rt.readSvc = readservice.NewService(httpClient, ecDriver, rt.utilsSvc)
-	rt.writeSvc = writeservice.NewService(rt.etcdClient, rt.mqClient, httpClient, ecDriver, rt.utilsSvc, rt.metaStore)
+	rt.writeSvc = writeservice.NewService(rt.etcdClient, httpClient, ecDriver, rt.utilsSvc, rt.metaStore)
 
 	cleanup := func() {
-		if rt.mqClient != nil {
-			rt.mqClient.Close()
-		}
 		if rt.metaStore != nil {
 			_ = rt.metaStore.Close()
 		}
