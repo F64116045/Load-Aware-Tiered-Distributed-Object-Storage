@@ -8,17 +8,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"hybrid_distributed_store/internal/config"
-	etcd "hybrid_distributed_store/internal/etcd"
 	"hybrid_distributed_store/internal/meta"
 )
 
@@ -190,72 +187,6 @@ func (s *storageEngine) getInfo() (map[string]interface{}, error) {
 	}, nil
 }
 
-// --- Service Registration & Heartbeat ---
-
-func registerAndHeartbeat(ctx context.Context, etcdClient *clientv3.Client, nodeName, nodeURL string) {
-	log.Printf("[%s] Starting Service Registration...", nodeName)
-
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("%s[%s] Heartbeat PANIC: %v%s\n", config.Colors["RED"], nodeName, r, config.Colors["RESET"])
-			log.Println(string(debug.Stack()))
-		}
-		log.Printf("%s[%s] Heartbeat stopped.%s\n", config.Colors["RED"], nodeName, config.Colors["RESET"])
-	}()
-
-	for {
-		var leaseID clientv3.LeaseID = 0
-
-	tryLease:
-		for {
-			leaseResp, err := etcdClient.Grant(ctx, 10) // 10 seconds TTL
-			if err != nil {
-				log.Printf("[%s] Warning: Failed to grant lease: %v. Retrying in 2s...", nodeName, err)
-				time.Sleep(2 * time.Second)
-				continue tryLease
-			}
-			leaseID = leaseResp.ID
-			break
-		}
-
-		key := fmt.Sprintf("nodes/health/%s", nodeName)
-		_, err := etcdClient.Put(ctx, key, nodeURL, clientv3.WithLease(leaseID))
-		if err != nil {
-			log.Printf("[%s] Warning: Failed to register: %v. Retrying in 2s...", nodeName, err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		log.Printf("[%s] Registered successfully (LeaseID: %x). Starting KeepAlive.", nodeName, leaseID)
-
-		keepAliveChan, err := etcdClient.KeepAlive(ctx, leaseID)
-		if err != nil {
-			log.Printf("[%s] Warning: Failed to start KeepAlive: %v. Retrying in 2s...", nodeName, err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		// [FIX] 使用 Label Loop 來修復無限重試導致的 CPU 飆高與日誌洗版
-	KeepAliveLoop:
-		for {
-			select {
-			case <-ctx.Done():
-				etcdClient.Revoke(context.Background(), leaseID)
-				log.Printf("[%s] Shutting down, lease revoked.", nodeName)
-				return
-
-			case ka, ok := <-keepAliveChan:
-				if !ok {
-					log.Printf("[%s] Warning: KeepAlive channel closed. Re-registering...", nodeName)
-					time.Sleep(1 * time.Second) // 避免瞬斷時瘋狂重試
-					break KeepAliveLoop         // 跳出內層迴圈，觸發外層迴圈重新註冊
-				}
-				_ = ka
-			}
-		}
-	}
-}
-
 func getFreeBytes(path string) int64 {
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(path, &fs); err != nil {
@@ -314,20 +245,6 @@ func main() {
 		log.Fatal("Error: NODE_PORT, NODE_NAME, and STORAGE_DIR must be set.")
 	}
 
-	var etcdClient *clientv3.Client
-	useEtcdDiscovery := config.NodeDiscoverySource == "etcd" || config.NodeDiscoverySource == "auto"
-	if useEtcdDiscovery {
-		etcdClient = etcd.GetClient()
-		if etcdClient == nil {
-			if config.NodeDiscoverySource == "etcd" {
-				log.Fatalf("Failed to connect to Etcd with NODE_DISCOVERY_SOURCE=etcd.")
-			}
-			log.Printf("Etcd unavailable; continue with PostgreSQL discovery path.")
-		} else {
-			defer etcd.CloseClient()
-		}
-	}
-
 	metaStore, metaErr := meta.NewStore(meta.Config{
 		Enabled:         config.MetaEnabled,
 		Driver:          config.MetaDriver,
@@ -358,9 +275,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	internalURL := fmt.Sprintf("http://%s:%s", nodeName, nodePort)
-	if etcdClient != nil && useEtcdDiscovery {
-		go registerAndHeartbeat(ctx, etcdClient, nodeName, internalURL)
-	}
 	go registerAndHeartbeatMeta(ctx, metaStore, internalURL, storage)
 
 	// 5. Start Gin Server

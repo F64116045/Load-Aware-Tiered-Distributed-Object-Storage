@@ -9,10 +9,7 @@ Migration note (Docker workflow):
   - `scripts/smoke_e2e_v2.sh`
 
 Runtime profile note (Docker workflow):
-- Default profile is postgres-first and does not require Redpanda:
-  - `WAL_ENABLED=false` on `api`
-  - `redpanda` is behind legacy profiles (`legacy-wal` / `legacy-etcd`)
-- If you need legacy WAL path, explicitly enable profile + API WAL env override.
+- Default profile is postgres-first and does not require Redpanda/WAL services.
 
 Build note:
 - Current mainline build no longer includes legacy `field_hybrid` implementation paths.

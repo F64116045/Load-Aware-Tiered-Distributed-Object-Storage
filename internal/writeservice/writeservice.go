@@ -5,52 +5,34 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/interfaces"
 	"hybrid_distributed_store/internal/meta"
-	"hybrid_distributed_store/internal/mq"
 )
 
 // Service implements write logic for active strategies (replication/ec),
-// with optional WAL and metadata persistence.
+// with metadata persistence.
 type Service struct {
-	etcd       interfaces.IEtcdClient
-	mq         *mq.Client
-	walProduce func(ctx context.Context, key string, value []byte) error
-	http       interfaces.IHttpClient
-	ec         interfaces.IEcDriver
-	utils      interfaces.IUtilsSvc
-	meta       *meta.Store
+	http  interfaces.IHttpClient
+	ec    interfaces.IEcDriver
+	utils interfaces.IUtilsSvc
+	meta  *meta.Store
 }
 
 // NewService creates a new WriteService.
 func NewService(
-	etcd interfaces.IEtcdClient,
-	mqClient *mq.Client,
 	http interfaces.IHttpClient,
 	ec interfaces.IEcDriver,
 	utils interfaces.IUtilsSvc,
 	metaStore *meta.Store,
 ) *Service {
 	return &Service{
-		etcd: etcd,
-		mq:   mqClient,
-		walProduce: func(ctx context.Context, key string, value []byte) error {
-			if mqClient == nil {
-				return fmt.Errorf("wal client is nil")
-			}
-			return mqClient.ProduceSync(ctx, key, value)
-		},
 		http:  http,
 		ec:    ec,
 		utils: utils,
@@ -63,127 +45,24 @@ func computeSHA256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-var errMetadataNotFound = errors.New("metadata not found")
-
-func (s *Service) loadExistingMetadata(ctx context.Context, key string) (map[string]interface{}, string, error) {
-	metaKey := fmt.Sprintf("metadata/%s", key)
-
-	readFromPostgres := config.MetaSource == "auto" || config.MetaSource == "postgres"
-	readFromEtcd := config.MetaSource == "auto" || config.MetaSource == "etcd"
-
-	if readFromPostgres && config.MetaEnabled && s.meta != nil {
-		pgNormalizedMeta, err := s.meta.GetNormalizedMetadata(ctx, key)
-		if err != nil {
-			return nil, "", err
-		}
-		if len(pgNormalizedMeta) > 0 {
-			return pgNormalizedMeta, "postgres_normalized", nil
-		}
-		if config.MetaSource == "postgres" {
-			return nil, "", errMetadataNotFound
-		}
-	}
-
-	if !readFromEtcd {
-		return nil, "", errMetadataNotFound
-	}
-	if s.etcd == nil {
-		if config.MetaSource == "etcd" {
-			return nil, "", fmt.Errorf("etcd client unavailable")
-		}
-		return nil, "", errMetadataNotFound
-	}
-
-	resp, err := s.etcd.Get(ctx, metaKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("etcd query failed: %v", err)
-	}
-	if len(resp.Kvs) == 0 {
-		return nil, "", errMetadataNotFound
-	}
-
-	var metadata map[string]interface{}
-	if err := json.Unmarshal(resp.Kvs[0].Value, &metadata); err != nil {
-		return nil, "", fmt.Errorf("metadata parse failed: %v", err)
-	}
-	return metadata, "etcd", nil
-}
-
-// --- Write-Ahead Log Helpers ---
-
-func (s *Service) createWALEntry(
+func (s *Service) finalizeMetadata(
 	ctx context.Context,
-	key string,
-	strategy config.StorageStrategy,
-	metadataDetails map[string]interface{},
-) (string, error) {
-	if !config.WALEnabled {
-		// WAL is intentionally disabled in postgres-first profile.
-		return "", nil
-	}
-
-	txnID := fmt.Sprintf("txn:%s", uuid.New().String())
-
-	logEntry := map[string]interface{}{
-		"txn_id":    txnID,
-		"status":    "PENDING",
-		"key_name":  key,
-		"strategy":  string(strategy),
-		"timestamp": time.Now().Unix(),
-		"details":   metadataDetails,
-	}
-
-	valBytes, err := json.Marshal(logEntry)
-	if err != nil {
-		return "", fmt.Errorf("failed to serialize WAL entry: %v", err)
-	}
-
-	if s.walProduce == nil {
-		return "", fmt.Errorf("wal producer not configured")
-	}
-	if err := s.walProduce(ctx, key, valBytes); err != nil {
-		return "", fmt.Errorf("failed to write WAL to Redpanda: %v", err)
-	}
-
-	return txnID, nil
-}
-
-func (s *Service) finalizeWALEntry(
-	ctx context.Context,
-	txnID string,
-	success bool,
 	mainKey string,
 	metadata map[string]interface{},
 ) error {
-
-	if !success {
+	if !config.MetaEnabled {
 		return nil
 	}
-
-	metaKey := fmt.Sprintf("metadata/%s", mainKey)
-	metaBytes, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("failed to serialize final metadata: %v", err)
+	if s.meta == nil {
+		return fmt.Errorf("metadata store unavailable")
 	}
 
-	if config.MetaEnabled && s.meta != nil {
-		if err := s.meta.UpsertNormalizedMetadata(ctx, mainKey, metadata); err != nil {
-			return fmt.Errorf("failed to commit normalized metadata to Postgres: %v", err)
-		}
-		if err := s.enqueueTieringTaskIfEligible(ctx, mainKey, metadata); err != nil {
-			// Tiering is best effort for now; foreground write must remain available.
-			log.Printf("[TieringEnqueue] skip key=%s: %v", mainKey, err)
-		}
+	if err := s.meta.UpsertNormalizedMetadata(ctx, mainKey, metadata); err != nil {
+		return fmt.Errorf("failed to commit normalized metadata to Postgres: %v", err)
 	}
-
-	if config.MetaSource != "postgres" {
-		if s.etcd == nil {
-			return fmt.Errorf("etcd client unavailable for metadata compatibility write")
-		}
-		_, err = s.etcd.Put(ctx, metaKey, string(metaBytes))
-		if err != nil {
-			return fmt.Errorf("failed to commit metadata to Etcd: %v", err)
-		}
+	if err := s.enqueueTieringTaskIfEligible(ctx, mainKey, metadata); err != nil {
+		// Tiering is best effort for now; foreground write must remain available.
+		log.Printf("[TieringEnqueue] skip key=%s: %v", mainKey, err)
 	}
 
 	return nil
@@ -269,15 +148,6 @@ func (s *Service) writeReplication(
 	value []byte,
 	extraMeta map[string]interface{},
 ) (map[string]interface{}, error) {
-	walMeta := map[string]interface{}{
-		"strategy": config.StrategyReplication,
-	}
-
-	txnID, err := s.createWALEntry(ctx, key, config.StrategyReplication, walMeta)
-	if err != nil {
-		return nil, err
-	}
-
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	success := 0
@@ -332,7 +202,7 @@ func (s *Service) writeReplication(
 		log.Printf("[PartialWrite] Key=%s marked dirty. %d/%d replicas written.", key, success, len(replicaNodes))
 	}
 
-	if err := s.finalizeWALEntry(ctx, txnID, true, key, finalMeta); err != nil {
+	if err := s.finalizeMetadata(ctx, key, finalMeta); err != nil {
 		return nil, err
 	}
 
@@ -354,18 +224,13 @@ func (s *Service) WriteEC(
 
 	chunkPrefix := fmt.Sprintf("%s_cold_chunk_", key)
 
-	walMeta := map[string]interface{}{
+	writeMeta := map[string]interface{}{
 		"strategy":        config.StrategyEC,
 		"k":               config.K,
 		"m":               config.M,
 		"chunk_prefix":    chunkPrefix,
 		"original_length": len(value),
 		"key_name":        key,
-	}
-
-	txnID, err := s.createWALEntry(ctx, key, config.StrategyEC, walMeta)
-	if err != nil {
-		return nil, err
 	}
 
 	chunks, err := s.ec.Split(value)
@@ -412,7 +277,7 @@ func (s *Service) WriteEC(
 	}
 
 	finalMeta := map[string]interface{}{}
-	for k, v := range walMeta {
+	for k, v := range writeMeta {
 		finalMeta[k] = v
 	}
 	finalMeta["hot_version"] = 0
@@ -426,7 +291,7 @@ func (s *Service) WriteEC(
 		log.Printf("[PartialWrite] Key=%s marked dirty. %d/%d chunks written.", key, success, totalChunks)
 	}
 
-	if err := s.finalizeWALEntry(ctx, txnID, true, key, finalMeta); err != nil {
+	if err := s.finalizeMetadata(ctx, key, finalMeta); err != nil {
 		return nil, err
 	}
 

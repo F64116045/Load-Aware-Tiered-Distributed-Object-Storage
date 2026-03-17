@@ -3,18 +3,7 @@ package interfaces
 import (
 	"context"
 	"net/http"
-
-	etcd "go.etcd.io/etcd/client/v3"
 )
-
-// IEtcdClient defines the minimal functionality required from an etcd client.
-// It abstracts the underlying etcd implementation for easier testing and mocking.
-type IEtcdClient interface {
-	Put(ctx context.Context, key, val string, opts ...etcd.OpOption) (*etcd.PutResponse, error)
-	Get(ctx context.Context, key string, opts ...etcd.OpOption) (*etcd.GetResponse, error)
-	Txn(ctx context.Context) etcd.Txn
-	Delete(ctx context.Context, key string, opts ...etcd.OpOption) (*etcd.DeleteResponse, error)
-}
 
 // IHttpClient defines the minimal functionality required from an HTTP client.
 type IHttpClient interface {

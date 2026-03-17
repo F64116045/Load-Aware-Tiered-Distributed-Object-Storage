@@ -37,13 +37,13 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 				"enabled":      config.MetaEnabled,
 				"status":       deps.metadataStatus,
 				"driver":       config.MetaDriver,
-				"source":       config.MetaSource,
+				"source":       "postgres",
 				"auto_migrate": config.MetaAutoMigrate,
 				"error":        deps.metadataErr,
 				"lookup":       metadataLookupSnapshot(),
 			},
 			"node_discovery": gin.H{
-				"configured_source": config.NodeDiscoverySource,
+				"configured_source": "postgres",
 				"active_source":     deps.nodeDiscoveryActive,
 				"stale_sec":         config.NodeHeartbeatStaleSec,
 			},
@@ -54,7 +54,7 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 		c.JSON(http.StatusOK, gin.H{
 			"metadata_lookup": metadataLookupSnapshot(),
 			"node_discovery": gin.H{
-				"configured_source": config.NodeDiscoverySource,
+				"configured_source": "postgres",
 				"active_source":     deps.nodeDiscoveryActive,
 				"active_node_count": deps.getActiveNodeCount(),
 			},

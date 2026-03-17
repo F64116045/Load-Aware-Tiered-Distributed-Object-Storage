@@ -734,3 +734,53 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - removed hybrid row from `test/verify_storage.py` report output
 3. Verification:
    - pending full test pass in next step (`go test ./...`)
+
+## 2026-03-10 (Milestone 6 legacy healer removal, step 40)
+
+1. Removed legacy healer runtime path:
+   - deleted `cmd/healer/*`
+   - removed healer binary build/copy stages from `Dockerfile`
+   - removed `healer` service from `docker-compose.yaml`
+2. Cleaned associated references:
+   - removed obsolete healer lock constant from `internal/config/config.go`
+   - updated architecture and benchmark docs to no longer require healer operations
+   - removed `docs/HealerTest.md` (legacy)
+3. Verification:
+   - `go test ./...` passes
+
+## 2026-03-17 (Milestone 6 WAL/Redpanda hard removal from runtime path, step 41)
+
+1. Removed WAL/Redpanda runtime dependencies from write path:
+   - deleted WAL helper flow from `internal/writeservice/writeservice.go`
+   - simplified metadata commit function naming (`finalizeMetadata`)
+   - removed `mq` dependency from `writeservice.NewService(...)`
+2. Removed API runtime initialization of mq client:
+   - `cmd/api/bootstrap_runtime.go` no longer imports/creates `internal/mq` client
+3. Removed legacy WAL package and config knobs:
+   - deleted `internal/mq/client.go`
+   - removed `WALEnabled` and `EtcdWALPrefix` from `internal/config/config.go`
+4. Compose and docs cleanup:
+   - removed `redpanda` service/volume and `WAL_ENABLED` env from `docker-compose.yaml`
+   - refreshed `Readme.md`, `docs/API.md`, `docs/ARCHITECTURE.md`
+5. Verification:
+   - `go test ./...` passes
+
+## 2026-03-17 (Milestone 6 postgres-only metadata/discovery convergence, step 42)
+
+1. Removed etcd fallback from active API/runtime paths:
+   - `cmd/api/bootstrap_runtime.go` no longer initializes etcd client
+   - node discovery startup is postgres-heartbeat only
+   - metadata lookup now queries PostgreSQL normalized tables only
+2. Removed etcd compatibility writes from write path:
+   - `internal/writeservice/writeservice.go` no longer writes compatibility metadata to etcd
+   - legacy route deletion path no longer calls `deleteEtcdMetadata`
+3. Removed legacy etcd code and compose services:
+   - deleted `internal/etcd/client.go`
+   - removed etcd services/volumes and `META_SOURCE`/`NODE_DISCOVERY_SOURCE` env usage from `docker-compose.yaml`
+4. Cleanup and alignment:
+   - simplified interfaces (`internal/interfaces/interfaces.go`) by removing `IEtcdClient`
+   - updated write service tests to match postgres-first behavior
+   - refreshed `Readme.md` and `docs/ARCHITECTURE.md` wording for postgres-only mainline
+   - ran `go mod tidy` to drop obsolete dependencies
+5. Verification:
+   - `go test ./...` passes
