@@ -139,7 +139,7 @@ Permanently removes the object metadata and physical files.
 - **Method**: `GET`
 - **Query Parameters**:
   - `state` (Optional): filter by task state, e.g. `PENDING`, `RUNNING`, `DONE`, `FAILED`, `RETRY_WAIT`.
-  - `task_type` (Optional): filter by type, currently `REPL_TO_EC`.
+  - `task_type` (Optional): filter by type, currently `REPL_TO_EC` and `GC`.
   - `limit` (Optional): max rows returned, default `100`, max `1000`.
 
 **Response fields**:

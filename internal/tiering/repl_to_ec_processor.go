@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"time"
 
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/interfaces"
@@ -102,8 +103,24 @@ func (p *ReplicationToECProcessor) ProcessReplicationToEC(ctx context.Context, t
 	); err != nil {
 		return err
 	}
+	if err := p.enqueueReplicationGCTask(ctx, task.ObjectID, task.Version); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func (p *ReplicationToECProcessor) enqueueReplicationGCTask(ctx context.Context, objectID string, version int64) error {
+	gcTaskID := fmt.Sprintf("gc-repl:%s:%d", objectID, version)
+	return p.store.EnqueueTieringTask(
+		ctx,
+		gcTaskID,
+		objectID,
+		version,
+		TaskTypeGC,
+		90,
+		time.Now(),
+	)
 }
 
 func (p *ReplicationToECProcessor) fetchFromAnyReplica(ctx context.Context, nodes []string, objectID string) ([]byte, error) {

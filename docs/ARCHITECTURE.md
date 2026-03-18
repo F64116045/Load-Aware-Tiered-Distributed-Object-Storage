@@ -30,6 +30,7 @@ Legend:
 | Write-path enqueue for REPL->EC | `DONE` | replication writes enqueue deterministic `repl2ec:{object}:{version}` task IDs. |
 | Periodic A1 policy scanner | `DONE` | age-based scan marks `MIGRATION_PENDING` and enqueues tasks. |
 | Tiering worker loop | `DONE` | worker + processor process `REPL_TO_EC` tasks. |
+| Post-promotion HOT GC task flow | `DONE` | `REPL_TO_EC` success enqueues `GC`; worker deletes HOT replicas and marks `replica_locations` as `DELETED`. |
 | REPL->EC processor (data + metadata promotion) | `PARTIAL` | core flow works; robustness/edge handling still needs hardening. |
 | Admin API `/v2/admin/tasks` | `DONE` | filters, state summary, and action hints included. |
 | Admin API task actions (`retry-now`, `cancel`) | `DONE` | manual unstick and cancel endpoints live. |
@@ -38,6 +39,19 @@ Legend:
 | Full spec policy variants A2/A3 + threshold trigger | `TODO` | only A1 periodic path is implemented now. |
 | Repair/reconciliation worker for missing shards/replicas | `TODO` | legacy healer path removed; v2 repair model still to be implemented. |
 | Benchmark one-command reproducible v2 matrix | `PARTIAL` | benchmark assets exist, v2 matrix integration still pending cleanup. |
+
+## Must-Do Backlog (Required)
+
+1. Add retry cap + terminal failure semantics for tiering tasks:
+   - define `MAX_RETRY_COUNT`
+   - move task to `FAILED` when retry cap is reached
+   - keep actionable `last_error` for admin debugging
+2. Implement v2 repair/reconciliation worker:
+   - replace removed legacy healer capabilities
+   - repair missing replicas/shards based on PostgreSQL metadata state
+3. Complete policy variants beyond A1:
+   - implement A2/A3 and threshold trigger path from spec
+   - keep benchmark configs reproducible across variants
 
 ## Runtime Components (Current)
 
@@ -49,6 +63,6 @@ Legend:
    - heartbeat reporting to PostgreSQL
 3. `tiering_worker` (`cmd/tiering_worker`)
    - periodic A1 scanner + task worker in one process
-   - executes REPL->EC migration flow
+   - executes REPL->EC migration and HOT replica GC flow
 4. `postgres`
    - authoritative metadata and task store
