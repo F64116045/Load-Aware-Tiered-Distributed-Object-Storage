@@ -11,11 +11,13 @@ import (
 
 const (
 	TaskTypeReplicationToEC = "REPL_TO_EC"
+	TaskTypeGC              = "GC"
 )
 
 // Processor encapsulates task business logic.
 type Processor interface {
 	ProcessReplicationToEC(ctx context.Context, task *meta.TieringTask) error
+	ProcessReplicationGC(ctx context.Context, task *meta.TieringTask) error
 }
 
 // Worker polls tasks and executes processor logic.
@@ -77,6 +79,8 @@ func (w *Worker) runOnce(ctx context.Context) error {
 	switch task.TaskType {
 	case TaskTypeReplicationToEC:
 		procErr = w.processor.ProcessReplicationToEC(ctx, task)
+	case TaskTypeGC:
+		procErr = w.processor.ProcessReplicationGC(ctx, task)
 	default:
 		procErr = fmt.Errorf("unsupported task type: %s", task.TaskType)
 	}

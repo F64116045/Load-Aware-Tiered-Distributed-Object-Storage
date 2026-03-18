@@ -784,3 +784,26 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - ran `go mod tidy` to drop obsolete dependencies
 5. Verification:
    - `go test ./...` passes
+
+## 2026-03-18 (Milestone 7 post-promotion HOT GC flow, step 43)
+
+1. Added end-to-end GC task path after REPL->EC promotion:
+   - `REPL_TO_EC` processor now enqueues deterministic GC task IDs: `gc-repl:{object}:{version}`
+   - task type constant `GC` added to worker flow
+2. Extended tiering worker to process both migration and GC tasks:
+   - worker now dispatches `REPL_TO_EC` and `GC`
+   - task-type filter supports `ALL` (empty filter) in `cmd/tiering_worker/main.go`
+   - `docker-compose.yaml` sets `TIERING_WORKER_TASK_TYPE=ALL`
+3. Implemented replication-GC processor:
+   - validates object snapshot is still current and already `EC_ACTIVE`
+   - deletes HOT replica blobs from storage nodes
+   - marks `replica_locations.status='DELETED'` on success
+4. Added metadata helpers for GC:
+   - `ListActiveReplicaLocations(...)`
+   - `MarkReplicaLocationsDeleted(...)`
+5. Updated smoke and docs:
+   - `scripts/smoke_e2e_v2.sh` now verifies GC task done + deleted replica rows
+   - `docs/API.md` task type docs include `GC`
+   - `docs/ARCHITECTURE.md` marks post-promotion HOT GC flow as `DONE`
+6. Verification:
+   - `go test ./...` passes

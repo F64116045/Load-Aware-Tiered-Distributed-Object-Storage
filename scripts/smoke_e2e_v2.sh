@@ -36,17 +36,17 @@ wait_api_health() {
   return 1
 }
 
-echo "[0/8] Prepare metadata schema"
+echo "[0/9] Prepare metadata schema"
 docker compose run --rm meta_migrate >/dev/null
 
 if [[ "${START_STACK}" == "true" ]]; then
-  echo "[1/8] Start stack"
+  echo "[1/9] Start stack"
   docker compose up -d --build postgres storage_node_1 storage_node_2 storage_node_3 storage_node_4 storage_node_5 storage_node_6 api tiering_worker nginx >/dev/null
 else
-  echo "[1/8] Skip stack startup (START_STACK=false)"
+  echo "[1/9] Skip stack startup (START_STACK=false)"
 fi
 
-echo "[2/8] Wait API health"
+echo "[2/9] Wait API health"
 if ! wait_api_health; then
   echo "ERROR: API health check timeout at ${API_BASE}/health" >&2
   exit 1
@@ -54,13 +54,13 @@ fi
 
 printf "%s" "${PAYLOAD}" >"${PAYLOAD_FILE}"
 
-echo "[3/8] PUT /v2/objects/${KEY}"
+echo "[3/9] PUT /v2/objects/${KEY}"
 curl -sS -f -X PUT \
   "${API_BASE}/v2/objects/${KEY}" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @"${PAYLOAD_FILE}" >/dev/null
 
-echo "[4/8] Verify tiering task exists"
+echo "[4/9] Verify tiering task exists"
 TASK_ID="$(sql "SELECT task_id FROM tiering_tasks WHERE object_id='${KEY}' ORDER BY scheduled_at DESC LIMIT 1;" | tr -d '[:space:]')"
 if [[ -z "${TASK_ID}" ]]; then
   echo "ERROR: tiering task not found for object ${KEY}" >&2
@@ -68,7 +68,7 @@ if [[ -z "${TASK_ID}" ]]; then
 fi
 echo "Task: ${TASK_ID}"
 
-echo "[5/8] Verify admin tasks endpoint sees object"
+echo "[5/9] Verify admin tasks endpoint sees object"
 tasks_resp="$(curl -sS -f "${API_BASE}/v2/admin/tasks?task_type=REPL_TO_EC&limit=200")"
 if ! printf "%s" "${tasks_resp}" | grep -q "\"object_id\":\"${KEY}\""; then
   echo "ERROR: /v2/admin/tasks does not contain object ${KEY}" >&2
@@ -76,13 +76,13 @@ if ! printf "%s" "${tasks_resp}" | grep -q "\"object_id\":\"${KEY}\""; then
 fi
 
 if [[ "${FORCE_TASK_NOW}" == "true" ]]; then
-  echo "[6/8] Force task runnable now"
+  echo "[6/9] Force task runnable now"
   sql "UPDATE tiering_tasks SET scheduled_at=NOW()-INTERVAL '1 second' WHERE task_id='${TASK_ID}';" >/dev/null
 else
-  echo "[6/8] Skip force scheduling (FORCE_TASK_NOW=false)"
+  echo "[6/9] Skip force scheduling (FORCE_TASK_NOW=false)"
 fi
 
-echo "[7/8] Wait object promotion to EC_ACTIVE"
+echo "[7/9] Wait object promotion to EC_ACTIVE"
 deadline=$((SECONDS + TIMEOUT_SEC))
 while (( SECONDS < deadline )); do
   obj_resp="$(curl -sS -f "${API_BASE}/v2/admin/objects/${KEY}" || true)"
@@ -106,7 +106,7 @@ if ! printf "%s" "${obj_resp}" | grep -q "\"state\":\"EC_ACTIVE\"" ||
   exit 1
 fi
 
-echo "[8/8] GET /v2/objects/${KEY} and verify payload"
+echo "[8/9] GET /v2/objects/${KEY} and verify payload"
 curl -sS -f "${API_BASE}/v2/objects/${KEY}" -o "${READ_FILE}"
 if ! cmp -s "${PAYLOAD_FILE}" "${READ_FILE}"; then
   echo "ERROR: payload mismatch after readback" >&2
@@ -115,5 +115,25 @@ if ! cmp -s "${PAYLOAD_FILE}" "${READ_FILE}"; then
   exit 1
 fi
 
-echo "Smoke passed: v2 put -> task enqueue -> admin visibility -> EC promotion -> v2 get"
+echo "[9/9] Verify GC task done and replica locations marked DELETED"
+gc_task_state=""
+deadline=$((SECONDS + TIMEOUT_SEC))
+while (( SECONDS < deadline )); do
+  gc_task_state="$(sql "SELECT task_state FROM tiering_tasks WHERE object_id='${KEY}' AND task_type='GC' ORDER BY scheduled_at DESC LIMIT 1;" | tr -d '[:space:]')"
+  deleted_count="$(sql "SELECT COUNT(*) FROM replica_locations WHERE object_id='${KEY}' AND status='DELETED';" | tr -d '[:space:]')"
+  if [[ "${gc_task_state}" == "DONE" ]] && [[ "${deleted_count}" != "" ]] && (( deleted_count > 0 )); then
+    echo "GC done: task_state=${gc_task_state} deleted_replicas=${deleted_count}"
+    break
+  fi
+  sleep 2
+done
+
+gc_task_state="$(sql "SELECT task_state FROM tiering_tasks WHERE object_id='${KEY}' AND task_type='GC' ORDER BY scheduled_at DESC LIMIT 1;" | tr -d '[:space:]')"
+deleted_count="$(sql "SELECT COUNT(*) FROM replica_locations WHERE object_id='${KEY}' AND status='DELETED';" | tr -d '[:space:]')"
+if [[ "${gc_task_state}" != "DONE" ]] || [[ "${deleted_count}" == "" ]] || (( deleted_count == 0 )); then
+  echo "ERROR: GC verification failed. gc_task_state=${gc_task_state} deleted_replicas=${deleted_count}" >&2
+  exit 1
+fi
+
+echo "Smoke passed: v2 put -> task enqueue -> EC promotion -> GC cleanup -> v2 get"
 echo "key=${KEY}"

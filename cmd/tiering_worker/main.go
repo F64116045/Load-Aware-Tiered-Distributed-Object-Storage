@@ -54,11 +54,13 @@ func main() {
 	pollInterval := envDurationSec("TIERING_WORKER_POLL_SEC", 2*time.Second)
 	policyPeriod := envDurationSec("TIERING_POLICY_PERIOD_SEC", time.Duration(config.TieringPeriodSec)*time.Second)
 	taskType := os.Getenv("TIERING_WORKER_TASK_TYPE")
-	if taskType == "" {
-		taskType = tiering.TaskTypeReplicationToEC
+	if taskType == "" || taskType == "ALL" {
+		taskType = ""
 	}
 
-	processor := tiering.NewReplicationToECProcessor(store, httpclient.GetClient(), ec.NewService())
+	replToECProcessor := tiering.NewReplicationToECProcessor(store, httpclient.GetClient(), ec.NewService())
+	replGCProcessor := tiering.NewReplicationGCProcessor(store, httpclient.GetClient())
+	processor := tiering.NewProcessorMux(replToECProcessor, replGCProcessor)
 	worker := tiering.NewWorker(store, processor, pollInterval, taskType)
 	scanner := tiering.NewPolicyScanner(store, policyPeriod, config.AgeThresholdSec, config.MaxObjectsPerRound)
 
