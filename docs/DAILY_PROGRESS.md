@@ -807,3 +807,41 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `docs/ARCHITECTURE.md` marks post-promotion HOT GC flow as `DONE`
 6. Verification:
    - `go test ./...` passes
+
+## 2026-03-20 (Milestone 7 scanner leader election with PostgreSQL lock, step 44)
+
+1. Added PostgreSQL advisory lock abstraction:
+   - `internal/meta/advisory_lock.go`
+   - `TryAcquireAdvisoryLock(...)` + `AdvisoryLock.Ping(...)` + `AdvisoryLock.Release(...)`
+2. Updated `cmd/tiering_worker` scanner startup path:
+   - scanner now runs only on lock holder (`runScannerAsLeader(...)`)
+   - non-leader workers continue polling task queue and executing tasks normally
+   - if lock session is lost, scanner is stopped and leader reacquire retry loop starts
+3. Added leader-control env knobs:
+   - `TIERING_POLICY_LEADER_RETRY_SEC`
+   - `TIERING_POLICY_LEADER_LOCK_KEY`
+4. Updated compose/docs:
+   - `docker-compose.yaml` includes leader lock envs for `tiering_worker`
+   - `docs/ARCHITECTURE.md` marks scanner leader election as done
+5. Verification:
+   - `go test ./...` passes
+
+## 2026-03-20 (Milestone 7 leader observability + failover smoke, step 45)
+
+1. Added metadata table for scanner leadership state:
+   - migration `000003_tiering_leader_state`
+   - stores `lock_key`, `leader_id`, `scanner_status`, `acquired_at`, `last_heartbeat_at`
+2. Worker leadership heartbeat wired:
+   - lock holder periodically upserts `LEADING` heartbeat
+   - lock loss / graceful stop marks status (`LOCK_LOST` / `STOPPED`)
+3. Added admin visibility:
+   - `GET /v2/admin/leader`
+   - `GET /v2/admin/metrics-snapshot` now includes `tiering_leader`
+4. Added failover smoke script:
+   - `scripts/smoke_leader_failover.sh`
+   - verifies: single leader -> stop leader container -> follower takeover
+5. Added config knobs:
+   - `TIERING_POLICY_LEADER_LOCK_KEY`
+   - `TIERING_LEADER_STALE_SEC`
+6. Verification:
+   - `go test ./...` passes

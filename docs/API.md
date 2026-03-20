@@ -129,11 +129,23 @@ Permanently removes the object metadata and physical files.
 
 - **URL**: `/v2/admin/metrics-snapshot`
 - **Method**: `GET`
-- **Response**: metadata lookup counters + node discovery counters.
+- **Response**: metadata lookup counters + node discovery counters + tiering leader snapshot.
+
+### 8. Tiering Leader Snapshot
+
+- **URL**: `/v2/admin/leader`
+- **Method**: `GET`
+- **Response**:
+  - `lock_key`
+  - `leader` (or `null` when no leader heartbeat yet):
+    - `leader_id`
+    - `scanner_status` (`LEADING` / `STOPPED` / `LOCK_LOST`)
+    - `acquired_at`, `last_heartbeat_at`
+    - `last_heartbeat_ago_sec`, `is_stale`, `stale_sec`
 
 ## Admin v2 Endpoints
 
-### 8. List Tiering Tasks
+### 9. List Tiering Tasks
 
 - **URL**: `/v2/admin/tasks`
 - **Method**: `GET`
@@ -149,7 +161,7 @@ Permanently removes the object metadata and physical files.
   - `actions.retry_now` indicates if `POST /v2/admin/tasks/:id/retry-now` is allowed.
   - `actions.cancel` indicates if `POST /v2/admin/tasks/:id/cancel` is allowed.
 
-### 9. Requeue Task Immediately
+### 10. Requeue Task Immediately
 
 - **URL**: `/v2/admin/tasks/:id/retry-now`
 - **Method**: `POST`
@@ -160,7 +172,7 @@ Permanently removes the object metadata and physical files.
 - **Allowed states**: `PENDING`, `RUNNING`, `RETRY_WAIT`, `FAILED`.
 - **Not allowed**: `DONE`.
 
-### 10. Cancel Task
+### 11. Cancel Task
 
 - **URL**: `/v2/admin/tasks/:id/cancel`
 - **Method**: `POST`
@@ -174,7 +186,7 @@ Permanently removes the object metadata and physical files.
 - **Allowed states**: `PENDING`, `RUNNING`, `RETRY_WAIT`.
 - **Not allowed**: `DONE`.
 
-### 11. List Node Heartbeats
+### 12. List Node Heartbeats
 
 - **URL**: `/v2/admin/nodes`
 - **Method**: `GET`
@@ -185,7 +197,7 @@ Permanently removes the object metadata and physical files.
   - `free_bytes`, `io_queue_depth`, `cpu_load`
   - `stale_sec` (current staleness threshold).
 
-### 12. Get Object Metadata and Placement
+### 13. Get Object Metadata and Placement
 
 - **URL**: `/v2/admin/objects/:id`
 - **Method**: `GET`
@@ -197,7 +209,7 @@ Permanently removes the object metadata and physical files.
 
 ## v2 Generic Object Endpoints (Binary, Replication-First)
 
-### 13. Put Object (Binary)
+### 14. Put Object (Binary)
 
 - **URL**: `/v2/objects/:id`
 - **Method**: `PUT`
@@ -208,7 +220,7 @@ Permanently removes the object metadata and physical files.
 - **Notes**:
   - `Content-Type` is persisted in normalized metadata (`object_versions.content_type`) after running latest metadata migration.
 
-### 14. Get Object (Binary)
+### 15. Get Object (Binary)
 
 - **URL**: `/v2/objects/:id`
 - **Method**: `GET`

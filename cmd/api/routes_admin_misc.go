@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"os"
@@ -15,11 +16,12 @@ import (
 )
 
 type adminObservabilityRouteDeps struct {
-	metadataStatus      string
-	metadataErr         string
-	nodeDiscoveryActive string
-	getActiveNodeCount  func() int
-	metaStore           *meta.Store
+	metadataStatus       string
+	metadataErr          string
+	nodeDiscoveryActive  string
+	getActiveNodeCount   func() int
+	metaStore            *meta.Store
+	tieringLeaderLockKey int64
 }
 
 func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilityRouteDeps) {
@@ -51,6 +53,28 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 	})
 
 	router.GET("/v2/admin/metrics-snapshot", func(c *gin.Context) {
+		leader := gin.H{
+			"lock_key": config.TieringPolicyLeaderLockKey,
+			"enabled":  config.MetaEnabled && deps.metaStore != nil,
+		}
+		if config.MetaEnabled && deps.metaStore != nil {
+			leaderCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			state, err := deps.metaStore.GetTieringLeaderState(leaderCtx, deps.tieringLeaderLockKey)
+			cancel()
+			if err != nil {
+				leader["error"] = err.Error()
+			} else if state != nil {
+				lastBeatAgoSec := int(time.Since(state.LastHeartbeatAt).Seconds())
+				leader["leader_id"] = state.LeaderID
+				leader["scanner_status"] = state.ScannerStatus
+				leader["acquired_at"] = state.AcquiredAt
+				leader["last_heartbeat_at"] = state.LastHeartbeatAt
+				leader["last_heartbeat_ago_sec"] = lastBeatAgoSec
+				leader["is_stale"] = lastBeatAgoSec > config.TieringLeaderStaleSec
+				leader["stale_sec"] = config.TieringLeaderStaleSec
+			}
+		}
+
 		c.JSON(http.StatusOK, gin.H{
 			"metadata_lookup": metadataLookupSnapshot(),
 			"node_discovery": gin.H{
@@ -58,12 +82,49 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 				"active_source":     deps.nodeDiscoveryActive,
 				"active_node_count": deps.getActiveNodeCount(),
 			},
+			"tiering_leader": leader,
 			"timestamp_unix": time.Now().Unix(),
 		})
 	})
 }
 
 func registerAdminMetadataRoutes(router gin.IRoutes, metaStore *meta.Store) {
+	router.GET("/v2/admin/leader", func(c *gin.Context) {
+		if !config.MetaEnabled || metaStore == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
+			return
+		}
+
+		leaderCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		state, err := metaStore.GetTieringLeaderState(leaderCtx, config.TieringPolicyLeaderLockKey)
+		cancel()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if state == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"lock_key": config.TieringPolicyLeaderLockKey,
+				"leader":   nil,
+			})
+			return
+		}
+
+		lastBeatAgoSec := int(time.Since(state.LastHeartbeatAt).Seconds())
+		c.JSON(http.StatusOK, gin.H{
+			"lock_key": config.TieringPolicyLeaderLockKey,
+			"leader": gin.H{
+				"leader_id":              state.LeaderID,
+				"scanner_status":         state.ScannerStatus,
+				"acquired_at":            state.AcquiredAt,
+				"last_heartbeat_at":      state.LastHeartbeatAt,
+				"last_heartbeat_ago_sec": lastBeatAgoSec,
+				"is_stale":               lastBeatAgoSec > config.TieringLeaderStaleSec,
+				"stale_sec":              config.TieringLeaderStaleSec,
+			},
+		})
+	})
+
 	router.GET("/v2/admin/nodes", func(c *gin.Context) {
 		if !config.MetaEnabled || metaStore == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})

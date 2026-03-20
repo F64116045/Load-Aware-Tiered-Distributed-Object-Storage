@@ -145,11 +145,12 @@ func buildRouter(rt *appRuntime) *gin.Engine {
 	})
 
 	registerAdminObservabilityRoutes(router, adminObservabilityRouteDeps{
-		metadataStatus:      rt.metadataStatus,
-		metadataErr:         rt.metadataErr,
-		nodeDiscoveryActive: rt.nodeDiscoveryActive,
-		getActiveNodeCount:  getActiveNodeCount,
-		metaStore:           rt.metaStore,
+		metadataStatus:       rt.metadataStatus,
+		metadataErr:          rt.metadataErr,
+		nodeDiscoveryActive:  rt.nodeDiscoveryActive,
+		getActiveNodeCount:   getActiveNodeCount,
+		metaStore:            rt.metaStore,
+		tieringLeaderLockKey: config.TieringPolicyLeaderLockKey,
 	})
 
 	registerAdminTaskRoutes(router, adminTaskRouteDeps{

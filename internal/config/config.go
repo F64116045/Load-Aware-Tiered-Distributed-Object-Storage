@@ -60,6 +60,10 @@ var (
 	TieringPeriodSec = getEnvInt("TIERING_PERIOD_SEC", 300)
 	// MaxObjectsPerRound caps A1 periodic enqueue count per round.
 	MaxObjectsPerRound = getEnvInt("MAX_OBJECTS_PER_ROUND", 200)
+	// TieringPolicyLeaderLockKey is the advisory lock key for scanner leader election.
+	TieringPolicyLeaderLockKey = int64(getEnvInt("TIERING_POLICY_LEADER_LOCK_KEY", 42042))
+	// TieringLeaderStaleSec marks leader heartbeat stale threshold for admin observability.
+	TieringLeaderStaleSec = getEnvInt("TIERING_LEADER_STALE_SEC", 10)
 )
 
 func init() {

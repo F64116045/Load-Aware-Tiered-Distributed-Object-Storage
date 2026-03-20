@@ -29,6 +29,8 @@ Legend:
 | Tiering task queue (`tiering_tasks`) | `DONE` | enqueue/claim/retry/done lifecycle with SKIP LOCKED claim. |
 | Write-path enqueue for REPL->EC | `DONE` | replication writes enqueue deterministic `repl2ec:{object}:{version}` task IDs. |
 | Periodic A1 policy scanner | `DONE` | age-based scan marks `MIGRATION_PENDING` and enqueues tasks. |
+| Scanner leader election | `DONE` | PostgreSQL advisory lock gates scanner so only one worker instance enqueues periodic policy tasks. |
+| Scanner leader observability | `DONE` | `/v2/admin/leader` + metrics snapshot expose lock owner and heartbeat freshness. |
 | Tiering worker loop | `DONE` | worker + processor process `REPL_TO_EC` tasks. |
 | Post-promotion HOT GC task flow | `DONE` | `REPL_TO_EC` success enqueues `GC`; worker deletes HOT replicas and marks `replica_locations` as `DELETED`. |
 | REPL->EC processor (data + metadata promotion) | `PARTIAL` | core flow works; robustness/edge handling still needs hardening. |

@@ -75,6 +75,7 @@ services:
       - META_MAX_IDLE_CONNS=10
       - META_CONN_MAX_LIFETIME_SEC=300
       - NODE_HEARTBEAT_STALE_SEC=15
+      - TIERING_LEADER_STALE_SEC=10
     depends_on:
       postgres:
         condition: service_healthy
@@ -241,6 +242,9 @@ services:
       - META_CONN_MAX_LIFETIME_SEC=300
       - TIERING_WORKER_POLL_SEC=2
       - TIERING_POLICY_PERIOD_SEC=300
+      - TIERING_POLICY_LEADER_RETRY_SEC=2
+      - TIERING_POLICY_LEADER_LOCK_KEY=42042
+      - TIERING_LEADER_STALE_SEC=10
       - TIERING_WORKER_TASK_TYPE=ALL
     depends_on:
       postgres:
