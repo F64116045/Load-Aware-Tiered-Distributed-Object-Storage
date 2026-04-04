@@ -33,6 +33,7 @@ Legend:
 | Scanner leader observability | `DONE` | `/v2/admin/leader` + metrics snapshot expose lock owner and heartbeat freshness. |
 | Tiering worker loop | `DONE` | worker + processor process `REPL_TO_EC` tasks. |
 | Post-promotion HOT GC task flow | `DONE` | `REPL_TO_EC` success enqueues `GC`; worker deletes HOT replicas and marks `replica_locations` as `DELETED`. |
+| Task retry cap + terminal failure | `DONE` | worker enforces `TIERING_TASK_MAX_RETRY_COUNT`; over-cap tasks are marked `FAILED` with actionable `last_error`. |
 | REPL->EC processor (data + metadata promotion) | `PARTIAL` | core flow works; robustness/edge handling still needs hardening. |
 | Admin API `/v2/admin/tasks` | `DONE` | filters, state summary, and action hints included. |
 | Admin API task actions (`retry-now`, `cancel`) | `DONE` | manual unstick and cancel endpoints live. |
@@ -44,14 +45,10 @@ Legend:
 
 ## Must-Do Backlog (Required)
 
-1. Add retry cap + terminal failure semantics for tiering tasks:
-   - define `MAX_RETRY_COUNT`
-   - move task to `FAILED` when retry cap is reached
-   - keep actionable `last_error` for admin debugging
-2. Implement v2 repair/reconciliation worker:
+1. Implement v2 repair/reconciliation worker:
    - replace removed legacy healer capabilities
    - repair missing replicas/shards based on PostgreSQL metadata state
-3. Complete policy variants beyond A1:
+2. Complete policy variants beyond A1:
    - implement A2/A3 and threshold trigger path from spec
    - keep benchmark configs reproducible across variants
 

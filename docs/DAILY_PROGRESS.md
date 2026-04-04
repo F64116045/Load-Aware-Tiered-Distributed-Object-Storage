@@ -845,3 +845,20 @@ Architecture and requirements stay in `docs/SPEC_V2_LOAD_AWARE_TIERED_OBJECT_STO
    - `TIERING_LEADER_STALE_SEC`
 6. Verification:
    - `go test ./...` passes
+
+## 2026-03-20 (Milestone 7 retry cap + terminal FAILED, step 46)
+
+1. Added automatic retry cap control:
+   - new config `TIERING_TASK_MAX_RETRY_COUNT` (default `8`)
+   - worker checks `retry_count + 1` before scheduling next retry
+2. Added terminal failure transition:
+   - new metadata method `MarkTieringTaskFailed(...)`
+   - when retry cap is reached, task becomes `FAILED` with `last_error` preserved
+3. Improved admin task observability:
+   - `/v2/admin/tasks` response now includes:
+     - top-level `max_retry_count`
+     - per-task `max_retry_count` and `retry_limit_reached`
+4. Compose defaults:
+   - `tiering_worker` env includes `TIERING_TASK_MAX_RETRY_COUNT=8`
+5. Verification:
+   - `go test ./...` passes

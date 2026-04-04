@@ -157,7 +157,9 @@ Permanently removes the object metadata and physical files.
 **Response fields**:
 - `filters`: effective query filters.
 - `state_counts`: aggregated counts by state (filtered by `task_type` if provided).
+- `max_retry_count`: automatic retry cap used by worker.
 - `tasks[]`: task records with timestamps and action hints.
+  - `retry_count`, `max_retry_count`, `retry_limit_reached`.
   - `actions.retry_now` indicates if `POST /v2/admin/tasks/:id/retry-now` is allowed.
   - `actions.cancel` indicates if `POST /v2/admin/tasks/:id/cancel` is allowed.
 
