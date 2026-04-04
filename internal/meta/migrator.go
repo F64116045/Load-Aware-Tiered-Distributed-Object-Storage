@@ -2,6 +2,7 @@ package meta
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"fmt"
 	"path/filepath"
@@ -20,11 +21,13 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 // Migrator applies embedded SQL migrations.
 type Migrator struct {
-	store *Store
+	store interface {
+		DB() *sql.DB
+	}
 }
 
 // NewMigrator creates a migration runner.
-func NewMigrator(store *Store) *Migrator {
+func NewMigrator(store interface{ DB() *sql.DB }) *Migrator {
 	return &Migrator{store: store}
 }
 

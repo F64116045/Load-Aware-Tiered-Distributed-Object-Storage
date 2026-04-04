@@ -1,0 +1,122 @@
+package meta
+
+import (
+	"context"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestRPCClientServerRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewRocksStore(Config{
+		Enabled: true,
+		Backend: "rocksdb",
+		DSN:     filepath.Join(t.TempDir(), "meta-rocks"),
+	})
+	if err != nil {
+		t.Fatalf("new rocks store failed: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	rpcServer := NewRPCServer(store, "")
+	t.Cleanup(func() { _ = rpcServer.Close() })
+
+	srv := httptest.NewServer(rpcServer.Handler())
+	t.Cleanup(srv.Close)
+
+	client := NewRPCClient(srv.URL, "")
+	ctx := context.Background()
+
+	if err := client.Ping(ctx); err != nil {
+		t.Fatalf("rpc ping failed: %v", err)
+	}
+
+	if err := client.UpsertNodeHeartbeat(ctx, "node-rpc", 100, 0, 0.1, "UP"); err != nil {
+		t.Fatalf("upsert node heartbeat failed: %v", err)
+	}
+	nodes, err := client.ListHealthyNodeIDs(ctx, 60)
+	if err != nil {
+		t.Fatalf("list healthy nodes failed: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0] != "node-rpc" {
+		t.Fatalf("unexpected healthy nodes: %v", nodes)
+	}
+
+	objectID := "obj-rpc"
+	version := int64(303)
+	if err := client.UpsertNormalizedMetadata(ctx, objectID, map[string]interface{}{
+		"strategy":      "replication",
+		"hot_version":   version,
+		"cold_hash":     "hash-303",
+		"replica_nodes": []string{"node-rpc"},
+	}); err != nil {
+		t.Fatalf("upsert metadata failed: %v", err)
+	}
+
+	taskID := "repl2ec:obj-rpc:303"
+	if err := client.EnqueueTieringTask(ctx, taskID, objectID, version, "REPL_TO_EC", 100, time.Now()); err != nil {
+		t.Fatalf("enqueue task failed: %v", err)
+	}
+	repairCount, err := client.EnqueueRepairCandidates(ctx, 10)
+	if err != nil {
+		t.Fatalf("enqueue repair candidates failed: %v", err)
+	}
+	if repairCount <= 0 {
+		t.Fatalf("expected repair candidates to be enqueued, got=%d", repairCount)
+	}
+	task, err := client.ClaimNextTieringTask(ctx, "REPL_TO_EC")
+	if err != nil {
+		t.Fatalf("claim task failed: %v", err)
+	}
+	if task == nil || task.TaskID != taskID {
+		t.Fatalf("unexpected claimed task: %+v", task)
+	}
+
+	lock, acquired, err := client.TryAcquireLeaderLock(ctx, 42042)
+	if err != nil {
+		t.Fatalf("try acquire leader lock failed: %v", err)
+	}
+	if !acquired || lock == nil {
+		t.Fatalf("expected acquired leader lock")
+	}
+	if err := lock.Ping(ctx); err != nil {
+		t.Fatalf("leader lock ping failed: %v", err)
+	}
+	if err := lock.Release(ctx); err != nil {
+		t.Fatalf("leader lock release failed: %v", err)
+	}
+}
+
+func TestRPCClientServerAuthToken(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewRocksStore(Config{
+		Enabled: true,
+		Backend: "rocksdb",
+		DSN:     filepath.Join(t.TempDir(), "meta-rocks-auth"),
+	})
+	if err != nil {
+		t.Fatalf("new rocks store failed: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	rpcServer := NewRPCServer(store, "secret-token")
+	t.Cleanup(func() { _ = rpcServer.Close() })
+
+	srv := httptest.NewServer(rpcServer.Handler())
+	t.Cleanup(srv.Close)
+
+	ctx := context.Background()
+	unauthorized := NewRPCClient(srv.URL, "")
+	if err := unauthorized.Ping(ctx); err == nil {
+		t.Fatalf("expected unauthorized rpc call to fail")
+	}
+
+	authorized := NewRPCClient(srv.URL, "secret-token")
+	if err := authorized.Ping(ctx); err != nil {
+		t.Fatalf("expected authorized rpc ping success, got: %v", err)
+	}
+}

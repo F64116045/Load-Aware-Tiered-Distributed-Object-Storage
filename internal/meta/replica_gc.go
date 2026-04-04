@@ -47,6 +47,34 @@ ORDER BY node_id ASC
 	return out, nil
 }
 
+// UpsertReplicaLocations ensures replica rows exist as ACTIVE for one object version.
+func (s *Store) UpsertReplicaLocations(ctx context.Context, objectID string, version int64, nodeIDs []string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	if len(nodeIDs) == 0 {
+		return nil
+	}
+
+	const q = `
+INSERT INTO replica_locations (object_id, version, node_id, path, status)
+VALUES ($1, $2, $3, $4, 'ACTIVE')
+ON CONFLICT (object_id, version, node_id)
+DO UPDATE SET
+	path = EXCLUDED.path,
+	status = EXCLUDED.status
+`
+	for _, nodeID := range nodeIDs {
+		if nodeID == "" {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, q, objectID, version, nodeID, objectID); err != nil {
+			return fmt.Errorf("upsert replica locations failed: %w", err)
+		}
+	}
+	return nil
+}
+
 // MarkReplicaLocationsDeleted marks selected object-version replicas as DELETED.
 func (s *Store) MarkReplicaLocationsDeleted(ctx context.Context, objectID string, version int64, nodeIDs []string) error {
 	if s == nil || s.db == nil {

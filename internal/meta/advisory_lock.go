@@ -13,6 +13,8 @@ type AdvisoryLock struct {
 	conn *sql.Conn
 }
 
+var _ LeaderLock = (*AdvisoryLock)(nil)
+
 // TryAcquireAdvisoryLock attempts to acquire a session-level advisory lock.
 // Returns (nil, false, nil) when lock is held by another session.
 func (s *Store) TryAcquireAdvisoryLock(ctx context.Context, key int64) (*AdvisoryLock, bool, error) {
@@ -39,6 +41,15 @@ func (s *Store) TryAcquireAdvisoryLock(ctx context.Context, key int64) (*Advisor
 		key:  key,
 		conn: conn,
 	}, true, nil
+}
+
+// TryAcquireLeaderLock implements Repository by adapting advisory lock to LeaderLock.
+func (s *Store) TryAcquireLeaderLock(ctx context.Context, key int64) (LeaderLock, bool, error) {
+	lock, acquired, err := s.TryAcquireAdvisoryLock(ctx, key)
+	if err != nil || !acquired {
+		return nil, acquired, err
+	}
+	return lock, true, nil
 }
 
 // Ping checks whether the underlying lock session is still alive.
