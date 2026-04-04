@@ -92,6 +92,69 @@ func TestAdminTasksList_Success(t *testing.T) {
 	}
 }
 
+func TestAdminTasksList_ObjectFilter(t *testing.T) {
+	now := time.Unix(1234, 0)
+	router := newAdminTasksTestRouter(adminTaskRouteDeps{
+		metadataAvailable: func() bool { return true },
+		listTasks: func(ctx context.Context, state, taskType string, limit int) ([]meta.TieringTask, error) {
+			if state != "" || taskType != "REPL_TO_EC" || limit != 1000 {
+				t.Fatalf("unexpected filters state=%q taskType=%q limit=%d", state, taskType, limit)
+			}
+			return []meta.TieringTask{
+				{
+					TaskID:      "t1",
+					ObjectID:    "obj-target",
+					Version:     1,
+					TaskType:    "REPL_TO_EC",
+					TaskState:   "PENDING",
+					Priority:    100,
+					RetryCount:  0,
+					ScheduledAt: now,
+				},
+				{
+					TaskID:      "t2",
+					ObjectID:    "obj-other",
+					Version:     1,
+					TaskType:    "REPL_TO_EC",
+					TaskState:   "PENDING",
+					Priority:    100,
+					RetryCount:  0,
+					ScheduledAt: now,
+				},
+			}, nil
+		},
+		listStateCounts: func(ctx context.Context, taskType string) (map[string]int64, error) {
+			return map[string]int64{"PENDING": 2}, nil
+		},
+		requeueNow: func(ctx context.Context, taskID string) (bool, error) { return false, nil },
+		cancelTask: func(ctx context.Context, taskID, reason string) (bool, error) { return false, nil },
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/admin/tasks?task_type=REPL_TO_EC&object_id=obj-target", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d got %d body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response failed: %v", err)
+	}
+	if int(resp["count"].(float64)) != 1 {
+		t.Fatalf("expected count=1 got %v", resp["count"])
+	}
+	tasks := resp["tasks"].([]interface{})
+	if len(tasks) != 1 {
+		t.Fatalf("expected one task got %d", len(tasks))
+	}
+	task := tasks[0].(map[string]interface{})
+	if task["object_id"] != "obj-target" {
+		t.Fatalf("unexpected object_id: %v", task["object_id"])
+	}
+}
+
 func TestAdminTasksList_InvalidLimitAndUnavailable(t *testing.T) {
 	t.Run("invalid_limit", func(t *testing.T) {
 		router := newAdminTasksTestRouter(adminTaskRouteDeps{

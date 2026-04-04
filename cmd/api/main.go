@@ -85,9 +85,9 @@ func replaceActiveNodes(nodeURLs []string) {
 	NodeListLock.Unlock()
 }
 
-// watchNodesFromPostgres polls node heartbeats and updates active node list.
-func watchNodesFromPostgres(ctx context.Context, metaStore *meta.Store) {
-	log.Printf("%s[API] Service Discovery started. Source: postgres%s\n", config.Colors["CYAN"], config.Colors["RESET"])
+// watchNodesFromMetadata polls node heartbeats and updates active node list.
+func watchNodesFromMetadata(ctx context.Context, metaStore meta.Repository) {
+	log.Printf("%s[API] Service Discovery started. Source: metadata_repository%s\n", config.Colors["CYAN"], config.Colors["RESET"])
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -103,7 +103,7 @@ func watchNodesFromPostgres(ctx context.Context, metaStore *meta.Store) {
 
 		nodeURLs, err := metaStore.ListHealthyNodeIDs(loadCtx, config.NodeHeartbeatStaleSec)
 		if err != nil {
-			log.Printf("%s[API] PostgreSQL node fetch failed: %v%s\n", config.Colors["RED"], err, config.Colors["RESET"])
+			log.Printf("%s[API] metadata node fetch failed: %v%s\n", config.Colors["RED"], err, config.Colors["RESET"])
 			return
 		}
 		replaceActiveNodes(nodeURLs)
@@ -141,14 +141,33 @@ func getDynamicNodes(c *gin.Context) ([]string, []string, error) {
 	sort.Strings(allNodes)
 	NodeListLock.RUnlock()
 
+	replicaTarget := config.HotReplicaCount
+	if replicaTarget <= 0 {
+		replicaTarget = 3
+	}
+	writeQuorum := config.HotWriteQuorum
+	if writeQuorum <= 0 {
+		writeQuorum = 1
+	}
+	if writeQuorum > replicaTarget {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":  "Service unavailable: invalid hot write configuration",
+			"detail": fmt.Sprintf("HOT_WRITE_QUORUM(%d) cannot exceed HOT_REPLICA_COUNT(%d)", writeQuorum, replicaTarget),
+		})
+		return nil, nil, fmt.Errorf("invalid hot write configuration")
+	}
+
 	replicaNodes := allNodes
-	if len(allNodes) > 3 {
-		replicaNodes = allNodes[:3]
+	if len(allNodes) > replicaTarget {
+		replicaNodes = allNodes[:replicaTarget]
 	}
 	ecNodes := allNodes
 
-	if len(replicaNodes) < 3 {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service unavailable: Insufficient replica nodes (need 3)"})
+	if len(replicaNodes) < replicaTarget {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":  "Service unavailable: Insufficient replica nodes",
+			"detail": fmt.Sprintf("need %d healthy replica nodes", replicaTarget),
+		})
 		return nil, nil, fmt.Errorf("service unavailable")
 	}
 	if len(ecNodes) < config.K+config.M {
@@ -183,7 +202,7 @@ func PanicRecoveryMiddleware(c *gin.Context) {
 	c.Next()
 }
 
-func loadMetadata(ctx context.Context, key string, metaStore *meta.Store) (map[string]interface{}, string, error) {
+func loadMetadata(ctx context.Context, key string, metaStore meta.Repository) (map[string]interface{}, string, error) {
 	if !config.MetaEnabled || metaStore == nil {
 		recordMetadataLookupError()
 		return nil, "", fmt.Errorf("metadata store unavailable")
@@ -334,7 +353,9 @@ func registerAdminTaskRoutes(router gin.IRoutes, deps adminTaskRouteDeps) {
 
 		state := strings.TrimSpace(c.Query("state"))
 		taskType := strings.TrimSpace(c.Query("task_type"))
+		objectID := strings.TrimSpace(c.Query("object_id"))
 		limit := 100
+		limitSpecified := false
 		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
 			parsed, err := strconv.Atoi(raw)
 			if err != nil || parsed <= 0 {
@@ -342,12 +363,27 @@ func registerAdminTaskRoutes(router gin.IRoutes, deps adminTaskRouteDeps) {
 				return
 			}
 			limit = parsed
+			limitSpecified = true
+		}
+		if objectID != "" && !limitSpecified {
+			// When filtering by object_id, fetch a larger window for admin troubleshooting.
+			limit = 1000
 		}
 
 		tasks, err := deps.listTasks(c.Request.Context(), state, taskType, limit)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
+		}
+		if objectID != "" {
+			filtered := make([]meta.TieringTask, 0, len(tasks))
+			for _, t := range tasks {
+				if t.ObjectID != objectID {
+					continue
+				}
+				filtered = append(filtered, t)
+			}
+			tasks = filtered
 		}
 		stateCounts, err := deps.listStateCounts(c.Request.Context(), taskType)
 		if err != nil {
@@ -371,18 +407,21 @@ func registerAdminTaskRoutes(router gin.IRoutes, deps adminTaskRouteDeps) {
 			if t.FinishedAt.Valid {
 				finishedAt = t.FinishedAt.Time
 			}
+			retryLimitReached := t.RetryCount >= config.TieringTaskMaxRetryCount
 			out = append(out, gin.H{
-				"task_id":      t.TaskID,
-				"object_id":    t.ObjectID,
-				"version":      t.Version,
-				"task_type":    t.TaskType,
-				"task_state":   t.TaskState,
-				"priority":     t.Priority,
-				"retry_count":  t.RetryCount,
-				"last_error":   lastErr,
-				"scheduled_at": t.ScheduledAt,
-				"started_at":   startedAt,
-				"finished_at":  finishedAt,
+				"task_id":             t.TaskID,
+				"object_id":           t.ObjectID,
+				"version":             t.Version,
+				"task_type":           t.TaskType,
+				"task_state":          t.TaskState,
+				"priority":            t.Priority,
+				"retry_count":         t.RetryCount,
+				"max_retry_count":     config.TieringTaskMaxRetryCount,
+				"retry_limit_reached": retryLimitReached,
+				"last_error":          lastErr,
+				"scheduled_at":        t.ScheduledAt,
+				"started_at":          startedAt,
+				"finished_at":         finishedAt,
 				"actions": gin.H{
 					"retry_now": retryNowAllowed,
 					"cancel":    cancelAllowed,
@@ -393,12 +432,14 @@ func registerAdminTaskRoutes(router gin.IRoutes, deps adminTaskRouteDeps) {
 		c.JSON(http.StatusOK, gin.H{
 			"count": len(out),
 			"filters": gin.H{
+				"object_id": objectID,
 				"state":     state,
 				"task_type": taskType,
 				"limit":     limit,
 			},
-			"state_counts": stateCounts,
-			"tasks":        out,
+			"state_counts":    stateCounts,
+			"max_retry_count": config.TieringTaskMaxRetryCount,
+			"tasks":           out,
 		})
 	})
 
