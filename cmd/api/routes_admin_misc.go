@@ -20,7 +20,7 @@ type adminObservabilityRouteDeps struct {
 	metadataErr          string
 	nodeDiscoveryActive  string
 	getActiveNodeCount   func() int
-	metaStore            *meta.Store
+	metaStore            meta.Repository
 	tieringLeaderLockKey int64
 }
 
@@ -39,13 +39,15 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 				"enabled":      config.MetaEnabled,
 				"status":       deps.metadataStatus,
 				"driver":       config.MetaDriver,
-				"source":       "postgres",
+				"source":       metadataSourceLabel(),
+				"backend":      config.MetaBackend,
+				"endpoint":     strings.TrimSpace(config.MetaEndpoint),
 				"auto_migrate": config.MetaAutoMigrate,
 				"error":        deps.metadataErr,
 				"lookup":       metadataLookupSnapshot(),
 			},
 			"node_discovery": gin.H{
-				"configured_source": "postgres",
+				"configured_source": metadataSourceLabel(),
 				"active_source":     deps.nodeDiscoveryActive,
 				"stale_sec":         config.NodeHeartbeatStaleSec,
 			},
@@ -78,7 +80,7 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 		c.JSON(http.StatusOK, gin.H{
 			"metadata_lookup": metadataLookupSnapshot(),
 			"node_discovery": gin.H{
-				"configured_source": "postgres",
+				"configured_source": metadataSourceLabel(),
 				"active_source":     deps.nodeDiscoveryActive,
 				"active_node_count": deps.getActiveNodeCount(),
 			},
@@ -88,7 +90,7 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 	})
 }
 
-func registerAdminMetadataRoutes(router gin.IRoutes, metaStore *meta.Store) {
+func registerAdminMetadataRoutes(router gin.IRoutes, metaStore meta.Repository) {
 	router.GET("/v2/admin/leader", func(c *gin.Context) {
 		if !config.MetaEnabled || metaStore == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "metadata store unavailable"})
@@ -167,7 +169,7 @@ func registerAdminMetadataRoutes(router gin.IRoutes, metaStore *meta.Store) {
 			"count":     len(out),
 			"stale_sec": config.NodeHeartbeatStaleSec,
 			"nodes":     out,
-			"source":    "postgres",
+			"source":    metadataSourceLabel(),
 			"generated": now.Unix(),
 		})
 	})
@@ -252,4 +254,15 @@ func nullStringOrNil(v sql.NullString) interface{} {
 		return nil
 	}
 	return v.String
+}
+
+func metadataSourceLabel() string {
+	if strings.TrimSpace(config.MetaEndpoint) != "" {
+		return "meta_service"
+	}
+	backend := strings.TrimSpace(config.MetaBackend)
+	if backend == "" {
+		return "postgres"
+	}
+	return backend
 }

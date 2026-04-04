@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,7 +21,7 @@ import (
 )
 
 type appRuntime struct {
-	metaStore *meta.Store
+	metaStore meta.Repository
 
 	utilsSvc      interfaces.IUtilsSvc
 	readSvc       interfaces.IReadService
@@ -35,11 +36,15 @@ type appRuntime struct {
 func initAppRuntime() (*appRuntime, func()) {
 	rt := &appRuntime{
 		metadataStatus:      "disabled",
-		nodeDiscoveryActive: "postgres",
+		nodeDiscoveryActive: "metadata",
 	}
 	httpClient := httpclient.GetClient()
 
-	metaStore, err := meta.NewStore(meta.Config{
+	metaStore, err := meta.NewRepository(meta.Config{
+		Backend:         config.MetaBackend,
+		Endpoint:        config.MetaEndpoint,
+		RequireEndpoint: config.MetaRequireEndpoint,
+		AuthToken:       config.MetaRPCAuthToken,
 		Enabled:         config.MetaEnabled,
 		Driver:          config.MetaDriver,
 		DSN:             config.MetaDSN,
@@ -48,6 +53,9 @@ func initAppRuntime() (*appRuntime, func()) {
 		ConnMaxLifetime: config.MetaConnMaxLifetime,
 	})
 	if err != nil {
+		if config.MetaEnabled && config.MetaRequireEndpoint {
+			log.Fatalf("[API] Metadata init failed with META_REQUIRE_ENDPOINT=true: %v", err)
+		}
 		rt.metadataStatus = "down"
 		rt.metadataErr = err.Error()
 		log.Printf("[API] Metadata init failed: %v", err)
@@ -56,12 +64,15 @@ func initAppRuntime() (*appRuntime, func()) {
 		pingErr := metaStore.Ping(pingCtx)
 		pingCancel()
 		if pingErr != nil {
+			if config.MetaRequireEndpoint {
+				log.Fatalf("[API] Metadata ping failed with META_REQUIRE_ENDPOINT=true: %v", pingErr)
+			}
 			rt.metadataStatus = "down"
 			rt.metadataErr = pingErr.Error()
 			log.Printf("[API] Metadata ping failed: %v", pingErr)
 		} else {
 			rt.metadataStatus = "up"
-			if config.MetaAutoMigrate {
+			if config.MetaAutoMigrate && strings.EqualFold(config.MetaBackend, "postgres") && strings.TrimSpace(config.MetaEndpoint) == "" {
 				migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				migrateErr := meta.NewMigrator(metaStore).Up(migrateCtx)
 				migrateCancel()
@@ -96,10 +107,10 @@ func startNodeDiscovery(ctx context.Context, rt *appRuntime) {
 		return
 	}
 	if config.MetaEnabled && rt.metaStore != nil {
-		go watchNodesFromPostgres(ctx, rt.metaStore)
+		go watchNodesFromMetadata(ctx, rt.metaStore)
 		return
 	}
-	rt.nodeDiscoveryActive = "postgres_unavailable"
+	rt.nodeDiscoveryActive = "metadata_unavailable"
 	log.Printf("%s[API] metadata unavailable; node discovery not started%s\n", config.Colors["YELLOW"], config.Colors["RESET"])
 }
 
