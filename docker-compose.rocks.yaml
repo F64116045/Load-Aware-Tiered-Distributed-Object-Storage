@@ -1,0 +1,170 @@
+services:
+  # Disable PostgreSQL-only helpers when running Rocks metadata backend.
+  postgres:
+    profiles: ["postgres"]
+
+  meta_migrate:
+    profiles: ["postgres"]
+
+  # Switch metadata service backend to RocksDB/Pebble.
+  meta_service:
+    environment:
+      - META_ENABLED=true
+      - META_REQUIRE_ENDPOINT=false
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=rocksdb
+      - META_AUTO_MIGRATE=false
+      - META_DRIVER=
+      - META_DSN=/var/lib/meta/rocksdb
+      - META_MAX_OPEN_CONNS=20
+      - META_MAX_IDLE_CONNS=10
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_SERVICE_PORT=8091
+    depends_on: []
+    volumes:
+      - meta_rocks_data:/var/lib/meta
+
+  # Runtime services still talk to meta_service via META_ENDPOINT.
+  # Keep META_BACKEND aligned for observability/debug readability.
+  api:
+    environment:
+      - NODE_NAMES_CSV=storage_node_1,storage_node_2,storage_node_3,storage_node_4,storage_node_5,storage_node_6
+      - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=rocksdb
+      - META_DRIVER=
+      - META_DSN=
+      - META_MAX_OPEN_CONNS=20
+      - META_MAX_IDLE_CONNS=10
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - HOT_REPLICA_COUNT=3
+      - HOT_WRITE_QUORUM=2
+      - NODE_HEARTBEAT_STALE_SEC=15
+      - TIERING_LEADER_STALE_SEC=10
+
+  storage_node_1:
+    environment:
+      - NODE_NAME=storage_node_1
+      - NODE_PORT=8001
+      - STORAGE_DIR=/data/node1
+      - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=rocksdb
+      - META_DRIVER=
+      - META_DSN=
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
+
+  storage_node_2:
+    environment:
+      - NODE_NAME=storage_node_2
+      - NODE_PORT=8002
+      - STORAGE_DIR=/data/node2
+      - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=rocksdb
+      - META_DRIVER=
+      - META_DSN=
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
+
+  storage_node_3:
+    environment:
+      - NODE_NAME=storage_node_3
+      - NODE_PORT=8003
+      - STORAGE_DIR=/data/node3
+      - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=rocksdb
+      - META_DRIVER=
+      - META_DSN=
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
+
+  storage_node_4:
+    environment:
+      - NODE_NAME=storage_node_4
+      - NODE_PORT=8004
+      - STORAGE_DIR=/data/node4
+      - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=rocksdb
+      - META_DRIVER=
+      - META_DSN=
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
+
+  storage_node_5:
+    environment:
+      - NODE_NAME=storage_node_5
+      - NODE_PORT=8005
+      - STORAGE_DIR=/data/node5
+      - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=rocksdb
+      - META_DRIVER=
+      - META_DSN=
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
+
+  storage_node_6:
+    environment:
+      - NODE_NAME=storage_node_6
+      - NODE_PORT=8006
+      - STORAGE_DIR=/data/node6
+      - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=rocksdb
+      - META_DRIVER=
+      - META_DSN=
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - NODE_HEARTBEAT_INTERVAL_SEC=3
+
+  tiering_worker:
+    environment:
+      - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=rocksdb
+      - META_DRIVER=
+      - META_DSN=
+      - META_MAX_OPEN_CONNS=10
+      - META_MAX_IDLE_CONNS=5
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - TIERING_WORKER_POLL_SEC=2
+      - TIERING_POLICY_PERIOD_SEC=300
+      - TIERING_POLICY_LEADER_RETRY_SEC=2
+      - TIERING_POLICY_LEADER_LOCK_KEY=42042
+      - TIERING_LEADER_STALE_SEC=10
+      - TIERING_TASK_MAX_RETRY_COUNT=8
+      - TIERING_WORKER_TASK_TYPE=ALL
+
+volumes:
+  meta_rocks_data:

@@ -36,8 +36,16 @@ const (
 var ExpectedNodeNames = map[string]bool{}
 
 var (
-	// MetaEnabled controls whether PostgreSQL-backed metadata service is enabled.
+	// MetaEnabled controls whether metadata repository integration is enabled.
 	MetaEnabled = getEnvBool("META_ENABLED", false)
+	// MetaEndpoint points to remote metadata service (RPC). Empty means local backend.
+	MetaEndpoint = getEnv("META_ENDPOINT", "")
+	// MetaRequireEndpoint enforces remote metadata service usage when metadata is enabled.
+	MetaRequireEndpoint = getEnvBool("META_REQUIRE_ENDPOINT", false)
+	// MetaRPCAuthToken is an optional shared-secret token for metadata RPC calls.
+	MetaRPCAuthToken = getEnv("META_RPC_AUTH_TOKEN", "")
+	// MetaBackend selects metadata backend implementation.
+	MetaBackend = getEnv("META_BACKEND", "postgres")
 	// MetaAutoMigrate controls whether API runs metadata migration on startup.
 	MetaAutoMigrate = getEnvBool("META_AUTO_MIGRATE", false)
 	// MetaDriver is the database/sql driver name.
@@ -54,12 +62,26 @@ var (
 	NodeHeartbeatInterval = time.Duration(getEnvInt("NODE_HEARTBEAT_INTERVAL_SEC", 3)) * time.Second
 	// NodeHeartbeatStaleSec defines staleness threshold when listing healthy nodes.
 	NodeHeartbeatStaleSec = getEnvInt("NODE_HEARTBEAT_STALE_SEC", 15)
+	// HotReplicaCount is the number of replicas targeted by foreground hot writes.
+	HotReplicaCount = getEnvInt("HOT_REPLICA_COUNT", 3)
+	// HotWriteQuorum is the minimum number of successful replica writes for ACK.
+	HotWriteQuorum = getEnvInt("HOT_WRITE_QUORUM", 2)
 	// AgeThresholdSec defines when HOT objects become eligible for tiering (A1 baseline).
 	AgeThresholdSec = getEnvInt("AGE_THRESHOLD_SEC", 3600)
 	// TieringPeriodSec defines periodic policy scan interval.
 	TieringPeriodSec = getEnvInt("TIERING_PERIOD_SEC", 300)
 	// MaxObjectsPerRound caps A1 periodic enqueue count per round.
 	MaxObjectsPerRound = getEnvInt("MAX_OBJECTS_PER_ROUND", 200)
+	// RepairScanEnabled controls periodic repair candidate scanning.
+	RepairScanEnabled = getEnvBool("REPAIR_SCAN_ENABLED", true)
+	// RepairMaxObjectsPerRound caps periodic repair enqueue count per round.
+	RepairMaxObjectsPerRound = getEnvInt("REPAIR_MAX_OBJECTS_PER_ROUND", 200)
+	// TieringTaskMaxRetryCount caps automatic retries before task becomes FAILED.
+	TieringTaskMaxRetryCount = getEnvInt("TIERING_TASK_MAX_RETRY_COUNT", 8)
+	// TieringPolicyLeaderLockKey is the advisory lock key for scanner leader election.
+	TieringPolicyLeaderLockKey = int64(getEnvInt("TIERING_POLICY_LEADER_LOCK_KEY", 42042))
+	// TieringLeaderStaleSec marks leader heartbeat stale threshold for admin observability.
+	TieringLeaderStaleSec = getEnvInt("TIERING_LEADER_STALE_SEC", 10)
 )
 
 func init() {

@@ -3,12 +3,11 @@
 set -euo pipefail
 
 API_BASE="${API_BASE:-http://127.0.0.1:8000}"
-PG_CONTAINER="${PG_CONTAINER:-postgres}"
-PG_USER="${PG_USER:-metadata}"
-PG_DB="${PG_DB:-metadata}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-120}"
 START_STACK="${START_STACK:-true}"
 FORCE_TASK_NOW="${FORCE_TASK_NOW:-true}"
+COMPOSE_FILES="${COMPOSE_FILES:-docker-compose.yaml}"
+RUN_META_MIGRATE="${RUN_META_MIGRATE:-auto}" # auto|true|false
 
 KEY="v2-smoke-$(date +%s)"
 PAYLOAD_FILE="$(mktemp)"
@@ -20,9 +19,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sql() {
-  local q="$1"
-  docker compose exec -T "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" -t -A -c "${q}"
+dc() {
+  local args=()
+  local f
+  for f in ${COMPOSE_FILES}; do
+    args+=(-f "${f}")
+  done
+  docker compose "${args[@]}" "$@"
+}
+
+auto_should_migrate() {
+  # Rocks profile does not need SQL migrations.
+  if [[ "${COMPOSE_FILES}" == *"rocks"* ]]; then
+    return 1
+  fi
+  return 0
 }
 
 wait_api_health() {
@@ -36,12 +47,32 @@ wait_api_health() {
   return 1
 }
 
-echo "[0/9] Prepare metadata schema"
-docker compose run --rm meta_migrate >/dev/null
+find_task_id_by_object() {
+  local task_type="$1"
+  local object_id="$2"
+  local resp
+  resp="$(curl -sS -f "${API_BASE}/v2/admin/tasks?task_type=${task_type}&object_id=${object_id}&limit=1000")"
+  printf "%s" "${resp}" | grep -o '"task_id":"[^"]*"' | head -n1 | cut -d'"' -f4
+}
+
+find_task_state_by_object() {
+  local task_type="$1"
+  local object_id="$2"
+  local resp
+  resp="$(curl -sS -f "${API_BASE}/v2/admin/tasks?task_type=${task_type}&object_id=${object_id}&limit=1000")"
+  printf "%s" "${resp}" | grep -o '"task_state":"[^"]*"' | head -n1 | cut -d'"' -f4
+}
+
+if [[ "${RUN_META_MIGRATE}" == "true" ]] || ([[ "${RUN_META_MIGRATE}" == "auto" ]] && auto_should_migrate); then
+  echo "[0/9] Prepare metadata schema"
+  dc run --rm meta_migrate >/dev/null
+else
+  echo "[0/9] Skip metadata migrate"
+fi
 
 if [[ "${START_STACK}" == "true" ]]; then
   echo "[1/9] Start stack"
-  docker compose up -d --build postgres storage_node_1 storage_node_2 storage_node_3 storage_node_4 storage_node_5 storage_node_6 api tiering_worker nginx >/dev/null
+  dc up -d --build meta_service storage_node_1 storage_node_2 storage_node_3 storage_node_4 storage_node_5 storage_node_6 api tiering_worker nginx >/dev/null
 else
   echo "[1/9] Skip stack startup (START_STACK=false)"
 fi
@@ -61,7 +92,15 @@ curl -sS -f -X PUT \
   --data-binary @"${PAYLOAD_FILE}" >/dev/null
 
 echo "[4/9] Verify tiering task exists"
-TASK_ID="$(sql "SELECT task_id FROM tiering_tasks WHERE object_id='${KEY}' ORDER BY scheduled_at DESC LIMIT 1;" | tr -d '[:space:]')"
+TASK_ID=""
+deadline=$((SECONDS + TIMEOUT_SEC))
+while (( SECONDS < deadline )); do
+  TASK_ID="$(find_task_id_by_object "REPL_TO_EC" "${KEY}")"
+  if [[ -n "${TASK_ID}" ]]; then
+    break
+  fi
+  sleep 2
+done
 if [[ -z "${TASK_ID}" ]]; then
   echo "ERROR: tiering task not found for object ${KEY}" >&2
   exit 1
@@ -69,15 +108,15 @@ fi
 echo "Task: ${TASK_ID}"
 
 echo "[5/9] Verify admin tasks endpoint sees object"
-tasks_resp="$(curl -sS -f "${API_BASE}/v2/admin/tasks?task_type=REPL_TO_EC&limit=200")"
+tasks_resp="$(curl -sS -f "${API_BASE}/v2/admin/tasks?task_type=REPL_TO_EC&object_id=${KEY}&limit=1000")"
 if ! printf "%s" "${tasks_resp}" | grep -q "\"object_id\":\"${KEY}\""; then
   echo "ERROR: /v2/admin/tasks does not contain object ${KEY}" >&2
   exit 1
 fi
 
 if [[ "${FORCE_TASK_NOW}" == "true" ]]; then
-  echo "[6/9] Force task runnable now"
-  sql "UPDATE tiering_tasks SET scheduled_at=NOW()-INTERVAL '1 second' WHERE task_id='${TASK_ID}';" >/dev/null
+  echo "[6/9] Force task runnable now via admin retry-now"
+  curl -sS -f -X POST "${API_BASE}/v2/admin/tasks/${TASK_ID}/retry-now" >/dev/null
 else
   echo "[6/9] Skip force scheduling (FORCE_TASK_NOW=false)"
 fi
@@ -86,7 +125,7 @@ echo "[7/9] Wait object promotion to EC_ACTIVE"
 deadline=$((SECONDS + TIMEOUT_SEC))
 while (( SECONDS < deadline )); do
   obj_resp="$(curl -sS -f "${API_BASE}/v2/admin/objects/${KEY}" || true)"
-  task_state="$(sql "SELECT task_state FROM tiering_tasks WHERE task_id='${TASK_ID}';" | tr -d '[:space:]')"
+  task_state="$(find_task_state_by_object "REPL_TO_EC" "${KEY}")"
 
   if printf "%s" "${obj_resp}" | grep -q "\"state\":\"EC_ACTIVE\"" &&
     printf "%s" "${obj_resp}" | grep -q "\"tier\":\"EC\"" &&
@@ -98,7 +137,7 @@ while (( SECONDS < deadline )); do
 done
 
 obj_resp="$(curl -sS -f "${API_BASE}/v2/admin/objects/${KEY}")"
-task_state="$(sql "SELECT task_state FROM tiering_tasks WHERE task_id='${TASK_ID}';" | tr -d '[:space:]')"
+task_state="$(find_task_state_by_object "REPL_TO_EC" "${KEY}")"
 if ! printf "%s" "${obj_resp}" | grep -q "\"state\":\"EC_ACTIVE\"" ||
   ! printf "%s" "${obj_resp}" | grep -q "\"tier\":\"EC\"" ||
   [[ "${task_state}" != "DONE" ]]; then
@@ -116,22 +155,21 @@ if ! cmp -s "${PAYLOAD_FILE}" "${READ_FILE}"; then
 fi
 
 echo "[9/9] Verify GC task done and replica locations marked DELETED"
-gc_task_state=""
 deadline=$((SECONDS + TIMEOUT_SEC))
 while (( SECONDS < deadline )); do
-  gc_task_state="$(sql "SELECT task_state FROM tiering_tasks WHERE object_id='${KEY}' AND task_type='GC' ORDER BY scheduled_at DESC LIMIT 1;" | tr -d '[:space:]')"
-  deleted_count="$(sql "SELECT COUNT(*) FROM replica_locations WHERE object_id='${KEY}' AND status='DELETED';" | tr -d '[:space:]')"
-  if [[ "${gc_task_state}" == "DONE" ]] && [[ "${deleted_count}" != "" ]] && (( deleted_count > 0 )); then
-    echo "GC done: task_state=${gc_task_state} deleted_replicas=${deleted_count}"
+  gc_task_state="$(find_task_state_by_object "GC" "${KEY}")"
+  obj_resp="$(curl -sS -f "${API_BASE}/v2/admin/objects/${KEY}" || true)"
+  if [[ "${gc_task_state}" == "DONE" ]] && printf "%s" "${obj_resp}" | grep -q "\"status\":\"DELETED\""; then
+    echo "GC done: task_state=${gc_task_state}"
     break
   fi
   sleep 2
 done
 
-gc_task_state="$(sql "SELECT task_state FROM tiering_tasks WHERE object_id='${KEY}' AND task_type='GC' ORDER BY scheduled_at DESC LIMIT 1;" | tr -d '[:space:]')"
-deleted_count="$(sql "SELECT COUNT(*) FROM replica_locations WHERE object_id='${KEY}' AND status='DELETED';" | tr -d '[:space:]')"
-if [[ "${gc_task_state}" != "DONE" ]] || [[ "${deleted_count}" == "" ]] || (( deleted_count == 0 )); then
-  echo "ERROR: GC verification failed. gc_task_state=${gc_task_state} deleted_replicas=${deleted_count}" >&2
+gc_task_state="$(find_task_state_by_object "GC" "${KEY}")"
+obj_resp="$(curl -sS -f "${API_BASE}/v2/admin/objects/${KEY}" || true)"
+if [[ "${gc_task_state}" != "DONE" ]] || ! printf "%s" "${obj_resp}" | grep -q "\"status\":\"DELETED\""; then
+  echo "ERROR: GC verification failed. gc_task_state=${gc_task_state}" >&2
   exit 1
 fi
 

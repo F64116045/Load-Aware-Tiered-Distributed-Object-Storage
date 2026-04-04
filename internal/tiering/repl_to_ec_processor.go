@@ -19,13 +19,13 @@ import (
 
 // ReplicationToECProcessor executes REPL_TO_EC migration for one object version.
 type ReplicationToECProcessor struct {
-	store *meta.Store
+	store meta.Repository
 	http  *http.Client
 	ec    interfaces.IEcDriver
 }
 
 // NewReplicationToECProcessor constructs a processor implementation.
-func NewReplicationToECProcessor(store *meta.Store, httpClient *http.Client, ecDriver interfaces.IEcDriver) *ReplicationToECProcessor {
+func NewReplicationToECProcessor(store meta.Repository, httpClient *http.Client, ecDriver interfaces.IEcDriver) *ReplicationToECProcessor {
 	return &ReplicationToECProcessor{
 		store: store,
 		http:  httpClient,

@@ -12,6 +12,10 @@ import (
 )
 
 func main() {
+	if !strings.EqualFold(config.MetaBackend, "postgres") {
+		log.Fatalf("[meta-migrate] only postgres backend is supported for SQL migration (META_BACKEND=%s)", config.MetaBackend)
+	}
+
 	action := strings.ToLower(os.Getenv("META_MIGRATE_ACTION"))
 	if action == "" {
 		action = "up"

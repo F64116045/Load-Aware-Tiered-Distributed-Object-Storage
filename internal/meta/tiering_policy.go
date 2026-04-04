@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"hybrid_distributed_store/internal/config"
 )
 
 // TieringCandidate represents one HOT object selected by periodic policy scan.
@@ -126,4 +128,172 @@ WHERE object_id = $1
 		return fmt.Errorf("mark object migration_pending failed: %w", err)
 	}
 	return nil
+}
+
+// EnqueueRepairCandidates scans current object versions and enqueues REPAIR tasks
+// for under-replicated HOT objects and under-sharded EC objects.
+func (s *Store) EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+	if maxObjects <= 0 {
+		maxObjects = 200
+	}
+
+	targetReplicaCount := config.HotReplicaCount
+	if targetReplicaCount <= 0 {
+		targetReplicaCount = 1
+	}
+	defaultK := config.K
+	defaultM := config.M
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin repair scan tx failed: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	enqueued := 0
+	remaining := maxObjects
+
+	hotCandidates, err := loadRepairCandidatesHOT(ctx, tx, targetReplicaCount, remaining)
+	if err != nil {
+		return 0, err
+	}
+	for _, c := range hotCandidates {
+		taskID := fmt.Sprintf("repair-repl:%s:%d", c.ObjectID, c.Version)
+		inserted, err := enqueueRepairTaskTx(ctx, tx, taskID, c.ObjectID, c.Version)
+		if err != nil {
+			return enqueued, err
+		}
+		if inserted {
+			enqueued++
+		}
+	}
+	remaining -= len(hotCandidates)
+
+	if remaining > 0 {
+		ecCandidates, err := loadRepairCandidatesEC(ctx, tx, defaultK, defaultM, remaining)
+		if err != nil {
+			return enqueued, err
+		}
+		for _, c := range ecCandidates {
+			taskID := fmt.Sprintf("repair-ec:%s:%d", c.ObjectID, c.Version)
+			inserted, err := enqueueRepairTaskTx(ctx, tx, taskID, c.ObjectID, c.Version)
+			if err != nil {
+				return enqueued, err
+			}
+			if inserted {
+				enqueued++
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return enqueued, fmt.Errorf("commit repair scan tx failed: %w", err)
+	}
+	return enqueued, nil
+}
+
+func loadRepairCandidatesHOT(ctx context.Context, tx *sql.Tx, targetReplicaCount, maxObjects int) ([]TieringCandidate, error) {
+	const q = `
+SELECT o.object_id, o.current_version
+FROM objects o
+JOIN object_versions ov
+  ON ov.object_id = o.object_id
+ AND ov.version = o.current_version
+LEFT JOIN replica_locations rl
+  ON rl.object_id = o.object_id
+ AND rl.version = o.current_version
+ AND rl.status = 'ACTIVE'
+WHERE ov.tier = 'HOT'
+GROUP BY o.object_id, o.current_version, o.updated_at
+HAVING COUNT(rl.node_id) < $1
+ORDER BY o.updated_at ASC
+LIMIT $2
+`
+	rows, err := tx.QueryContext(ctx, q, targetReplicaCount, maxObjects)
+	if err != nil {
+		return nil, fmt.Errorf("query hot repair candidates failed: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]TieringCandidate, 0, maxObjects)
+	for rows.Next() {
+		var c TieringCandidate
+		if err := rows.Scan(&c.ObjectID, &c.Version); err != nil {
+			return nil, fmt.Errorf("scan hot repair candidate failed: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate hot repair candidates failed: %w", err)
+	}
+	return out, nil
+}
+
+func loadRepairCandidatesEC(ctx context.Context, tx *sql.Tx, defaultK, defaultM, maxObjects int) ([]TieringCandidate, error) {
+	const q = `
+SELECT o.object_id, o.current_version
+FROM objects o
+JOIN object_versions ov
+  ON ov.object_id = o.object_id
+ AND ov.version = o.current_version
+LEFT JOIN ec_shard_locations es
+  ON es.object_id = o.object_id
+ AND es.version = o.current_version
+ AND es.status = 'ACTIVE'
+WHERE ov.tier = 'EC'
+GROUP BY o.object_id, o.current_version, o.updated_at, ov.encoding_k, ov.encoding_m
+HAVING COUNT(es.shard_index) < (COALESCE(ov.encoding_k, $1) + COALESCE(ov.encoding_m, $2))
+ORDER BY o.updated_at ASC
+LIMIT $3
+`
+	rows, err := tx.QueryContext(ctx, q, defaultK, defaultM, maxObjects)
+	if err != nil {
+		return nil, fmt.Errorf("query ec repair candidates failed: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]TieringCandidate, 0, maxObjects)
+	for rows.Next() {
+		var c TieringCandidate
+		if err := rows.Scan(&c.ObjectID, &c.Version); err != nil {
+			return nil, fmt.Errorf("scan ec repair candidate failed: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ec repair candidates failed: %w", err)
+	}
+	return out, nil
+}
+
+func enqueueRepairTaskTx(ctx context.Context, tx *sql.Tx, taskID, objectID string, version int64) (bool, error) {
+	const q = `
+INSERT INTO tiering_tasks (
+	task_id, object_id, version, task_type, task_state, priority, retry_count, scheduled_at
+)
+VALUES ($1, $2, $3, 'REPAIR', 'PENDING', 200, 0, $4)
+ON CONFLICT (task_id) DO UPDATE SET
+	task_state = 'PENDING',
+	priority = 200,
+	retry_count = 0,
+	last_error = NULL,
+	scheduled_at = EXCLUDED.scheduled_at,
+	started_at = NULL,
+	finished_at = NULL
+WHERE tiering_tasks.task_state IN ('DONE', 'FAILED')
+`
+	res, err := tx.ExecContext(ctx, q, taskID, objectID, version, time.Now())
+	if err != nil {
+		return false, fmt.Errorf("enqueue repair task failed: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("enqueue repair task rows affected failed: %w", err)
+	}
+	return affected > 0, nil
 }

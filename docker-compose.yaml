@@ -43,6 +43,9 @@ services:
     command: ["/usr/local/bin/meta_migrate"]
     environment:
       - META_ENABLED=true
+      - META_BACKEND=postgres
+      - META_REQUIRE_ENDPOINT=false
+      - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DRIVER=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=5
@@ -57,6 +60,38 @@ services:
     restart: "no"
 
   # ---------------------------------------------------------------------------
+  # Metadata Service (single writer/reader owner for metadata backend)
+  # ---------------------------------------------------------------------------
+  meta_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/usr/local/bin/meta_service"]
+    restart: on-failure
+    environment:
+      - META_ENABLED=true
+      - META_BACKEND=postgres
+      - META_REQUIRE_ENDPOINT=false
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_AUTO_MIGRATE=false
+      - META_DRIVER=postgres
+      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_MAX_OPEN_CONNS=20
+      - META_MAX_IDLE_CONNS=10
+      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_SERVICE_PORT=8091
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - storage_net
+
+  # ---------------------------------------------------------------------------
   # API Gateway Cluster
   # ---------------------------------------------------------------------------
   api:
@@ -69,14 +104,21 @@ services:
     environment:
       - NODE_NAMES_CSV=storage_node_1,storage_node_2,storage_node_3,storage_node_4,storage_node_5,storage_node_6
       - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=postgres
       - META_DRIVER=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=20
       - META_MAX_IDLE_CONNS=10
       - META_CONN_MAX_LIFETIME_SEC=300
+      - HOT_REPLICA_COUNT=3
+      - HOT_WRITE_QUORUM=2
       - NODE_HEARTBEAT_STALE_SEC=15
+      - TIERING_LEADER_STALE_SEC=10
     depends_on:
-      postgres:
+      meta_service:
         condition: service_healthy
       storage_node_1:
         condition: service_started
@@ -107,6 +149,10 @@ services:
       - NODE_PORT=8001
       - STORAGE_DIR=/data/node1
       - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=postgres
       - META_DRIVER=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=10
@@ -128,6 +174,10 @@ services:
       - NODE_PORT=8002
       - STORAGE_DIR=/data/node2
       - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=postgres
       - META_DRIVER=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=10
@@ -149,6 +199,10 @@ services:
       - NODE_PORT=8003
       - STORAGE_DIR=/data/node3
       - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=postgres
       - META_DRIVER=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=10
@@ -170,6 +224,10 @@ services:
       - NODE_PORT=8004
       - STORAGE_DIR=/data/node4
       - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=postgres
       - META_DRIVER=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=10
@@ -191,6 +249,10 @@ services:
       - NODE_PORT=8005
       - STORAGE_DIR=/data/node5
       - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=postgres
       - META_DRIVER=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=10
@@ -212,6 +274,10 @@ services:
       - NODE_PORT=8006
       - STORAGE_DIR=/data/node6
       - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=postgres
       - META_DRIVER=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=10
@@ -234,6 +300,10 @@ services:
     restart: on-failure
     environment:
       - META_ENABLED=true
+      - META_ENDPOINT=http://meta_service:8091
+      - META_REQUIRE_ENDPOINT=true
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_BACKEND=postgres
       - META_DRIVER=postgres
       - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
       - META_MAX_OPEN_CONNS=10
@@ -241,9 +311,13 @@ services:
       - META_CONN_MAX_LIFETIME_SEC=300
       - TIERING_WORKER_POLL_SEC=2
       - TIERING_POLICY_PERIOD_SEC=300
+      - TIERING_POLICY_LEADER_RETRY_SEC=2
+      - TIERING_POLICY_LEADER_LOCK_KEY=42042
+      - TIERING_LEADER_STALE_SEC=10
+      - TIERING_TASK_MAX_RETRY_COUNT=8
       - TIERING_WORKER_TASK_TYPE=ALL
     depends_on:
-      postgres:
+      meta_service:
         condition: service_healthy
       api:
         condition: service_started

@@ -25,6 +25,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/api ./cmd/api
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/storage_node ./cmd/storage_node
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/tiering_worker ./cmd/tiering_worker
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/meta_migrate ./cmd/meta_migrate
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/meta_service ./cmd/meta_service
 
 # -----------------------------------------------------------------------------
 # Stage 2: Release
@@ -40,6 +41,7 @@ COPY --from=builder /usr/local/bin/api /usr/local/bin/api
 COPY --from=builder /usr/local/bin/storage_node /usr/local/bin/storage_node
 COPY --from=builder /usr/local/bin/tiering_worker /usr/local/bin/tiering_worker
 COPY --from=builder /usr/local/bin/meta_migrate /usr/local/bin/meta_migrate
+COPY --from=builder /usr/local/bin/meta_service /usr/local/bin/meta_service
 
 # Default entrypoint (Overridden by docker-compose.yaml 'command')
 CMD ["/usr/local/bin/api"]

@@ -11,6 +11,10 @@ import (
 
 // Config defines metadata DB connection settings.
 type Config struct {
+	Backend         string
+	Endpoint        string
+	RequireEndpoint bool
+	AuthToken       string
 	Enabled         bool
 	Driver          string
 	DSN             string

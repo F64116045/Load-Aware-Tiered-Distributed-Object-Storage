@@ -330,3 +330,28 @@ WHERE task_id=$1
 	}
 	return nil
 }
+
+// MarkTieringTaskFailed sets task terminal state to FAILED with explicit error detail.
+func (s *Store) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	if taskID == "" {
+		return nil
+	}
+	if lastErr == "" {
+		lastErr = "failed_without_error_message"
+	}
+
+	const q = `
+UPDATE tiering_tasks
+SET task_state='FAILED',
+	last_error=$2,
+	finished_at=NOW()
+WHERE task_id=$1
+`
+	if _, err := s.db.ExecContext(ctx, q, taskID, lastErr); err != nil {
+		return fmt.Errorf("mark tiering task failed failed: %w", err)
+	}
+	return nil
+}

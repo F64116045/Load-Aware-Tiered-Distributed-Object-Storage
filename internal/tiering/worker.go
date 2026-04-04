@@ -6,30 +6,33 @@ import (
 	"log"
 	"time"
 
+	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/meta"
 )
 
 const (
 	TaskTypeReplicationToEC = "REPL_TO_EC"
+	TaskTypeRepair          = "REPAIR"
 	TaskTypeGC              = "GC"
 )
 
 // Processor encapsulates task business logic.
 type Processor interface {
 	ProcessReplicationToEC(ctx context.Context, task *meta.TieringTask) error
+	ProcessReplicationRepair(ctx context.Context, task *meta.TieringTask) error
 	ProcessReplicationGC(ctx context.Context, task *meta.TieringTask) error
 }
 
 // Worker polls tasks and executes processor logic.
 type Worker struct {
-	store        *meta.Store
+	store        meta.Repository
 	processor    Processor
 	pollInterval time.Duration
 	taskType     string
 }
 
 // NewWorker constructs a worker with sane defaults.
-func NewWorker(store *meta.Store, processor Processor, pollInterval time.Duration, taskType string) *Worker {
+func NewWorker(store meta.Repository, processor Processor, pollInterval time.Duration, taskType string) *Worker {
 	if pollInterval <= 0 {
 		pollInterval = 2 * time.Second
 	}
@@ -79,6 +82,8 @@ func (w *Worker) runOnce(ctx context.Context) error {
 	switch task.TaskType {
 	case TaskTypeReplicationToEC:
 		procErr = w.processor.ProcessReplicationToEC(ctx, task)
+	case TaskTypeRepair:
+		procErr = w.processor.ProcessReplicationRepair(ctx, task)
 	case TaskTypeGC:
 		procErr = w.processor.ProcessReplicationGC(ctx, task)
 	default:
@@ -87,6 +92,19 @@ func (w *Worker) runOnce(ctx context.Context) error {
 
 	if procErr == nil {
 		return w.store.MarkTieringTaskDone(ctx, task.TaskID)
+	}
+
+	nextRetryCount := task.RetryCount + 1
+	if nextRetryCount >= config.TieringTaskMaxRetryCount {
+		log.Printf(
+			"[TieringWorker] task=%s type=%s reached retry cap (%d/%d), mark FAILED: %v",
+			task.TaskID,
+			task.TaskType,
+			nextRetryCount,
+			config.TieringTaskMaxRetryCount,
+			procErr,
+		)
+		return w.store.MarkTieringTaskFailed(ctx, task.TaskID, procErr.Error())
 	}
 
 	backoff := retryBackoff(task.RetryCount)

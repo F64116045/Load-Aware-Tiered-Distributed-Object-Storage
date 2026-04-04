@@ -195,7 +195,7 @@ func getFreeBytes(path string) int64 {
 	return int64(fs.Bavail) * int64(fs.Bsize)
 }
 
-func registerAndHeartbeatMeta(ctx context.Context, metaStore *meta.Store, nodeURL string, storage *storageEngine) {
+func registerAndHeartbeatMeta(ctx context.Context, metaStore meta.Repository, nodeURL string, storage *storageEngine) {
 	if metaStore == nil {
 		return
 	}
@@ -245,7 +245,11 @@ func main() {
 		log.Fatal("Error: NODE_PORT, NODE_NAME, and STORAGE_DIR must be set.")
 	}
 
-	metaStore, metaErr := meta.NewStore(meta.Config{
+	metaStore, metaErr := meta.NewRepository(meta.Config{
+		Backend:         config.MetaBackend,
+		Endpoint:        config.MetaEndpoint,
+		RequireEndpoint: config.MetaRequireEndpoint,
+		AuthToken:       config.MetaRPCAuthToken,
 		Enabled:         config.MetaEnabled,
 		Driver:          config.MetaDriver,
 		DSN:             config.MetaDSN,
@@ -254,11 +258,18 @@ func main() {
 		ConnMaxLifetime: config.MetaConnMaxLifetime,
 	})
 	if metaErr != nil {
+		if config.MetaEnabled && config.MetaRequireEndpoint {
+			log.Fatalf("Metadata store init failed with META_REQUIRE_ENDPOINT=true: %v", metaErr)
+		}
 		log.Printf("Metadata store init failed: %v", metaErr)
 		metaStore = nil
 	} else if config.MetaEnabled {
 		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		if err := metaStore.Ping(pingCtx); err != nil {
+			if config.MetaRequireEndpoint {
+				pingCancel()
+				log.Fatalf("Metadata ping failed with META_REQUIRE_ENDPOINT=true: %v", err)
+			}
 			log.Printf("Metadata ping failed: %v", err)
 			metaStore = nil
 		}
