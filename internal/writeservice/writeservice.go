@@ -22,7 +22,7 @@ type Service struct {
 	http  interfaces.IHttpClient
 	ec    interfaces.IEcDriver
 	utils interfaces.IUtilsSvc
-	meta  *meta.Store
+	meta  meta.Repository
 }
 
 // NewService creates a new WriteService.
@@ -30,7 +30,7 @@ func NewService(
 	http interfaces.IHttpClient,
 	ec interfaces.IEcDriver,
 	utils interfaces.IUtilsSvc,
-	metaStore *meta.Store,
+	metaStore meta.Repository,
 ) *Service {
 	return &Service{
 		http:  http,
@@ -58,7 +58,7 @@ func (s *Service) finalizeMetadata(
 	}
 
 	if err := s.meta.UpsertNormalizedMetadata(ctx, mainKey, metadata); err != nil {
-		return fmt.Errorf("failed to commit normalized metadata to Postgres: %v", err)
+		return fmt.Errorf("failed to commit normalized metadata: %v", err)
 	}
 	if err := s.enqueueTieringTaskIfEligible(ctx, mainKey, metadata); err != nil {
 		// Tiering is best effort for now; foreground write must remain available.
@@ -81,6 +81,21 @@ func (s *Service) enqueueTieringTaskIfEligible(ctx context.Context, objectID str
 	hotVersion := toInt64(metadata["hot_version"], 0)
 	if hotVersion <= 0 {
 		return fmt.Errorf("invalid hot_version for object %s", objectID)
+	}
+
+	if isDirty, _ := metadata["is_dirty"].(bool); isDirty {
+		repairTaskID := fmt.Sprintf("repair-repl:%s:%d", objectID, hotVersion)
+		if err := s.meta.EnqueueTieringTask(
+			ctx,
+			repairTaskID,
+			objectID,
+			hotVersion,
+			"REPAIR",
+			200,
+			time.Now(),
+		); err != nil {
+			return fmt.Errorf("enqueue repair task failed: %w", err)
+		}
 	}
 
 	priority := 100
@@ -119,6 +134,20 @@ func toInt64(v interface{}, fallback int64) int64 {
 	}
 }
 
+func resolveHotWriteQuorum(replicaCount int) int {
+	quorum := config.HotWriteQuorum
+	if quorum <= 0 {
+		quorum = 1
+	}
+	if replicaCount <= 0 {
+		return quorum
+	}
+	if quorum > replicaCount {
+		return replicaCount + 1
+	}
+	return quorum
+}
+
 // --- Strategy A: Replication ---
 
 func (s *Service) WriteReplication(
@@ -148,6 +177,10 @@ func (s *Service) writeReplication(
 	value []byte,
 	extraMeta map[string]interface{},
 ) (map[string]interface{}, error) {
+	if len(replicaNodes) == 0 {
+		return nil, fmt.Errorf("replication failed: no replica nodes available")
+	}
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	success := 0
@@ -177,10 +210,9 @@ func (s *Service) writeReplication(
 	}
 	wg.Wait()
 
-	// [CHANGE] Best Effort: 只要有 1 個寫入成功，我們就 Commit。
-	// 剩下的交給 Healer 去修復。
-	if success == 0 {
-		return nil, fmt.Errorf("replication failed entirely: 0/%d nodes responded", len(replicaNodes))
+	requiredQuorum := resolveHotWriteQuorum(len(replicaNodes))
+	if success < requiredQuorum {
+		return nil, fmt.Errorf("hot write quorum not met: %d/%d successful (required %d)", success, len(replicaNodes), requiredQuorum)
 	}
 
 	finalMeta := map[string]interface{}{
@@ -207,9 +239,11 @@ func (s *Service) writeReplication(
 	}
 
 	return map[string]interface{}{
-		"nodes_written": writtenNodes,
-		"status":        "committed",
-		"partial":       isDirty,
+		"nodes_written":  writtenNodes,
+		"status":         "committed",
+		"partial":        isDirty,
+		"write_quorum":   fmt.Sprintf("%d/%d", requiredQuorum, len(replicaNodes)),
+		"writes_success": success,
 	}, nil
 }
 
