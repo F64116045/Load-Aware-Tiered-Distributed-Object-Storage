@@ -9,15 +9,17 @@ import (
 
 // ProcessorMux routes tiering tasks to dedicated processors.
 type ProcessorMux struct {
-	replToEC *ReplicationToECProcessor
-	replGC   *ReplicationGCProcessor
+	replToEC   *ReplicationToECProcessor
+	replRepair *ReplicationRepairProcessor
+	replGC     *ReplicationGCProcessor
 }
 
 // NewProcessorMux constructs a task processor multiplexer.
-func NewProcessorMux(replToEC *ReplicationToECProcessor, replGC *ReplicationGCProcessor) *ProcessorMux {
+func NewProcessorMux(replToEC *ReplicationToECProcessor, replRepair *ReplicationRepairProcessor, replGC *ReplicationGCProcessor) *ProcessorMux {
 	return &ProcessorMux{
-		replToEC: replToEC,
-		replGC:   replGC,
+		replToEC:   replToEC,
+		replRepair: replRepair,
+		replGC:     replGC,
 	}
 }
 
@@ -27,6 +29,14 @@ func (m *ProcessorMux) ProcessReplicationToEC(ctx context.Context, task *meta.Ti
 		return fmt.Errorf("repl-to-ec processor unavailable")
 	}
 	return m.replToEC.ProcessReplicationToEC(ctx, task)
+}
+
+// ProcessReplicationRepair delegates REPAIR tasks.
+func (m *ProcessorMux) ProcessReplicationRepair(ctx context.Context, task *meta.TieringTask) error {
+	if m == nil || m.replRepair == nil {
+		return fmt.Errorf("repair processor unavailable")
+	}
+	return m.replRepair.ProcessReplicationRepair(ctx, task)
 }
 
 // ProcessReplicationGC delegates GC tasks.

@@ -12,12 +12,12 @@ import (
 
 // ReplicationGCProcessor executes GC tasks that clean old HOT replicas after EC promotion.
 type ReplicationGCProcessor struct {
-	store *meta.Store
+	store meta.Repository
 	http  *http.Client
 }
 
 // NewReplicationGCProcessor constructs a GC processor implementation.
-func NewReplicationGCProcessor(store *meta.Store, httpClient *http.Client) *ReplicationGCProcessor {
+func NewReplicationGCProcessor(store meta.Repository, httpClient *http.Client) *ReplicationGCProcessor {
 	return &ReplicationGCProcessor{
 		store: store,
 		http:  httpClient,

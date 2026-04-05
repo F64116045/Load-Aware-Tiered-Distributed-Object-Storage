@@ -42,7 +42,7 @@ func resolveWorkerID() string {
 
 func runScannerAsLeader(
 	ctx context.Context,
-	store *meta.Store,
+	store meta.Repository,
 	scanner *tiering.PolicyScanner,
 	workerID string,
 	lockKey int64,
@@ -58,7 +58,7 @@ func runScannerAsLeader(
 	ticker := time.NewTicker(retryInterval)
 	defer ticker.Stop()
 
-	var lock *meta.AdvisoryLock
+	var lock meta.LeaderLock
 	var scannerCancel context.CancelFunc
 
 	stopScanner := func() {
@@ -89,7 +89,7 @@ func runScannerAsLeader(
 		acquireCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 
-		newLock, acquired, err := store.TryAcquireAdvisoryLock(acquireCtx, lockKey)
+		newLock, acquired, err := store.TryAcquireLeaderLock(acquireCtx, lockKey)
 		if err != nil {
 			log.Printf("[TieringPolicy] advisory lock acquire failed: %v", err)
 			return
@@ -154,7 +154,11 @@ func runScannerAsLeader(
 func main() {
 	log.Println("[TieringWorker] Starting...")
 
-	store, err := meta.NewStore(meta.Config{
+	store, err := meta.NewRepository(meta.Config{
+		Backend:         config.MetaBackend,
+		Endpoint:        config.MetaEndpoint,
+		RequireEndpoint: config.MetaRequireEndpoint,
+		AuthToken:       config.MetaRPCAuthToken,
 		Enabled:         config.MetaEnabled,
 		Driver:          config.MetaDriver,
 		DSN:             config.MetaDSN,
@@ -185,10 +189,18 @@ func main() {
 	}
 
 	replToECProcessor := tiering.NewReplicationToECProcessor(store, httpclient.GetClient(), ec.NewService())
+	replRepairProcessor := tiering.NewReplicationRepairProcessor(store, httpclient.GetClient(), ec.NewService())
 	replGCProcessor := tiering.NewReplicationGCProcessor(store, httpclient.GetClient())
-	processor := tiering.NewProcessorMux(replToECProcessor, replGCProcessor)
+	processor := tiering.NewProcessorMux(replToECProcessor, replRepairProcessor, replGCProcessor)
 	worker := tiering.NewWorker(store, processor, pollInterval, taskType)
-	scanner := tiering.NewPolicyScanner(store, policyPeriod, config.AgeThresholdSec, config.MaxObjectsPerRound)
+	scanner := tiering.NewPolicyScanner(
+		store,
+		policyPeriod,
+		config.AgeThresholdSec,
+		config.MaxObjectsPerRound,
+		config.RepairScanEnabled,
+		config.RepairMaxObjectsPerRound,
+	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
