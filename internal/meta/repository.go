@@ -15,7 +15,7 @@ type LeaderLock interface {
 }
 
 // Repository defines metadata capabilities consumed by runtime components.
-// This is the extension point for non-PostgreSQL backends.
+// This is the extension point for metadata backend implementations.
 type Repository interface {
 	Ping(ctx context.Context) error
 	DB() *sql.DB
@@ -76,15 +76,15 @@ func NewRepository(cfg Config) (Repository, error) {
 
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	if backend == "" {
-		backend = "postgres"
+		backend = "rocksdb"
 	}
 
 	switch backend {
-	case "postgres":
-		return NewStore(cfg)
+	case "tikv":
+		return NewTiKVStore(cfg)
 	case "rocks", "rocksdb":
 		return NewRocksStore(cfg)
 	default:
-		return nil, fmt.Errorf("unsupported meta backend: %s", backend)
+		return nil, fmt.Errorf("unsupported meta backend: %s (supported: rocksdb, tikv)", backend)
 	}
 }

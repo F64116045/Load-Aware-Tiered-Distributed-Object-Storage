@@ -14,52 +14,6 @@ services:
       - storage_net
 
   # ---------------------------------------------------------------------------
-  # Metadata DB (PostgreSQL)
-  # ---------------------------------------------------------------------------
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=metadata
-      - POSTGRES_USER=metadata
-      - POSTGRES_PASSWORD=metadata
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U metadata -d metadata"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    networks:
-      - storage_net
-
-  # ---------------------------------------------------------------------------
-  # Metadata Migration (run-on-demand)
-  # ---------------------------------------------------------------------------
-  meta_migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["/usr/local/bin/meta_migrate"]
-    environment:
-      - META_ENABLED=true
-      - META_BACKEND=postgres
-      - META_REQUIRE_ENDPOINT=false
-      - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=5
-      - META_MAX_IDLE_CONNS=2
-      - META_CONN_MAX_LIFETIME_SEC=60
-      - META_MIGRATE_ACTION=up
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - storage_net
-    restart: "no"
-
-  # ---------------------------------------------------------------------------
   # Metadata Service (single writer/reader owner for metadata backend)
   # ---------------------------------------------------------------------------
   meta_service:
@@ -70,12 +24,12 @@ services:
     restart: on-failure
     environment:
       - META_ENABLED=true
-      - META_BACKEND=postgres
+      - META_BACKEND=${META_BACKEND:-rocksdb}
       - META_REQUIRE_ENDPOINT=false
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_AUTO_MIGRATE=false
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_DRIVER=
+      - META_DSN=${META_DSN:-/var/lib/meta/rocksdb}
       - META_MAX_OPEN_CONNS=20
       - META_MAX_IDLE_CONNS=10
       - META_CONN_MAX_LIFETIME_SEC=300
@@ -85,9 +39,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    depends_on:
-      postgres:
-        condition: service_healthy
+    volumes:
+      - meta_rocks_data:/var/lib/meta
     networks:
       - storage_net
 
@@ -107,9 +60,9 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_BACKEND=${META_BACKEND:-rocksdb}
+      - META_DRIVER=
+      - META_DSN=${META_DSN:-}
       - META_MAX_OPEN_CONNS=20
       - META_MAX_IDLE_CONNS=10
       - META_CONN_MAX_LIFETIME_SEC=300
@@ -152,9 +105,9 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_BACKEND=${META_BACKEND:-rocksdb}
+      - META_DRIVER=
+      - META_DSN=${META_DSN:-}
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
@@ -177,9 +130,9 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_BACKEND=${META_BACKEND:-rocksdb}
+      - META_DRIVER=
+      - META_DSN=${META_DSN:-}
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
@@ -202,9 +155,9 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_BACKEND=${META_BACKEND:-rocksdb}
+      - META_DRIVER=
+      - META_DSN=${META_DSN:-}
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
@@ -227,9 +180,9 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_BACKEND=${META_BACKEND:-rocksdb}
+      - META_DRIVER=
+      - META_DSN=${META_DSN:-}
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
@@ -252,9 +205,9 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_BACKEND=${META_BACKEND:-rocksdb}
+      - META_DRIVER=
+      - META_DSN=${META_DSN:-}
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
@@ -277,9 +230,9 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_BACKEND=${META_BACKEND:-rocksdb}
+      - META_DRIVER=
+      - META_DSN=${META_DSN:-}
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
@@ -303,9 +256,9 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
+      - META_BACKEND=${META_BACKEND:-rocksdb}
+      - META_DRIVER=
+      - META_DSN=${META_DSN:-}
       - META_MAX_OPEN_CONNS=10
       - META_MAX_IDLE_CONNS=5
       - META_CONN_MAX_LIFETIME_SEC=300
@@ -339,7 +292,7 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
+  meta_rocks_data:
   storage_data_1:
   storage_data_2:
   storage_data_3:
