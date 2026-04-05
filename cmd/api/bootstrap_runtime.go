@@ -130,7 +130,19 @@ func buildRouter(rt *appRuntime) *gin.Engine {
 		},
 		readReplication: rt.readSvc.ReadReplication,
 		readEC:          rt.readSvc.ReadEC,
-		now:             time.Now,
+		deleteReplication: func(ctx context.Context, replicaNodes []string, key string) (int, error) {
+			return rt.storageOpsSvc.DeleteReplication(ctx, replicaNodes, key)
+		},
+		deleteEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (int, error) {
+			return rt.storageOpsSvc.DeleteEC(ctx, ecNodes, metadata)
+		},
+		deleteNormalizedMetadata: func(ctx context.Context, key string) error {
+			if !config.MetaEnabled || rt.metaStore == nil {
+				return nil
+			}
+			return rt.metaStore.DeleteNormalizedMetadata(ctx, key)
+		},
+		now: time.Now,
 	})
 
 	registerLegacyRoutes(router, legacyRouteDeps{

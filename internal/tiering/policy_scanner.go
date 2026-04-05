@@ -31,15 +31,23 @@ type PolicyScannerConfig struct {
 	RepairMaxObjects int
 }
 
+type PolicyScanStore interface {
+	EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error)
+	EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error)
+	EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
+	EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error)
+	ListNodeHeartbeats(ctx context.Context, limit int) ([]meta.NodeHeartbeatSnapshot, error)
+}
+
 // PolicyScanner runs policy-based tiering candidate selection and optional repair scans.
 type PolicyScanner struct {
-	store meta.Repository
+	store PolicyScanStore
 	cfg   PolicyScannerConfig
 
 	lastThresholdTrigger time.Time
 }
 
-func NewPolicyScanner(store meta.Repository, cfg PolicyScannerConfig) *PolicyScanner {
+func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicyScanner {
 	if cfg.PeriodicInterval <= 0 {
 		cfg.PeriodicInterval = 5 * time.Minute
 	}
