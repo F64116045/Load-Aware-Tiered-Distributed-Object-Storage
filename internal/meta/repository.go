@@ -21,7 +21,7 @@ type Repository interface {
 	DB() *sql.DB
 	Close() error
 
-	UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, ioQueueDepth int, cpuLoad float64, status string) error
+	UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, status string) error
 	ListHealthyNodeIDs(ctx context.Context, staleSec int) ([]string, error)
 	ListNodeHeartbeats(ctx context.Context, limit int) ([]NodeHeartbeatSnapshot, error)
 
@@ -47,6 +47,8 @@ type Repository interface {
 	MarkTieringTaskFailed(ctx context.Context, taskID, lastErr string) error
 
 	EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error)
+	EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error)
+	EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
 	EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error)
 	GetObjectVersionSnapshot(ctx context.Context, objectID string, taskVersion int64) (*ObjectVersionSnapshot, error)
 	MarkObjectMigrating(ctx context.Context, objectID string, version int64) error

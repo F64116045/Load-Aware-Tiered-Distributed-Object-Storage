@@ -110,10 +110,11 @@ func (c *RPCClient) Close() error {
 	return nil
 }
 
-func (c *RPCClient) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, ioQueueDepth int, cpuLoad float64, status string) error {
+func (c *RPCClient) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, status string) error {
 	return c.call(ctx, rpcMethodUpsertNodeHeartbeat, rpcNodeHeartbeatArgs{
 		NodeID:       nodeID,
 		FreeBytes:    freeBytes,
+		TotalBytes:   totalBytes,
 		IOQueueDepth: ioQueueDepth,
 		CPULoad:      cpuLoad,
 		Status:       status,
@@ -281,6 +282,26 @@ func (c *RPCClient) EnqueueTieringCandidatesA1(ctx context.Context, ageThreshold
 	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesA1, rpcEnqueueTieringCandidatesA1Args{
 		AgeThresholdSec: ageThresholdSec,
 		MaxObjects:      maxObjects,
+	}, &out)
+	return out.Value, err
+}
+
+func (c *RPCClient) EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error) {
+	var out rpcIntResult
+	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesA2, rpcEnqueueTieringCandidatesA2Args{
+		AgeThresholdSec:    ageThresholdSec,
+		SizeThresholdBytes: sizeThresholdBytes,
+		MaxObjects:         maxObjects,
+	}, &out)
+	return out.Value, err
+}
+
+func (c *RPCClient) EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+	var out rpcIntResult
+	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesA3, rpcEnqueueTieringCandidatesA3Args{
+		AgeThresholdSec: ageThresholdSec,
+		MaxObjects:      maxObjects,
+		MaxBytes:        maxBytes,
 	}, &out)
 	return out.Value, err
 }

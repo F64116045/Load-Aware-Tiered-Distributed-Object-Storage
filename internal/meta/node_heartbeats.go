@@ -12,6 +12,7 @@ type NodeHeartbeatSnapshot struct {
 	NodeID       string
 	LastSeenAt   time.Time
 	FreeBytes    int64
+	TotalBytes   int64
 	IOQueueDepth int
 	CPULoad      float64
 	Status       string
@@ -22,6 +23,7 @@ func (s *Store) UpsertNodeHeartbeat(
 	ctx context.Context,
 	nodeID string,
 	freeBytes int64,
+	totalBytes int64,
 	ioQueueDepth int,
 	cpuLoad float64,
 	status string,
@@ -31,17 +33,18 @@ func (s *Store) UpsertNodeHeartbeat(
 	}
 
 	const q = `
-INSERT INTO node_heartbeats (node_id, last_seen_at, free_bytes, io_queue_depth, cpu_load, status)
-VALUES ($1, NOW(), $2, $3, $4, $5)
+INSERT INTO node_heartbeats (node_id, last_seen_at, free_bytes, total_bytes, io_queue_depth, cpu_load, status)
+VALUES ($1, NOW(), $2, $3, $4, $5, $6)
 ON CONFLICT (node_id)
 DO UPDATE SET
 	last_seen_at = NOW(),
 	free_bytes = EXCLUDED.free_bytes,
+	total_bytes = EXCLUDED.total_bytes,
 	io_queue_depth = EXCLUDED.io_queue_depth,
 	cpu_load = EXCLUDED.cpu_load,
 	status = EXCLUDED.status
 `
-	if _, err := s.db.ExecContext(ctx, q, nodeID, freeBytes, ioQueueDepth, cpuLoad, status); err != nil {
+	if _, err := s.db.ExecContext(ctx, q, nodeID, freeBytes, totalBytes, ioQueueDepth, cpuLoad, status); err != nil {
 		return fmt.Errorf("upsert node heartbeat failed: %w", err)
 	}
 	return nil
@@ -98,7 +101,7 @@ func (s *Store) ListNodeHeartbeats(ctx context.Context, limit int) ([]NodeHeartb
 	}
 
 	const q = `
-SELECT node_id, last_seen_at, free_bytes, io_queue_depth, cpu_load, status
+SELECT node_id, last_seen_at, free_bytes, total_bytes, io_queue_depth, cpu_load, status
 FROM node_heartbeats
 ORDER BY last_seen_at DESC
 LIMIT $1
@@ -116,6 +119,7 @@ LIMIT $1
 			&n.NodeID,
 			&n.LastSeenAt,
 			&n.FreeBytes,
+			&n.TotalBytes,
 			&n.IOQueueDepth,
 			&n.CPULoad,
 			&n.Status,

@@ -30,6 +30,8 @@ const (
 	rpcMethodMarkTieringTaskRetry        = "mark_tiering_task_retry"
 	rpcMethodMarkTieringTaskFailed       = "mark_tiering_task_failed"
 	rpcMethodEnqueueTieringCandidatesA1  = "enqueue_tiering_candidates_a1"
+	rpcMethodEnqueueTieringCandidatesA2  = "enqueue_tiering_candidates_a2"
+	rpcMethodEnqueueTieringCandidatesA3  = "enqueue_tiering_candidates_a3"
 	rpcMethodEnqueueRepairCandidates     = "enqueue_repair_candidates"
 	rpcMethodGetObjectVersionSnapshot    = "get_object_version_snapshot"
 	rpcMethodMarkObjectMigrating         = "mark_object_migrating"
@@ -53,6 +55,7 @@ type rpcResponse struct {
 type rpcNodeHeartbeatArgs struct {
 	NodeID       string  `json:"node_id"`
 	FreeBytes    int64   `json:"free_bytes"`
+	TotalBytes   int64   `json:"total_bytes"`
 	IOQueueDepth int     `json:"io_queue_depth"`
 	CPULoad      float64 `json:"cpu_load"`
 	Status       string  `json:"status"`
@@ -144,6 +147,18 @@ type rpcMarkTieringTaskFailedArgs struct {
 type rpcEnqueueTieringCandidatesA1Args struct {
 	AgeThresholdSec int `json:"age_threshold_sec"`
 	MaxObjects      int `json:"max_objects"`
+}
+
+type rpcEnqueueTieringCandidatesA2Args struct {
+	AgeThresholdSec    int   `json:"age_threshold_sec"`
+	SizeThresholdBytes int64 `json:"size_threshold_bytes"`
+	MaxObjects         int   `json:"max_objects"`
+}
+
+type rpcEnqueueTieringCandidatesA3Args struct {
+	AgeThresholdSec int   `json:"age_threshold_sec"`
+	MaxObjects      int   `json:"max_objects"`
+	MaxBytes        int64 `json:"max_bytes"`
 }
 
 type rpcEnqueueRepairCandidatesArgs struct {

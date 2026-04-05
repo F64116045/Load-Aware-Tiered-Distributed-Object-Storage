@@ -195,11 +195,22 @@ func main() {
 	worker := tiering.NewWorker(store, processor, pollInterval, taskType)
 	scanner := tiering.NewPolicyScanner(
 		store,
-		policyPeriod,
-		config.AgeThresholdSec,
-		config.MaxObjectsPerRound,
-		config.RepairScanEnabled,
-		config.RepairMaxObjectsPerRound,
+		tiering.PolicyScannerConfig{
+			PeriodicInterval:       policyPeriod,
+			ThresholdCheckInterval: time.Duration(config.TieringThresholdCheckSec) * time.Second,
+			ThresholdCooldown:      time.Duration(config.TieringThresholdCooldownSec) * time.Second,
+			TriggerMode:            config.TieringTriggerModeSetting,
+			PolicyVariant:          config.TieringPolicyVariantSetting,
+			AgeThresholdSec:        config.AgeThresholdSec,
+			SizeThresholdBytes:     config.SizeThresholdBytes,
+			MaxObjects:             config.MaxObjectsPerRound,
+			MaxBytes:               config.MaxBytesPerRound,
+			HotPressureDiskPct:     config.HotPressureDiskPct,
+			HotPressureQueueDepth:  config.HotPressureQueueDepth,
+			HeartbeatStaleSec:      config.NodeHeartbeatStaleSec,
+			RepairEnabled:          config.RepairScanEnabled,
+			RepairMaxObjects:       config.RepairMaxObjectsPerRound,
+		},
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

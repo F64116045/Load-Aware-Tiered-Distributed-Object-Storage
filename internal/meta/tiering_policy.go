@@ -11,13 +11,38 @@ import (
 
 // TieringCandidate represents one HOT object selected by periodic policy scan.
 type TieringCandidate struct {
-	ObjectID string
-	Version  int64
+	ObjectID  string
+	Version   int64
+	SizeBytes int64
 }
 
 // EnqueueTieringCandidatesA1 periodically scans HOT objects by age and enqueues REPL_TO_EC tasks.
 // It also moves object state from HOT_ACTIVE to MIGRATION_PENDING for selected candidates.
 func (s *Store) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, 0, false)
+}
+
+// EnqueueTieringCandidatesA2 scans HOT objects by age + size threshold and enqueues REPL_TO_EC tasks.
+func (s *Store) EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error) {
+	if sizeThresholdBytes < 0 {
+		sizeThresholdBytes = 0
+	}
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, sizeThresholdBytes, 0, false)
+}
+
+// EnqueueTieringCandidatesA3 scans HOT objects by age and enqueues REPL_TO_EC tasks under a per-round byte budget.
+func (s *Store) EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, maxBytes, true)
+}
+
+func (s *Store) enqueueTieringCandidates(
+	ctx context.Context,
+	ageThresholdSec int,
+	maxObjects int,
+	minSizeBytes int64,
+	maxBytes int64,
+	applyByteBudget bool,
+) (int, error) {
 	if s == nil || s.db == nil {
 		return 0, nil
 	}
@@ -36,7 +61,15 @@ func (s *Store) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec 
 		_ = tx.Rollback()
 	}()
 
-	candidates, err := loadTieringCandidates(ctx, tx, ageThresholdSec, maxObjects)
+	candidates, err := loadTieringCandidates(
+		ctx,
+		tx,
+		ageThresholdSec,
+		maxObjects,
+		minSizeBytes,
+		maxBytes,
+		applyByteBudget,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -68,28 +101,71 @@ func (s *Store) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec 
 	return enqueued, nil
 }
 
-func loadTieringCandidates(ctx context.Context, tx *sql.Tx, ageThresholdSec, maxObjects int) ([]TieringCandidate, error) {
+func loadTieringCandidates(
+	ctx context.Context,
+	tx *sql.Tx,
+	ageThresholdSec int,
+	maxObjects int,
+	minSizeBytes int64,
+	maxBytes int64,
+	applyByteBudget bool,
+) ([]TieringCandidate, error) {
+	if maxObjects <= 0 {
+		return nil, nil
+	}
+
+	fetchLimit := maxObjects
+	if applyByteBudget && maxBytes > 0 {
+		// Pull a wider candidate set so budget skipping still has enough options.
+		fetchLimit = maxObjects * 5
+		if fetchLimit < 200 {
+			fetchLimit = 200
+		}
+		if fetchLimit > 5000 {
+			fetchLimit = 5000
+		}
+	}
+
 	const q = `
-SELECT object_id, current_version
-FROM objects
-WHERE state = 'HOT_ACTIVE'
-  AND updated_at <= NOW() - ($1 * INTERVAL '1 second')
-ORDER BY updated_at ASC
-LIMIT $2
+SELECT o.object_id, o.current_version, ov.size_bytes
+FROM objects o
+JOIN object_versions ov
+  ON ov.object_id = o.object_id
+ AND ov.version = o.current_version
+WHERE o.state = 'HOT_ACTIVE'
+  AND ov.tier = 'HOT'
+  AND o.updated_at <= NOW() - ($1 * INTERVAL '1 second')
+  AND ($2 <= 0 OR ov.size_bytes >= $2)
+ORDER BY o.updated_at ASC, ov.size_bytes DESC, o.object_id ASC
+LIMIT $3
 `
-	rows, err := tx.QueryContext(ctx, q, ageThresholdSec, maxObjects)
+	rows, err := tx.QueryContext(ctx, q, ageThresholdSec, minSizeBytes, fetchLimit)
 	if err != nil {
 		return nil, fmt.Errorf("query policy candidates failed: %w", err)
 	}
 	defer rows.Close()
 
+	var usedBytes int64
 	out := make([]TieringCandidate, 0, maxObjects)
 	for rows.Next() {
 		var c TieringCandidate
-		if err := rows.Scan(&c.ObjectID, &c.Version); err != nil {
+		if err := rows.Scan(&c.ObjectID, &c.Version, &c.SizeBytes); err != nil {
 			return nil, fmt.Errorf("scan policy candidate failed: %w", err)
 		}
+
+		if applyByteBudget && maxBytes > 0 {
+			if c.SizeBytes > 0 && usedBytes+c.SizeBytes > maxBytes {
+				continue
+			}
+			if c.SizeBytes > 0 {
+				usedBytes += c.SizeBytes
+			}
+		}
+
 		out = append(out, c)
+		if len(out) >= maxObjects {
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate policy candidates failed: %w", err)

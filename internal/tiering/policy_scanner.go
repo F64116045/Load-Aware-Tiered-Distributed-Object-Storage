@@ -2,86 +2,221 @@ package tiering
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
+	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/meta"
 )
 
-// PolicyScanner runs periodic A1 candidate selection and task enqueue.
-type PolicyScanner struct {
-	store           meta.Repository
-	period          time.Duration
-	ageThresholdSec int
-	maxObjects      int
-	repairEnabled   bool
-	repairMax       int
+type PolicyScannerConfig struct {
+	PeriodicInterval       time.Duration
+	ThresholdCheckInterval time.Duration
+	ThresholdCooldown      time.Duration
+
+	TriggerMode   config.TieringTriggerMode
+	PolicyVariant config.TieringPolicyVariant
+
+	AgeThresholdSec    int
+	SizeThresholdBytes int64
+	MaxObjects         int
+	MaxBytes           int64
+
+	HotPressureDiskPct    int
+	HotPressureQueueDepth int
+	HeartbeatStaleSec     int
+
+	RepairEnabled    bool
+	RepairMaxObjects int
 }
 
-// NewPolicyScanner creates periodic scanner for age-based tiering.
-func NewPolicyScanner(
-	store meta.Repository,
-	period time.Duration,
-	ageThresholdSec, maxObjects int,
-	repairEnabled bool,
-	repairMax int,
-) *PolicyScanner {
-	if period <= 0 {
-		period = 5 * time.Minute
+// PolicyScanner runs policy-based tiering candidate selection and optional repair scans.
+type PolicyScanner struct {
+	store meta.Repository
+	cfg   PolicyScannerConfig
+
+	lastThresholdTrigger time.Time
+}
+
+func NewPolicyScanner(store meta.Repository, cfg PolicyScannerConfig) *PolicyScanner {
+	if cfg.PeriodicInterval <= 0 {
+		cfg.PeriodicInterval = 5 * time.Minute
 	}
-	if maxObjects <= 0 {
-		maxObjects = 200
+	if cfg.ThresholdCheckInterval <= 0 {
+		cfg.ThresholdCheckInterval = 10 * time.Second
 	}
-	if repairMax <= 0 {
-		repairMax = 200
+	if cfg.ThresholdCooldown <= 0 {
+		cfg.ThresholdCooldown = 60 * time.Second
 	}
+	if cfg.MaxObjects <= 0 {
+		cfg.MaxObjects = 200
+	}
+	if cfg.RepairMaxObjects <= 0 {
+		cfg.RepairMaxObjects = 200
+	}
+	if cfg.HeartbeatStaleSec <= 0 {
+		cfg.HeartbeatStaleSec = 15
+	}
+	if cfg.PolicyVariant == "" {
+		cfg.PolicyVariant = config.TieringPolicyA1
+	}
+	if cfg.TriggerMode == "" {
+		cfg.TriggerMode = config.TieringTriggerPeriodic
+	}
+
 	return &PolicyScanner{
-		store:           store,
-		period:          period,
-		ageThresholdSec: ageThresholdSec,
-		maxObjects:      maxObjects,
-		repairEnabled:   repairEnabled,
-		repairMax:       repairMax,
+		store: store,
+		cfg:   cfg,
 	}
 }
 
 // Run starts scanner loop until context cancellation.
 func (s *PolicyScanner) Run(ctx context.Context) error {
-	if s.store == nil {
+	if s == nil || s.store == nil {
 		return nil
 	}
 
-	ticker := time.NewTicker(s.period)
-	defer ticker.Stop()
+	var periodicTicker *time.Ticker
+	var thresholdTicker *time.Ticker
+	var periodicTick <-chan time.Time
+	var thresholdTick <-chan time.Time
 
-	runOnce := func() {
-		count, err := s.store.EnqueueTieringCandidatesA1(ctx, s.ageThresholdSec, s.maxObjects)
-		if err != nil {
-			log.Printf("[TieringPolicy] A1 scan failed: %v", err)
-		} else if count > 0 {
-			log.Printf("[TieringPolicy] A1 enqueued %d tasks", count)
-		}
+	if s.cfg.TriggerMode == config.TieringTriggerPeriodic || s.cfg.TriggerMode == config.TieringTriggerHybrid {
+		periodicTicker = time.NewTicker(s.cfg.PeriodicInterval)
+		periodicTick = periodicTicker.C
+		defer periodicTicker.Stop()
 
-		if !s.repairEnabled {
-			return
-		}
-		repairCount, repairErr := s.store.EnqueueRepairCandidates(ctx, s.repairMax)
-		if repairErr != nil {
-			log.Printf("[TieringPolicy] repair scan failed: %v", repairErr)
-			return
-		}
-		if repairCount > 0 {
-			log.Printf("[TieringPolicy] repair enqueued %d tasks", repairCount)
-		}
+		s.runPolicyAndRepair(ctx, "periodic:init")
 	}
 
-	runOnce()
+	if s.cfg.TriggerMode == config.TieringTriggerThreshold || s.cfg.TriggerMode == config.TieringTriggerHybrid {
+		thresholdTicker = time.NewTicker(s.cfg.ThresholdCheckInterval)
+		thresholdTick = thresholdTicker.C
+		defer thresholdTicker.Stop()
+
+		s.runThresholdPass(ctx, "threshold:init")
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
-			runOnce()
+		case <-periodicTick:
+			s.runPolicyAndRepair(ctx, "periodic")
+		case <-thresholdTick:
+			s.runThresholdPass(ctx, "threshold")
 		}
 	}
+}
+
+func (s *PolicyScanner) runThresholdPass(ctx context.Context, source string) {
+	underPressure, reason, err := s.isUnderPressure(ctx)
+	if err != nil {
+		log.Printf("[TieringPolicy] %s pressure check failed: %v", source, err)
+		return
+	}
+	if !underPressure {
+		return
+	}
+
+	now := time.Now()
+	if !s.lastThresholdTrigger.IsZero() && now.Sub(s.lastThresholdTrigger) < s.cfg.ThresholdCooldown {
+		return
+	}
+	s.lastThresholdTrigger = now
+
+	s.runPolicyAndRepair(ctx, fmt.Sprintf("%s:%s", source, reason))
+}
+
+func (s *PolicyScanner) runPolicyAndRepair(ctx context.Context, source string) {
+	count, err := s.enqueueTieringPolicy(ctx)
+	if err != nil {
+		log.Printf("[TieringPolicy] %s %s scan failed: %v", source, s.cfg.PolicyVariant, err)
+	} else if count > 0 {
+		log.Printf("[TieringPolicy] %s %s enqueued %d tasks", source, s.cfg.PolicyVariant, count)
+	}
+
+	if !s.cfg.RepairEnabled {
+		return
+	}
+	repairCount, repairErr := s.store.EnqueueRepairCandidates(ctx, s.cfg.RepairMaxObjects)
+	if repairErr != nil {
+		log.Printf("[TieringPolicy] %s repair scan failed: %v", source, repairErr)
+		return
+	}
+	if repairCount > 0 {
+		log.Printf("[TieringPolicy] %s repair enqueued %d tasks", source, repairCount)
+	}
+}
+
+func (s *PolicyScanner) enqueueTieringPolicy(ctx context.Context) (int, error) {
+	switch s.cfg.PolicyVariant {
+	case config.TieringPolicyA2:
+		return s.store.EnqueueTieringCandidatesA2(
+			ctx,
+			s.cfg.AgeThresholdSec,
+			s.cfg.SizeThresholdBytes,
+			s.cfg.MaxObjects,
+		)
+	case config.TieringPolicyA3:
+		return s.store.EnqueueTieringCandidatesA3(
+			ctx,
+			s.cfg.AgeThresholdSec,
+			s.cfg.MaxObjects,
+			s.cfg.MaxBytes,
+		)
+	case config.TieringPolicyA1:
+		fallthrough
+	default:
+		return s.store.EnqueueTieringCandidatesA1(
+			ctx,
+			s.cfg.AgeThresholdSec,
+			s.cfg.MaxObjects,
+		)
+	}
+}
+
+func (s *PolicyScanner) isUnderPressure(ctx context.Context) (bool, string, error) {
+	nodes, err := s.store.ListNodeHeartbeats(ctx, 1000)
+	if err != nil {
+		return false, "", err
+	}
+	if len(nodes) == 0 {
+		return false, "no_heartbeats", nil
+	}
+
+	staleWindow := time.Duration(s.cfg.HeartbeatStaleSec) * time.Second
+	now := time.Now()
+	liveCount := 0
+
+	for _, n := range nodes {
+		if n.Status != "UP" {
+			continue
+		}
+		if staleWindow > 0 && now.Sub(n.LastSeenAt) > staleWindow {
+			continue
+		}
+		liveCount++
+
+		if s.cfg.HotPressureQueueDepth > 0 && n.IOQueueDepth >= s.cfg.HotPressureQueueDepth {
+			return true, fmt.Sprintf("queue_depth node=%s depth=%d threshold=%d", n.NodeID, n.IOQueueDepth, s.cfg.HotPressureQueueDepth), nil
+		}
+
+		if s.cfg.HotPressureDiskPct > 0 && n.TotalBytes > 0 {
+			usedBytes := n.TotalBytes - n.FreeBytes
+			if usedBytes < 0 {
+				usedBytes = 0
+			}
+			usedPct := int((float64(usedBytes) / float64(n.TotalBytes)) * 100)
+			if usedPct >= s.cfg.HotPressureDiskPct {
+				return true, fmt.Sprintf("disk_pct node=%s used_pct=%d threshold=%d", n.NodeID, usedPct, s.cfg.HotPressureDiskPct), nil
+			}
+		}
+	}
+
+	if liveCount == 0 {
+		return false, "no_live_nodes", nil
+	}
+	return false, "below_threshold", nil
 }

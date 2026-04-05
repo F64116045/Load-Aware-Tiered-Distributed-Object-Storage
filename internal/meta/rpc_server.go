@@ -128,7 +128,7 @@ func (s *RPCServer) dispatch(ctx context.Context, req rpcRequest) (interface{}, 
 		if err := decodeRPCParams(req.Params, &a); err != nil {
 			return nil, err
 		}
-		return nil, s.repo.UpsertNodeHeartbeat(ctx, a.NodeID, a.FreeBytes, a.IOQueueDepth, a.CPULoad, a.Status)
+		return nil, s.repo.UpsertNodeHeartbeat(ctx, a.NodeID, a.FreeBytes, a.TotalBytes, a.IOQueueDepth, a.CPULoad, a.Status)
 	case rpcMethodListHealthyNodeIDs:
 		var a rpcListHealthyNodeIDsArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {
@@ -290,6 +290,20 @@ func (s *RPCServer) dispatch(ctx context.Context, req rpcRequest) (interface{}, 
 			return nil, err
 		}
 		v, err := s.repo.EnqueueTieringCandidatesA1(ctx, a.AgeThresholdSec, a.MaxObjects)
+		return rpcIntResult{Value: v}, err
+	case rpcMethodEnqueueTieringCandidatesA2:
+		var a rpcEnqueueTieringCandidatesA2Args
+		if err := decodeRPCParams(req.Params, &a); err != nil {
+			return nil, err
+		}
+		v, err := s.repo.EnqueueTieringCandidatesA2(ctx, a.AgeThresholdSec, a.SizeThresholdBytes, a.MaxObjects)
+		return rpcIntResult{Value: v}, err
+	case rpcMethodEnqueueTieringCandidatesA3:
+		var a rpcEnqueueTieringCandidatesA3Args
+		if err := decodeRPCParams(req.Params, &a); err != nil {
+			return nil, err
+		}
+		v, err := s.repo.EnqueueTieringCandidatesA3(ctx, a.AgeThresholdSec, a.MaxObjects, a.MaxBytes)
 		return rpcIntResult{Value: v}, err
 	case rpcMethodEnqueueRepairCandidates:
 		var a rpcEnqueueRepairCandidatesArgs

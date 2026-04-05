@@ -187,19 +187,21 @@ func (s *storageEngine) getInfo() (map[string]interface{}, error) {
 	}, nil
 }
 
-func getFreeBytes(path string) int64 {
+func getDiskBytes(path string) (int64, int64) {
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(path, &fs); err != nil {
-		return 0
+		return 0, 0
 	}
-	return int64(fs.Bavail) * int64(fs.Bsize)
+	freeBytes := int64(fs.Bavail) * int64(fs.Bsize)
+	totalBytes := int64(fs.Blocks) * int64(fs.Bsize)
+	return freeBytes, totalBytes
 }
 
 func registerAndHeartbeatMeta(ctx context.Context, metaStore meta.Repository, nodeURL string, storage *storageEngine) {
 	if metaStore == nil {
 		return
 	}
-	log.Printf("[%s] Starting PostgreSQL heartbeat...", nodeURL)
+	log.Printf("[%s] Starting metadata heartbeat...", nodeURL)
 
 	ticker := time.NewTicker(config.NodeHeartbeatInterval)
 	defer ticker.Stop()
@@ -207,16 +209,18 @@ func registerAndHeartbeatMeta(ctx context.Context, metaStore meta.Repository, no
 	upsert := func(status string) {
 		hbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
+		freeBytes, totalBytes := getDiskBytes(storage.storageDir)
 		err := metaStore.UpsertNodeHeartbeat(
 			hbCtx,
 			nodeURL, // Keep URL as node_id so API can directly use it as endpoint.
-			getFreeBytes(storage.storageDir),
+			freeBytes,
+			totalBytes,
 			len(storage.writeQueue),
 			0, // TODO: wire actual cpu load in phase-2.
 			status,
 		)
 		if err != nil {
-			log.Printf("[%s] PostgreSQL heartbeat failed: %v", nodeURL, err)
+			log.Printf("[%s] metadata heartbeat failed: %v", nodeURL, err)
 		}
 	}
 

@@ -34,7 +34,7 @@ func TestRPCClientServerRoundTrip(t *testing.T) {
 		t.Fatalf("rpc ping failed: %v", err)
 	}
 
-	if err := client.UpsertNodeHeartbeat(ctx, "node-rpc", 100, 0, 0.1, "UP"); err != nil {
+	if err := client.UpsertNodeHeartbeat(ctx, "node-rpc", 100, 1000, 0, 0.1, "UP"); err != nil {
 		t.Fatalf("upsert node heartbeat failed: %v", err)
 	}
 	nodes, err := client.ListHealthyNodeIDs(ctx, 60)
@@ -48,12 +48,23 @@ func TestRPCClientServerRoundTrip(t *testing.T) {
 	objectID := "obj-rpc"
 	version := int64(303)
 	if err := client.UpsertNormalizedMetadata(ctx, objectID, map[string]interface{}{
-		"strategy":      "replication",
-		"hot_version":   version,
-		"cold_hash":     "hash-303",
-		"replica_nodes": []string{"node-rpc"},
+		"strategy":        "replication",
+		"hot_version":     version,
+		"cold_hash":       "hash-303",
+		"original_length": 16,
+		"replica_nodes":   []string{"node-rpc"},
 	}); err != nil {
 		t.Fatalf("upsert metadata failed: %v", err)
+	}
+	a2Count, err := client.EnqueueTieringCandidatesA2(ctx, 0, 1, 10)
+	if err != nil {
+		t.Fatalf("enqueue A2 candidates failed: %v", err)
+	}
+	if a2Count != 1 {
+		t.Fatalf("expected A2 enqueued=1, got=%d", a2Count)
+	}
+	if _, err := client.EnqueueTieringCandidatesA3(ctx, 0, 10, 1024); err != nil {
+		t.Fatalf("enqueue A3 candidates failed: %v", err)
 	}
 
 	taskID := "repl2ec:obj-rpc:303"
