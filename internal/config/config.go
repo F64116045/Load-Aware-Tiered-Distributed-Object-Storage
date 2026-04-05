@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,22 @@ type StorageStrategy string
 const (
 	StrategyReplication StorageStrategy = "replication"
 	StrategyEC          StorageStrategy = "ec"
+)
+
+type TieringPolicyVariant string
+
+const (
+	TieringPolicyA1 TieringPolicyVariant = "A1"
+	TieringPolicyA2 TieringPolicyVariant = "A2"
+	TieringPolicyA3 TieringPolicyVariant = "A3"
+)
+
+type TieringTriggerMode string
+
+const (
+	TieringTriggerPeriodic  TieringTriggerMode = "periodic"
+	TieringTriggerThreshold TieringTriggerMode = "threshold"
+	TieringTriggerHybrid    TieringTriggerMode = "hybrid"
 )
 
 // ExpectedNodeNames stores the set of valid storage node identifiers
@@ -72,6 +89,22 @@ var (
 	TieringPeriodSec = getEnvInt("TIERING_PERIOD_SEC", 300)
 	// MaxObjectsPerRound caps A1 periodic enqueue count per round.
 	MaxObjectsPerRound = getEnvInt("MAX_OBJECTS_PER_ROUND", 200)
+	// MaxBytesPerRound caps total bytes selected in one A3 round (<=0 means unlimited).
+	MaxBytesPerRound = getEnvInt64("MAX_BYTES_PER_ROUND", 1073741824)
+	// SizeThresholdBytes is used by A2 selection policy.
+	SizeThresholdBytes = getEnvInt64("SIZE_THRESHOLD_BYTES", 1048576)
+	// TieringPolicyVariantSetting selects candidate policy: A1, A2, A3.
+	TieringPolicyVariantSetting = normalizeTieringPolicyVariant(getEnv("TIERING_POLICY_VARIANT", string(TieringPolicyA1)))
+	// TieringTriggerModeSetting selects trigger mode: periodic, threshold, hybrid.
+	TieringTriggerModeSetting = normalizeTieringTriggerMode(getEnv("TIERING_TRIGGER_MODE", string(TieringTriggerPeriodic)))
+	// TieringThresholdCheckSec is threshold trigger sampling interval.
+	TieringThresholdCheckSec = getEnvInt("TIERING_THRESHOLD_CHECK_SEC", 10)
+	// TieringThresholdCooldownSec prevents threshold-trigger storms.
+	TieringThresholdCooldownSec = getEnvInt("TIERING_THRESHOLD_COOLDOWN_SEC", getEnvInt("THRESHOLD_COOLDOWN_SEC", 60))
+	// HotPressureDiskPct is the per-node used-disk trigger threshold.
+	HotPressureDiskPct = getEnvInt("HOT_PRESSURE_DISK_PCT", 80)
+	// HotPressureQueueDepth is the per-node IO queue-depth trigger threshold.
+	HotPressureQueueDepth = getEnvInt("HOT_PRESSURE_QUEUE_DEPTH", 1000)
 	// RepairScanEnabled controls periodic repair candidate scanning.
 	RepairScanEnabled = getEnvBool("REPAIR_SCAN_ENABLED", true)
 	// RepairMaxObjectsPerRound caps periodic repair enqueue count per round.
@@ -116,6 +149,18 @@ func getEnvInt(key string, fallback int) int {
 	return parsed
 }
 
+func getEnvInt64(key string, fallback int64) int64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
 func getEnvBool(key string, fallback bool) bool {
 	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
 	if v == "" {
@@ -129,4 +174,30 @@ func getEnvBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func normalizeTieringPolicyVariant(raw string) TieringPolicyVariant {
+	v := strings.ToUpper(strings.TrimSpace(raw))
+	switch TieringPolicyVariant(v) {
+	case TieringPolicyA1, TieringPolicyA2, TieringPolicyA3:
+		return TieringPolicyVariant(v)
+	default:
+		return TieringPolicyA1
+	}
+}
+
+func normalizeTieringTriggerMode(raw string) TieringTriggerMode {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch TieringTriggerMode(v) {
+	case TieringTriggerPeriodic, TieringTriggerThreshold, TieringTriggerHybrid:
+		return TieringTriggerMode(v)
+	default:
+		return TieringTriggerPeriodic
+	}
+}
+
+func TieringPolicyVariants() []TieringPolicyVariant {
+	out := []TieringPolicyVariant{TieringPolicyA1, TieringPolicyA2, TieringPolicyA3}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }

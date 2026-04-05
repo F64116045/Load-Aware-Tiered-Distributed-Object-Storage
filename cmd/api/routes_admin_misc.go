@@ -154,12 +154,23 @@ func registerAdminMetadataRoutes(router gin.IRoutes, metaStore meta.Repository) 
 		out := make([]gin.H, 0, len(nodes))
 		for _, n := range nodes {
 			isStale := now.Sub(n.LastSeenAt) > staleWindow
+			usedBytes := n.TotalBytes - n.FreeBytes
+			if usedBytes < 0 {
+				usedBytes = 0
+			}
+			usedPct := 0.0
+			if n.TotalBytes > 0 {
+				usedPct = (float64(usedBytes) / float64(n.TotalBytes)) * 100
+			}
 			out = append(out, gin.H{
 				"node_id":        n.NodeID,
 				"status":         n.Status,
 				"last_seen_at":   n.LastSeenAt,
 				"is_stale":       isStale,
 				"free_bytes":     n.FreeBytes,
+				"total_bytes":    n.TotalBytes,
+				"used_bytes":     usedBytes,
+				"used_pct":       usedPct,
 				"io_queue_depth": n.IOQueueDepth,
 				"cpu_load":       n.CPULoad,
 			})

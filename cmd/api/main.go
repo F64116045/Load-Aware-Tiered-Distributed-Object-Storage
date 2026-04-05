@@ -228,6 +228,9 @@ type v2ObjectRouteDeps struct {
 	loadMetadata                 func(ctx context.Context, key string) (map[string]interface{}, string, error)
 	readReplication              func(ctx context.Context, replicaNodes []string, key string) ([]byte, error)
 	readEC                       func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error)
+	deleteReplication            func(ctx context.Context, replicaNodes []string, key string) (int, error)
+	deleteEC                     func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (int, error)
+	deleteNormalizedMetadata     func(ctx context.Context, key string) error
 	now                          func() time.Time
 }
 
@@ -341,6 +344,73 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			contentType = strings.TrimSpace(ct)
 		}
 		c.Data(http.StatusOK, contentType, dataBytes)
+	})
+
+	router.DELETE("/v2/objects/:id", func(c *gin.Context) {
+		start := nowFn()
+		objectID := strings.TrimSpace(c.Param("id"))
+		if objectID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
+			return
+		}
+
+		if deps.deleteReplication == nil || deps.deleteEC == nil || deps.deleteNormalizedMetadata == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "delete dependencies are not configured"})
+			return
+		}
+
+		replicaNodes, ecNodes, err := deps.getDynamicNodes(c)
+		if err != nil {
+			return
+		}
+
+		metadata, _, err := deps.loadMetadata(c.Request.Context(), objectID)
+		if err != nil {
+			if errors.Is(err, errMetadataNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("Metadata not found for key '%s'", objectID)})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		strategyStr, _ := metadata["strategy"].(string)
+		result := gin.H{
+			"status":    "ok",
+			"object_id": objectID,
+			"strategy":  strategyStr,
+		}
+
+		switch config.StorageStrategy(strategyStr) {
+		case config.StrategyReplication:
+			deleted, delErr := deps.deleteReplication(c.Request.Context(), replicaNodes, objectID)
+			if delErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": delErr.Error()})
+				return
+			}
+			result["nodes_deleted"] = deleted
+		case config.StrategyEC:
+			deleted, delErr := deps.deleteEC(c.Request.Context(), ecNodes, metadata)
+			if delErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": delErr.Error()})
+				return
+			}
+			result["chunks_deleted"] = deleted
+		default:
+			c.JSON(http.StatusConflict, gin.H{
+				"error":    "object strategy is not deletable via /v2/objects",
+				"strategy": strategyStr,
+			})
+			return
+		}
+
+		if err := deps.deleteNormalizedMetadata(c.Request.Context(), objectID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("delete metadata failed: %v", err)})
+			return
+		}
+
+		result["latency_ms"] = nowFn().Sub(start).Milliseconds()
+		c.JSON(http.StatusOK, result)
 	})
 }
 

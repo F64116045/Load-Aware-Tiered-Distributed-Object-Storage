@@ -285,7 +285,7 @@ func (s *RocksStore) GetTieringLeaderState(ctx context.Context, lockKey int64) (
 	return rec, nil
 }
 
-func (s *RocksStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, ioQueueDepth int, cpuLoad float64, status string) error {
+func (s *RocksStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, status string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -299,6 +299,7 @@ func (s *RocksStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, fre
 		NodeID:       nodeID,
 		LastSeenAt:   time.Now(),
 		FreeBytes:    freeBytes,
+		TotalBytes:   totalBytes,
 		IOQueueDepth: ioQueueDepth,
 		CPULoad:      cpuLoad,
 		Status:       status,
@@ -893,6 +894,35 @@ func (s *RocksStore) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr 
 }
 
 func (s *RocksStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, 0, false)
+}
+
+func (s *RocksStore) EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error) {
+	if sizeThresholdBytes < 0 {
+		sizeThresholdBytes = 0
+	}
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, sizeThresholdBytes, 0, false)
+}
+
+func (s *RocksStore) EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, maxBytes, true)
+}
+
+type rocksTieringCandidate struct {
+	ObjectID  string
+	Version   int64
+	SizeBytes int64
+	UpdatedAt time.Time
+}
+
+func (s *RocksStore) enqueueTieringCandidates(
+	ctx context.Context,
+	ageThresholdSec int,
+	maxObjects int,
+	minSizeBytes int64,
+	maxBytes int64,
+	applyByteBudget bool,
+) (int, error) {
 	if s == nil || s.db == nil {
 		return 0, nil
 	}
@@ -911,7 +941,7 @@ func (s *RocksStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThreshol
 		return 0, err
 	}
 	eligibleBefore := time.Now().Add(-time.Duration(ageThresholdSec) * time.Second)
-	candidates := make([]rocksObjectRecord, 0, len(objects))
+	candidates := make([]rocksTieringCandidate, 0, len(objects))
 	for _, o := range objects {
 		if o.State != "HOT_ACTIVE" {
 			continue
@@ -919,18 +949,54 @@ func (s *RocksStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThreshol
 		if o.UpdatedAt.After(eligibleBefore) {
 			continue
 		}
-		candidates = append(candidates, o)
+		ver, found, err := s.getObjectVersionRecord(rocksObjectVersionKey(o.ObjectID, o.CurrentVersion))
+		if err != nil {
+			return 0, err
+		}
+		if !found || ver.Tier != "HOT" {
+			continue
+		}
+		if minSizeBytes > 0 && ver.SizeBytes < minSizeBytes {
+			continue
+		}
+		candidates = append(candidates, rocksTieringCandidate{
+			ObjectID:  o.ObjectID,
+			Version:   o.CurrentVersion,
+			SizeBytes: ver.SizeBytes,
+			UpdatedAt: o.UpdatedAt,
+		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].UpdatedAt.Equal(candidates[j].UpdatedAt) {
+			if candidates[i].SizeBytes != candidates[j].SizeBytes {
+				return candidates[i].SizeBytes > candidates[j].SizeBytes
+			}
+			return candidates[i].ObjectID < candidates[j].ObjectID
+		}
 		return candidates[i].UpdatedAt.Before(candidates[j].UpdatedAt)
 	})
-	if len(candidates) > maxObjects {
+	if !applyByteBudget && len(candidates) > maxObjects {
 		candidates = candidates[:maxObjects]
 	}
 
+	var usedBytes int64
 	enqueued := 0
+	selected := 0
 	for _, c := range candidates {
-		taskID := fmt.Sprintf("repl2ec:%s:%d", c.ObjectID, c.CurrentVersion)
+		if selected >= maxObjects {
+			break
+		}
+		if applyByteBudget && maxBytes > 0 {
+			if c.SizeBytes > 0 && usedBytes+c.SizeBytes > maxBytes {
+				continue
+			}
+			if c.SizeBytes > 0 {
+				usedBytes += c.SizeBytes
+			}
+		}
+		selected++
+
+		taskID := fmt.Sprintf("repl2ec:%s:%d", c.ObjectID, c.Version)
 		taskKey := rocksTaskKey(taskID)
 		_, found, err := s.getTaskRecord(taskKey)
 		if err != nil {
@@ -940,7 +1006,7 @@ func (s *RocksStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThreshol
 			task := &rocksTaskRecord{
 				TaskID:      taskID,
 				ObjectID:    c.ObjectID,
-				Version:     c.CurrentVersion,
+				Version:     c.Version,
 				TaskType:    "REPL_TO_EC",
 				TaskState:   "PENDING",
 				Priority:    100,
@@ -953,9 +1019,19 @@ func (s *RocksStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThreshol
 			enqueued++
 		}
 
-		c.State = "MIGRATION_PENDING"
-		c.UpdatedAt = time.Now()
-		if err := s.putJSON(rocksObjectKey(c.ObjectID), &c); err != nil {
+		obj, found, err := s.getObjectRecord(rocksObjectKey(c.ObjectID))
+		if err != nil {
+			return enqueued, err
+		}
+		if !found {
+			continue
+		}
+		if obj.CurrentVersion != c.Version || obj.State != "HOT_ACTIVE" {
+			continue
+		}
+		obj.State = "MIGRATION_PENDING"
+		obj.UpdatedAt = time.Now()
+		if err := s.putJSON(rocksObjectKey(c.ObjectID), obj); err != nil {
 			return enqueued, err
 		}
 	}

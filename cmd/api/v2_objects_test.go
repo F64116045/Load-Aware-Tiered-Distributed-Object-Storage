@@ -329,3 +329,170 @@ func TestV2Object_ErrorPaths(t *testing.T) {
 		}
 	})
 }
+
+func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
+	t.Run("replication", func(t *testing.T) {
+		var deletedMetaKey string
+		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
+			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
+			},
+			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
+				return nil, nil
+			},
+			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+				return map[string]interface{}{"strategy": string(config.StrategyReplication)}, "postgres_normalized", nil
+			},
+			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+				return nil, nil
+			},
+			readEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
+				return nil, nil
+			},
+			deleteReplication: func(ctx context.Context, replicaNodes []string, key string) (int, error) {
+				if key != "d1" {
+					t.Fatalf("unexpected delete key: %s", key)
+				}
+				return 3, nil
+			},
+			deleteEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (int, error) {
+				return 0, errors.New("should not be called")
+			},
+			deleteNormalizedMetadata: func(ctx context.Context, key string) error {
+				deletedMetaKey = key
+				return nil
+			},
+			now: time.Now,
+		})
+
+		req := httptest.NewRequest(http.MethodDelete, "/v2/objects/d1", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+		}
+		if deletedMetaKey != "d1" {
+			t.Fatalf("expected deleted metadata key d1, got %q", deletedMetaKey)
+		}
+	})
+
+	t.Run("ec", func(t *testing.T) {
+		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
+			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
+			},
+			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
+				return nil, nil
+			},
+			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+				return map[string]interface{}{
+					"strategy":     string(config.StrategyEC),
+					"chunk_prefix": "d2_cold_chunk_",
+				}, "postgres_normalized", nil
+			},
+			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+				return nil, nil
+			},
+			readEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
+				return nil, nil
+			},
+			deleteReplication: func(ctx context.Context, replicaNodes []string, key string) (int, error) {
+				return 0, errors.New("should not be called")
+			},
+			deleteEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (int, error) {
+				return 6, nil
+			},
+			deleteNormalizedMetadata: func(ctx context.Context, key string) error {
+				return nil
+			},
+			now: time.Now,
+		})
+
+		req := httptest.NewRequest(http.MethodDelete, "/v2/objects/d2", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestV2DeleteObject_ErrorPaths(t *testing.T) {
+	t.Run("metadata_not_found", func(t *testing.T) {
+		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
+			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
+			},
+			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
+				return nil, nil
+			},
+			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+				return nil, "", errMetadataNotFound
+			},
+			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+				return nil, nil
+			},
+			readEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
+				return nil, nil
+			},
+			deleteReplication: func(ctx context.Context, replicaNodes []string, key string) (int, error) {
+				return 0, nil
+			},
+			deleteEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (int, error) {
+				return 0, nil
+			},
+			deleteNormalizedMetadata: func(ctx context.Context, key string) error {
+				return nil
+			},
+			now: time.Now,
+		})
+
+		req := httptest.NewRequest(http.MethodDelete, "/v2/objects/notfound", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected %d, got %d, body=%s", http.StatusNotFound, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("strategy_conflict", func(t *testing.T) {
+		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
+			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
+			},
+			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
+				return nil, nil
+			},
+			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+				return map[string]interface{}{"strategy": "field_hybrid"}, "postgres_normalized", nil
+			},
+			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+				return nil, nil
+			},
+			readEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
+				return nil, nil
+			},
+			deleteReplication: func(ctx context.Context, replicaNodes []string, key string) (int, error) {
+				return 0, nil
+			},
+			deleteEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (int, error) {
+				return 0, nil
+			},
+			deleteNormalizedMetadata: func(ctx context.Context, key string) error {
+				return nil
+			},
+			now: time.Now,
+		})
+
+		req := httptest.NewRequest(http.MethodDelete, "/v2/objects/conflict", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("expected %d, got %d, body=%s", http.StatusConflict, rec.Code, rec.Body.String())
+		}
+	})
+}

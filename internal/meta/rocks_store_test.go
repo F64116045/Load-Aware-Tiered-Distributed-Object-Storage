@@ -231,7 +231,7 @@ func TestRocksStore_PolicyHeartbeatAndLeaderState(t *testing.T) {
 		t.Fatalf("unexpected state after policy enqueue: %+v", snap)
 	}
 
-	if err := store.UpsertNodeHeartbeat(ctx, "node-x", 12345, 1, 0.3, "UP"); err != nil {
+	if err := store.UpsertNodeHeartbeat(ctx, "node-x", 12345, 99999, 1, 0.3, "UP"); err != nil {
 		t.Fatalf("upsert heartbeat failed: %v", err)
 	}
 	nodes, err := store.ListHealthyNodeIDs(ctx, 60)
@@ -377,5 +377,109 @@ func TestRocksStore_EnqueueRepairCandidates_EC(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected repair task: %s", taskID)
+	}
+}
+
+func TestRocksStore_EnqueueTieringCandidates_A2(t *testing.T) {
+	t.Parallel()
+
+	store := newTestRocksStore(t)
+	ctx := context.Background()
+
+	inputs := []struct {
+		objectID string
+		version  int64
+		size     int
+	}{
+		{objectID: "a2-small", version: 1, size: 100},
+		{objectID: "a2-mid", version: 2, size: 400},
+		{objectID: "a2-large", version: 3, size: 800},
+	}
+
+	for _, in := range inputs {
+		if err := store.UpsertNormalizedMetadata(ctx, in.objectID, map[string]interface{}{
+			"strategy":        "replication",
+			"hot_version":     in.version,
+			"cold_hash":       fmt.Sprintf("hash-%d", in.version),
+			"original_length": in.size,
+			"replica_nodes":   []string{"node-a"},
+		}); err != nil {
+			t.Fatalf("upsert metadata failed object=%s: %v", in.objectID, err)
+		}
+	}
+
+	enqueued, err := store.EnqueueTieringCandidatesA2(ctx, 0, 300, 10)
+	if err != nil {
+		t.Fatalf("enqueue A2 candidates failed: %v", err)
+	}
+	if enqueued != 2 {
+		t.Fatalf("expected A2 enqueued=2, got=%d", enqueued)
+	}
+
+	tasks, err := store.ListTieringTasks(ctx, "", "REPL_TO_EC", 20)
+	if err != nil {
+		t.Fatalf("list tiering tasks failed: %v", err)
+	}
+	gotTasks := map[string]bool{}
+	for _, task := range tasks {
+		gotTasks[task.TaskID] = true
+	}
+	if !gotTasks["repl2ec:a2-mid:2"] || !gotTasks["repl2ec:a2-large:3"] {
+		t.Fatalf("unexpected A2 tasks: %+v", gotTasks)
+	}
+	if gotTasks["repl2ec:a2-small:1"] {
+		t.Fatalf("small object should not be selected by A2 threshold")
+	}
+}
+
+func TestRocksStore_EnqueueTieringCandidates_A3ByteBudget(t *testing.T) {
+	t.Parallel()
+
+	store := newTestRocksStore(t)
+	ctx := context.Background()
+
+	inputs := []struct {
+		objectID string
+		version  int64
+		size     int
+	}{
+		{objectID: "a3-1", version: 1, size: 120},
+		{objectID: "a3-2", version: 2, size: 80},
+		{objectID: "a3-3", version: 3, size: 70},
+	}
+
+	for _, in := range inputs {
+		if err := store.UpsertNormalizedMetadata(ctx, in.objectID, map[string]interface{}{
+			"strategy":        "replication",
+			"hot_version":     in.version,
+			"cold_hash":       fmt.Sprintf("hash-%d", in.version),
+			"original_length": in.size,
+			"replica_nodes":   []string{"node-a"},
+		}); err != nil {
+			t.Fatalf("upsert metadata failed object=%s: %v", in.objectID, err)
+		}
+	}
+
+	enqueued, err := store.EnqueueTieringCandidatesA3(ctx, 0, 10, 200)
+	if err != nil {
+		t.Fatalf("enqueue A3 candidates failed: %v", err)
+	}
+	if enqueued != 2 {
+		t.Fatalf("expected A3 enqueued=2 under byte budget, got=%d", enqueued)
+	}
+
+	tasks, err := store.ListTieringTasks(ctx, "", "REPL_TO_EC", 20)
+	if err != nil {
+		t.Fatalf("list tiering tasks failed: %v", err)
+	}
+	gotTasks := map[string]bool{}
+	for _, task := range tasks {
+		gotTasks[task.TaskID] = true
+	}
+	if !gotTasks["repl2ec:a3-1:1"] || !gotTasks["repl2ec:a3-2:2"] {
+		t.Fatalf("unexpected A3 tasks: %+v", gotTasks)
+	}
+	if gotTasks["repl2ec:a3-3:3"] {
+		t.Fatalf("third object should be skipped by A3 byte budget")
 	}
 }
