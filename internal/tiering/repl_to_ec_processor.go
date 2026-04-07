@@ -47,9 +47,8 @@ func (p *ReplicationToECProcessor) ProcessReplicationToEC(ctx context.Context, t
 		return err
 	}
 	if snapshot == nil {
-		// Metadata already removed or stale task; treat as idempotent completion.
-		log.Printf("[TieringWorker] task=%s object=%s no snapshot, skip", task.TaskID, task.ObjectID)
-		return nil
+		// Treat missing snapshot as task error so it is visible/retriable instead of silently DONE.
+		return fmt.Errorf("object snapshot missing: object=%s version=%d task=%s", task.ObjectID, task.Version, task.TaskID)
 	}
 	if snapshot.CurrentVersion != task.Version {
 		// Task targets an old version; safe to skip.

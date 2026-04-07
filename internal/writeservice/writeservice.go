@@ -5,9 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	neturl "net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -125,10 +128,22 @@ func toInt64(v interface{}, fallback int64) int64 {
 		return int64(t)
 	case int64:
 		return t
+	case json.Number:
+		n, err := t.Int64()
+		if err != nil {
+			return fallback
+		}
+		return n
 	case float32:
 		return int64(t)
 	case float64:
 		return int64(t)
+	case string:
+		n, err := strconv.ParseInt(t, 10, 64)
+		if err != nil {
+			return fallback
+		}
+		return n
 	default:
 		return fallback
 	}
@@ -187,17 +202,20 @@ func (s *Service) writeReplication(
 	// 用來記錄哪些節點寫入成功，方便 Healer 除錯或 API 回傳
 	writtenNodes := []string{}
 
-	for _, url := range replicaNodes {
+	for _, nodeURL := range replicaNodes {
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()
 			req, _ := http.NewRequestWithContext(ctx, "POST",
-				fmt.Sprintf("%s/store?key=%s", n, key),
+				fmt.Sprintf("%s/store?key=%s", n, neturl.QueryEscape(key)),
 				bytes.NewReader(value),
 			)
 			req.Header.Set("Content-Type", "application/octet-stream")
 
 			resp, err := s.http.Do(req)
+			if err == nil {
+				_ = resp.Body.Close()
+			}
 			if err == nil && resp.StatusCode == http.StatusOK {
 				mu.Lock()
 				success++
@@ -206,7 +224,7 @@ func (s *Service) writeReplication(
 			} else {
 				log.Printf("[WriteReplication] Failed to write to %s: %v", n, err)
 			}
-		}(url)
+		}(nodeURL)
 	}
 	wg.Wait()
 
@@ -216,9 +234,11 @@ func (s *Service) writeReplication(
 	}
 
 	finalMeta := map[string]interface{}{
-		"strategy":        string(config.StrategyReplication),
-		"hot_version":     time.Now().UnixNano(),
-		"cold_version":    0,
+		"strategy": string(config.StrategyReplication),
+		// Keep version fields as decimal strings to avoid int64 precision loss
+		// when metadata crosses JSON map[string]interface{} RPC boundaries.
+		"hot_version":     strconv.FormatInt(time.Now().UnixNano(), 10),
+		"cold_version":    "0",
 		"cold_hash":       "",
 		"original_length": len(value),
 		"replica_nodes":   writtenNodes,
@@ -287,14 +307,18 @@ func (s *Service) WriteEC(
 		wg.Add(1)
 		go func(idx int, c []byte) {
 			defer wg.Done()
-			url := ecNodes[idx]
+			nodeURL := ecNodes[idx]
+			chunkKey := fmt.Sprintf("%s%d", chunkPrefix, idx)
 			req, _ := http.NewRequestWithContext(ctx, "POST",
-				fmt.Sprintf("%s/store?key=%s%d", url, chunkPrefix, idx),
+				fmt.Sprintf("%s/store?key=%s", nodeURL, neturl.QueryEscape(chunkKey)),
 				bytes.NewReader(c),
 			)
 			req.Header.Set("Content-Type", "application/octet-stream")
 
 			resp, err := s.http.Do(req)
+			if err == nil {
+				_ = resp.Body.Close()
+			}
 			if err == nil && resp.StatusCode == http.StatusOK {
 				mu.Lock()
 				success++
@@ -314,8 +338,8 @@ func (s *Service) WriteEC(
 	for k, v := range writeMeta {
 		finalMeta[k] = v
 	}
-	finalMeta["hot_version"] = 0
-	finalMeta["cold_version"] = time.Now().UnixNano()
+	finalMeta["hot_version"] = "0"
+	finalMeta["cold_version"] = strconv.FormatInt(time.Now().UnixNano(), 10)
 	finalMeta["cold_hash"] = computeSHA256Hex(value)
 
 	// [ADDED] Mark as dirty if any chunk failed

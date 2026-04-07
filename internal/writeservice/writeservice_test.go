@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"hybrid_distributed_store/internal/config"
@@ -37,6 +37,23 @@ func (m *mockHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	if m.shouldFail {
 		return nil, fmt.Errorf("mock network error")
 	}
+	return &http.Response{
+		StatusCode: m.statusCode,
+		Body:       io.NopCloser(strings.NewReader("ok")),
+		Header:     make(http.Header),
+	}, nil
+}
+
+type recordingHTTPClient struct {
+	statusCode int
+	mu         sync.Mutex
+	urls       []string
+}
+
+func (m *recordingHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	m.mu.Lock()
+	m.urls = append(m.urls, req.URL.String())
+	m.mu.Unlock()
 	return &http.Response{
 		StatusCode: m.statusCode,
 		Body:       io.NopCloser(strings.NewReader("ok")),
@@ -182,13 +199,12 @@ func TestWriteReplication_PartialEnqueuesRepairTask(t *testing.T) {
 	config.HotWriteQuorum = 2
 	config.AgeThresholdSec = 3600
 
-	store, err := meta.NewRocksStore(meta.Config{
+	store, err := meta.NewTiKVStore(meta.Config{
 		Enabled: true,
-		Backend: "rocksdb",
-		DSN:     filepath.Join(t.TempDir(), "meta"),
+		DSN:     "memory://writeservice-partial",
 	})
 	if err != nil {
-		t.Fatalf("new rocks store failed: %v", err)
+		t.Fatalf("new tikv store failed: %v", err)
 	}
 	defer store.Close()
 
@@ -238,5 +254,34 @@ func TestWriteReplication_PartialEnqueuesRepairTask(t *testing.T) {
 	}
 	if !foundRepair {
 		t.Fatalf("expected repair task %s", repairTaskID)
+	}
+}
+
+func TestWriteReplication_EscapesSpecialKey(t *testing.T) {
+	origMetaEnabled := config.MetaEnabled
+	origWriteQuorum := config.HotWriteQuorum
+	defer func() {
+		config.MetaEnabled = origMetaEnabled
+		config.HotWriteQuorum = origWriteQuorum
+	}()
+	config.MetaEnabled = false
+	config.HotWriteQuorum = 1
+
+	rec := &recordingHTTPClient{statusCode: http.StatusOK}
+	svc := createMockService(&mockHTTPClient{statusCode: http.StatusOK})
+	svc.http = rec
+
+	key := "a&b"
+	if _, err := svc.WriteReplication(context.Background(), []string{"http://node1"}, key, []byte("data")); err != nil {
+		t.Fatalf("WriteReplication() expected success, got error: %v", err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.urls) != 1 {
+		t.Fatalf("expected exactly 1 outbound write request, got %d", len(rec.urls))
+	}
+	if !strings.Contains(rec.urls[0], "/store?key=a%26b") {
+		t.Fatalf("expected escaped key in request URL, got: %s", rec.urls[0])
 	}
 }
