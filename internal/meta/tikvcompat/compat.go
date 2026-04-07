@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -27,9 +29,24 @@ var ErrNotFound = errors.New("not found")
 
 type DB struct {
 	client *txnkv.Client
+	mem    *memoryStore
+}
+
+type memoryStore struct {
+	mu sync.RWMutex
+	kv map[string][]byte
+}
+
+func newMemoryStore() *memoryStore {
+	return &memoryStore{
+		kv: make(map[string][]byte),
+	}
 }
 
 func Open(dsn string, _ *Options) (*DB, error) {
+	if isMemoryDSN(dsn) {
+		return &DB{mem: newMemoryStore()}, nil
+	}
 	pdAddrs, err := parsePDAddrs(dsn)
 	if err != nil {
 		return nil, err
@@ -42,7 +59,10 @@ func Open(dsn string, _ *Options) (*DB, error) {
 }
 
 func (d *DB) Ping(ctx context.Context) error {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
+		return nil
+	}
+	if d.mem != nil {
 		return nil
 	}
 	txn, err := d.client.Begin()
@@ -58,14 +78,23 @@ func (d *DB) Ping(ctx context.Context) error {
 }
 
 func (d *DB) Close() error {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
+		return nil
+	}
+	if d.mem != nil {
 		return nil
 	}
 	return d.client.Close()
 }
 
 func (d *DB) Set(key []byte, value []byte, _ WriteOptions) error {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
+		return nil
+	}
+	if d.mem != nil {
+		d.mem.mu.Lock()
+		d.mem.kv[string(key)] = append([]byte(nil), value...)
+		d.mem.mu.Unlock()
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -86,7 +115,13 @@ func (d *DB) Set(key []byte, value []byte, _ WriteOptions) error {
 }
 
 func (d *DB) Delete(key []byte, _ WriteOptions) error {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
+		return nil
+	}
+	if d.mem != nil {
+		d.mem.mu.Lock()
+		delete(d.mem.kv, string(key))
+		d.mem.mu.Unlock()
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -111,8 +146,18 @@ type nopCloser struct{}
 func (nopCloser) Close() error { return nil }
 
 func (d *DB) Get(key []byte) ([]byte, io.Closer, error) {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
 		return nil, nopCloser{}, ErrNotFound
+	}
+	if d.mem != nil {
+		d.mem.mu.RLock()
+		v, ok := d.mem.kv[string(key)]
+		d.mem.mu.RUnlock()
+		if !ok {
+			return nil, nopCloser{}, ErrNotFound
+		}
+		out := append([]byte(nil), v...)
+		return out, nopCloser{}, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -170,7 +215,23 @@ func (b *Batch) Delete(key []byte, _ WriteOptions) error {
 }
 
 func (b *Batch) Commit(_ WriteOptions) error {
-	if b == nil || b.db == nil || b.db.client == nil || len(b.ops) == 0 {
+	if b == nil || b.db == nil || len(b.ops) == 0 {
+		return nil
+	}
+	if b.db.mem != nil {
+		b.db.mem.mu.Lock()
+		for _, op := range b.ops {
+			key := string(op.key)
+			if op.delete {
+				delete(b.db.mem.kv, key)
+				continue
+			}
+			b.db.mem.kv[key] = append([]byte(nil), op.value...)
+		}
+		b.db.mem.mu.Unlock()
+		return nil
+	}
+	if b.db.client == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -220,7 +281,7 @@ type Iterator struct {
 }
 
 func (d *DB) NewIter(opts *IterOptions) (*Iterator, error) {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
 		return &Iterator{idx: -1}, nil
 	}
 
@@ -229,6 +290,28 @@ func (d *DB) NewIter(opts *IterOptions) (*Iterator, error) {
 	if opts != nil {
 		lower = append([]byte(nil), opts.LowerBound...)
 		upper = append([]byte(nil), opts.UpperBound...)
+	}
+
+	if d.mem != nil {
+		out := &Iterator{idx: -1}
+		keys := make([]string, 0)
+		d.mem.mu.RLock()
+		for k := range d.mem.kv {
+			if len(lower) > 0 && bytes.Compare([]byte(k), lower) < 0 {
+				continue
+			}
+			if len(upper) > 0 && bytes.Compare([]byte(k), upper) >= 0 {
+				continue
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			out.keys = append(out.keys, []byte(k))
+			out.vals = append(out.vals, append([]byte(nil), d.mem.kv[k]...))
+		}
+		d.mem.mu.RUnlock()
+		return out, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -266,7 +349,7 @@ func (d *DB) TryAcquireLock(ctx context.Context, key []byte, owner []byte) (bool
 }
 
 func (d *DB) TryAcquireLockWithTTL(ctx context.Context, key []byte, owner []byte, ttl time.Duration) (bool, error) {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
 		return false, nil
 	}
 	if ttl <= 0 {
@@ -276,6 +359,28 @@ func (d *DB) TryAcquireLockWithTTL(ctx context.Context, key []byte, owner []byte
 	newVal, err := marshalLockValue(owner, now.Add(ttl))
 	if err != nil {
 		return false, err
+	}
+	if d.mem != nil {
+		d.mem.mu.Lock()
+		defer d.mem.mu.Unlock()
+		existing, ok := d.mem.kv[string(key)]
+		if !ok {
+			d.mem.kv[string(key)] = newVal
+			return true, nil
+		}
+		existingOwner, expiresAt, decErr := unmarshalLockValue(existing)
+		if decErr != nil {
+			return false, decErr
+		}
+		if existingOwner == string(owner) && expiresAt > now.UnixNano() {
+			d.mem.kv[string(key)] = newVal
+			return true, nil
+		}
+		if expiresAt > now.UnixNano() {
+			return false, nil
+		}
+		d.mem.kv[string(key)] = newVal
+		return true, nil
 	}
 
 	txn, err := d.client.Begin()
@@ -340,8 +445,24 @@ func (d *DB) TryAcquireLockWithTTL(ctx context.Context, key []byte, owner []byte
 }
 
 func (d *DB) IsLockOwner(ctx context.Context, key []byte, owner []byte) (bool, error) {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
 		return false, nil
+	}
+	if d.mem != nil {
+		d.mem.mu.RLock()
+		v, ok := d.mem.kv[string(key)]
+		d.mem.mu.RUnlock()
+		if !ok {
+			return false, nil
+		}
+		lockOwner, expiresAt, decErr := unmarshalLockValue(v)
+		if decErr != nil {
+			return false, decErr
+		}
+		if expiresAt <= time.Now().UnixNano() {
+			return false, nil
+		}
+		return lockOwner == string(owner), nil
 	}
 	txn, err := d.client.Begin()
 	if err != nil {
@@ -366,11 +487,33 @@ func (d *DB) IsLockOwner(ctx context.Context, key []byte, owner []byte) (bool, e
 }
 
 func (d *DB) RefreshLock(ctx context.Context, key []byte, owner []byte, ttl time.Duration) (bool, error) {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
 		return false, nil
 	}
 	if ttl <= 0 {
 		ttl = 10 * time.Second
+	}
+	if d.mem != nil {
+		d.mem.mu.Lock()
+		defer d.mem.mu.Unlock()
+		v, ok := d.mem.kv[string(key)]
+		if !ok {
+			return false, nil
+		}
+		lockOwner, expiresAt, decErr := unmarshalLockValue(v)
+		if decErr != nil {
+			return false, decErr
+		}
+		now := time.Now()
+		if lockOwner != string(owner) || expiresAt <= now.UnixNano() {
+			return false, nil
+		}
+		newVal, err := marshalLockValue(owner, now.Add(ttl))
+		if err != nil {
+			return false, err
+		}
+		d.mem.kv[string(key)] = newVal
+		return true, nil
 	}
 	txn, err := d.client.Begin()
 	if err != nil {
@@ -414,7 +557,24 @@ func (d *DB) RefreshLock(ctx context.Context, key []byte, owner []byte, ttl time
 }
 
 func (d *DB) ReleaseLock(ctx context.Context, key []byte, owner []byte) error {
-	if d == nil || d.client == nil {
+	if d == nil || (d.client == nil && d.mem == nil) {
+		return nil
+	}
+	if d.mem != nil {
+		d.mem.mu.Lock()
+		defer d.mem.mu.Unlock()
+		v, ok := d.mem.kv[string(key)]
+		if !ok {
+			return nil
+		}
+		lockOwner, _, decErr := unmarshalLockValue(v)
+		if decErr != nil {
+			return decErr
+		}
+		if !bytes.Equal([]byte(lockOwner), owner) {
+			return nil
+		}
+		delete(d.mem.kv, string(key))
 		return nil
 	}
 	txn, err := d.client.Begin()
@@ -545,4 +705,12 @@ func parsePDAddrs(dsn string) ([]string, error) {
 		return nil, fmt.Errorf("invalid tikv dsn: %q", dsn)
 	}
 	return out, nil
+}
+
+func isMemoryDSN(dsn string) bool {
+	raw := strings.ToLower(strings.TrimSpace(dsn))
+	return raw == "memory" ||
+		raw == "mem" ||
+		strings.HasPrefix(raw, "memory://") ||
+		strings.HasPrefix(raw, "mem://")
 }

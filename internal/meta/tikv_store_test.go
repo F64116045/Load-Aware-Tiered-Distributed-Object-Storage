@@ -13,6 +13,7 @@ func TestResolveTiKVEndpoints(t *testing.T) {
 	}{
 		{name: "plain_csv", in: "127.0.0.1:2379,127.0.0.1:2380", want: "127.0.0.1:2379,127.0.0.1:2380"},
 		{name: "tikv_scheme", in: "tikv://127.0.0.1:2379", want: "127.0.0.1:2379"},
+		{name: "memory_scheme", in: "memory://unit", want: "memory://unit"},
 		{name: "empty", in: "", wantErr: true},
 		{name: "scheme_only", in: "tikv://", wantErr: true},
 	}
@@ -38,12 +39,11 @@ func TestResolveTiKVEndpoints(t *testing.T) {
 	}
 }
 
-func TestNewRepository_TiKVBackendRequiresDSN(t *testing.T) {
+func TestNewRepository_RequiresDSNWithoutEndpoint(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewRepository(Config{
 		Enabled: true,
-		Backend: "tikv",
 	})
 	if err == nil {
 		t.Fatalf("expected error when tikv backend dsn is empty")

@@ -3,7 +3,6 @@ package meta
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -147,6 +146,10 @@ func resolveTiKVEndpoints(dsn string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("meta dsn is required for tikv backend")
 	}
+	lower := strings.ToLower(raw)
+	if lower == "memory" || lower == "mem" || strings.HasPrefix(lower, "memory://") || strings.HasPrefix(lower, "mem://") {
+		return raw, nil
+	}
 	if strings.HasPrefix(strings.ToLower(raw), "tikv://") {
 		raw = strings.TrimPrefix(raw, "tikv://")
 	}
@@ -161,10 +164,6 @@ func (s *TiKVStore) Ping(ctx context.Context) error {
 		return nil
 	}
 	return s.db.Ping(ctx)
-}
-
-func (s *TiKVStore) DB() *sql.DB {
-	return nil
 }
 
 func (s *TiKVStore) Close() error {
@@ -561,13 +560,16 @@ func (s *TiKVStore) GetObjectAdminView(ctx context.Context, objectID string) (*O
 			CreatedAt:      ver.CreatedAt,
 		}
 		if ver.ContentType != nil {
-			v.ContentType = sql.NullString{String: *ver.ContentType, Valid: true}
+			contentType := *ver.ContentType
+			v.ContentType = &contentType
 		}
 		if ver.EncodingK != nil {
-			v.EncodingK = sql.NullInt64{Int64: int64(*ver.EncodingK), Valid: true}
+			encodingK := *ver.EncodingK
+			v.EncodingK = &encodingK
 		}
 		if ver.EncodingM != nil {
-			v.EncodingM = sql.NullInt64{Int64: int64(*ver.EncodingM), Valid: true}
+			encodingM := *ver.EncodingM
+			v.EncodingM = &encodingM
 		}
 		out.Version = v
 	}
@@ -1580,13 +1582,16 @@ func toTieringTaskFromTiKV(r tiKVTaskRecord) TieringTask {
 		ScheduledAt: r.ScheduledAt,
 	}
 	if r.LastError != nil {
-		out.LastError = sql.NullString{String: *r.LastError, Valid: true}
+		lastError := *r.LastError
+		out.LastError = &lastError
 	}
 	if r.StartedAt != nil {
-		out.StartedAt = sql.NullTime{Time: *r.StartedAt, Valid: true}
+		startedAt := *r.StartedAt
+		out.StartedAt = &startedAt
 	}
 	if r.FinishedAt != nil {
-		out.FinishedAt = sql.NullTime{Time: *r.FinishedAt, Valid: true}
+		finishedAt := *r.FinishedAt
+		out.FinishedAt = &finishedAt
 	}
 	return out
 }

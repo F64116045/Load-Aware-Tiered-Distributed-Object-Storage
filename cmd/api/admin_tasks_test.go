@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -40,7 +39,6 @@ func TestAdminTasksList_Success(t *testing.T) {
 					TaskState:   "PENDING",
 					Priority:    100,
 					RetryCount:  0,
-					LastError:   sql.NullString{},
 					ScheduledAt: now,
 				},
 				{
@@ -51,7 +49,7 @@ func TestAdminTasksList_Success(t *testing.T) {
 					TaskState:   "DONE",
 					Priority:    50,
 					RetryCount:  1,
-					LastError:   sql.NullString{Valid: true, String: "x"},
+					LastError:   pointer("x"),
 					ScheduledAt: now,
 				},
 			}, nil
@@ -90,6 +88,10 @@ func TestAdminTasksList_Success(t *testing.T) {
 	if actions1["retry_now"] != false || actions1["cancel"] != false {
 		t.Fatalf("expected DONE actions false/false, got %+v", actions1)
 	}
+}
+
+func pointer[T any](v T) *T {
+	return &v
 }
 
 func TestAdminTasksList_ObjectFilter(t *testing.T) {

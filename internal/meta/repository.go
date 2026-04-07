@@ -2,7 +2,6 @@ package meta
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -18,7 +17,6 @@ type LeaderLock interface {
 // This is the extension point for metadata backend implementations.
 type Repository interface {
 	Ping(ctx context.Context) error
-	DB() *sql.DB
 	Close() error
 
 	UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, status string) error
@@ -58,12 +56,10 @@ type Repository interface {
 	MarkReplicaLocationsDeleted(ctx context.Context, objectID string, version int64, nodeIDs []string) error
 }
 
-var _ Repository = (*Store)(nil)
-
 // NewRepository creates metadata repository by configured backend.
 func NewRepository(cfg Config) (Repository, error) {
 	if !cfg.Enabled {
-		return &Store{}, nil
+		return &TiKVStore{}, nil
 	}
 
 	endpoint := strings.TrimSpace(cfg.Endpoint)
@@ -73,18 +69,8 @@ func NewRepository(cfg Config) (Repository, error) {
 	if endpoint != "" {
 		return NewRPCClient(endpoint, cfg.AuthToken), nil
 	}
-
-	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
-	if backend == "" {
-		backend = "rocksdb"
+	if strings.TrimSpace(cfg.DSN) == "" {
+		return nil, fmt.Errorf("meta dsn is required when META_ENDPOINT is empty")
 	}
-
-	switch backend {
-	case "tikv":
-		return NewTiKVStore(cfg)
-	case "rocks", "rocksdb":
-		return NewRocksStore(cfg)
-	default:
-		return nil, fmt.Errorf("unsupported meta backend: %s (supported: rocksdb, tikv)", backend)
-	}
+	return NewTiKVStore(cfg)
 }

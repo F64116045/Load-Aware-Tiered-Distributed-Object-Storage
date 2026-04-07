@@ -3,7 +3,6 @@ package meta
 import (
 	"context"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -11,13 +10,12 @@ import (
 func TestRPCClientServerRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	store, err := NewRocksStore(Config{
+	store, err := NewTiKVStore(Config{
 		Enabled: true,
-		Backend: "rocksdb",
-		DSN:     filepath.Join(t.TempDir(), "meta-rocks"),
+		DSN:     "memory://rpc-roundtrip",
 	})
 	if err != nil {
-		t.Fatalf("new rocks store failed: %v", err)
+		t.Fatalf("new tikv store failed: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
@@ -104,13 +102,12 @@ func TestRPCClientServerRoundTrip(t *testing.T) {
 func TestRPCClientServerAuthToken(t *testing.T) {
 	t.Parallel()
 
-	store, err := NewRocksStore(Config{
+	store, err := NewTiKVStore(Config{
 		Enabled: true,
-		Backend: "rocksdb",
-		DSN:     filepath.Join(t.TempDir(), "meta-rocks-auth"),
+		DSN:     "memory://rpc-auth",
 	})
 	if err != nil {
-		t.Fatalf("new rocks store failed: %v", err)
+		t.Fatalf("new tikv store failed: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 

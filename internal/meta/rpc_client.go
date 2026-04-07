@@ -3,7 +3,6 @@ package meta
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -100,10 +99,6 @@ func (c *RPCClient) call(ctx context.Context, method string, params interface{},
 
 func (c *RPCClient) Ping(ctx context.Context) error {
 	return c.call(ctx, rpcMethodPing, nil, nil)
-}
-
-func (c *RPCClient) DB() *sql.DB {
-	return nil
 }
 
 func (c *RPCClient) Close() error {

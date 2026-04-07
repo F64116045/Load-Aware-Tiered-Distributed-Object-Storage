@@ -33,7 +33,7 @@ var (
 var errMetadataNotFound = errors.New("metadata not found")
 
 type metadataLookupMetrics struct {
-	postgresNormalizedHit uint64
+	normalizedMetadataHit uint64
 	notFound              uint64
 	errorCount            uint64
 }
@@ -42,8 +42,8 @@ var lookupMetrics metadataLookupMetrics
 
 func recordMetadataLookupHit(source string) {
 	switch source {
-	case "postgres_normalized":
-		atomic.AddUint64(&lookupMetrics.postgresNormalizedHit, 1)
+	case "normalized_metadata":
+		atomic.AddUint64(&lookupMetrics.normalizedMetadataHit, 1)
 	}
 }
 
@@ -57,7 +57,7 @@ func recordMetadataLookupError() {
 
 func metadataLookupSnapshot() gin.H {
 	return gin.H{
-		"postgres_normalized_hit": atomic.LoadUint64(&lookupMetrics.postgresNormalizedHit),
+		"normalized_metadata_hit": atomic.LoadUint64(&lookupMetrics.normalizedMetadataHit),
 		"not_found":               atomic.LoadUint64(&lookupMetrics.notFound),
 		"error_count":             atomic.LoadUint64(&lookupMetrics.errorCount),
 	}
@@ -91,10 +91,10 @@ func watchNodesFromMetadata(ctx context.Context, metaStore meta.Repository) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("%s[API-PG-Watcher] PANIC: %v%s\n", config.Colors["RED"], r, config.Colors["RESET"])
+			log.Printf("%s[API-Meta-Watcher] PANIC: %v%s\n", config.Colors["RED"], r, config.Colors["RESET"])
 			log.Println(string(debug.Stack()))
 		}
-		log.Printf("%s[API-PG-Watcher] Service Discovery stopped.%s\n", config.Colors["RED"], config.Colors["RESET"])
+		log.Printf("%s[API-Meta-Watcher] Service Discovery stopped.%s\n", config.Colors["RED"], config.Colors["RESET"])
 	}()
 
 	load := func() {
@@ -218,8 +218,8 @@ func loadMetadata(ctx context.Context, key string, metaStore meta.Repository) (m
 		return nil, "", errMetadataNotFound
 	}
 
-	recordMetadataLookupHit("postgres_normalized")
-	return pgNormalizedMeta, "postgres_normalized", nil
+	recordMetadataLookupHit("normalized_metadata")
+	return pgNormalizedMeta, "normalized_metadata", nil
 }
 
 type v2ObjectRouteDeps struct {
@@ -464,18 +464,18 @@ func registerAdminTaskRoutes(router gin.IRoutes, deps adminTaskRouteDeps) {
 		out := make([]gin.H, 0, len(tasks))
 		for _, t := range tasks {
 			lastErr := ""
-			if t.LastError.Valid {
-				lastErr = t.LastError.String
+			if t.LastError != nil {
+				lastErr = *t.LastError
 			}
 			retryNowAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT" || t.TaskState == "FAILED"
 			cancelAllowed := t.TaskState == "PENDING" || t.TaskState == "RUNNING" || t.TaskState == "RETRY_WAIT"
 			var startedAt interface{}
-			if t.StartedAt.Valid {
-				startedAt = t.StartedAt.Time
+			if t.StartedAt != nil {
+				startedAt = *t.StartedAt
 			}
 			var finishedAt interface{}
-			if t.FinishedAt.Valid {
-				finishedAt = t.FinishedAt.Time
+			if t.FinishedAt != nil {
+				finishedAt = *t.FinishedAt
 			}
 			retryLimitReached := t.RetryCount >= config.TieringTaskMaxRetryCount
 			out = append(out, gin.H{

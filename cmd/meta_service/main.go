@@ -22,16 +22,11 @@ func main() {
 	}
 
 	store, err := meta.NewRepository(meta.Config{
-		Backend:         config.MetaBackend,
 		Endpoint:        "",
 		RequireEndpoint: false,
 		AuthToken:       config.MetaRPCAuthToken,
 		Enabled:         config.MetaEnabled,
-		Driver:          config.MetaDriver,
 		DSN:             config.MetaDSN,
-		MaxOpenConns:    config.MetaMaxOpenConns,
-		MaxIdleConns:    config.MetaMaxIdleConns,
-		ConnMaxLifetime: config.MetaConnMaxLifetime,
 	})
 	if err != nil {
 		log.Fatalf("[meta-service] metadata repository init failed: %v", err)
@@ -44,16 +39,6 @@ func main() {
 		log.Fatalf("[meta-service] metadata ping failed: %v", err)
 	}
 	pingCancel()
-
-	if config.MetaAutoMigrate && strings.EqualFold(config.MetaBackend, "postgres") {
-		migrateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := meta.NewMigrator(store).Up(migrateCtx); err != nil {
-			cancel()
-			log.Fatalf("[meta-service] auto migration failed: %v", err)
-		}
-		cancel()
-		log.Printf("[meta-service] auto migration completed")
-	}
 
 	rpcServer := meta.NewRPCServer(store, config.MetaRPCAuthToken)
 	defer func() { _ = rpcServer.Close() }()
@@ -69,7 +54,7 @@ func main() {
 		err := store.Ping(ctx)
 		status := map[string]interface{}{
 			"service": "meta_service",
-			"backend": config.MetaBackend,
+			"backend": "tikv",
 			"status":  "up",
 		}
 		if err != nil {
@@ -94,7 +79,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("[meta-service] listening on :%s (backend=%s)", port, config.MetaBackend)
+		log.Printf("[meta-service] listening on :%s (backend=tikv)", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("[meta-service] listen failed: %v", err)
 		}

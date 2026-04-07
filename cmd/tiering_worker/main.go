@@ -155,16 +155,11 @@ func main() {
 	log.Println("[TieringWorker] Starting...")
 
 	store, err := meta.NewRepository(meta.Config{
-		Backend:         config.MetaBackend,
 		Endpoint:        config.MetaEndpoint,
 		RequireEndpoint: config.MetaRequireEndpoint,
 		AuthToken:       config.MetaRPCAuthToken,
 		Enabled:         config.MetaEnabled,
-		Driver:          config.MetaDriver,
 		DSN:             config.MetaDSN,
-		MaxOpenConns:    config.MetaMaxOpenConns,
-		MaxIdleConns:    config.MetaMaxIdleConns,
-		ConnMaxLifetime: config.MetaConnMaxLifetime,
 	})
 	if err != nil {
 		log.Fatalf("[TieringWorker] metadata store init failed: %v", err)

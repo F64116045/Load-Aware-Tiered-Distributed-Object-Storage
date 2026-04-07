@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,16 +39,11 @@ func initAppRuntime() (*appRuntime, func()) {
 	httpClient := httpclient.GetClient()
 
 	metaStore, err := meta.NewRepository(meta.Config{
-		Backend:         config.MetaBackend,
 		Endpoint:        config.MetaEndpoint,
 		RequireEndpoint: config.MetaRequireEndpoint,
 		AuthToken:       config.MetaRPCAuthToken,
 		Enabled:         config.MetaEnabled,
-		Driver:          config.MetaDriver,
 		DSN:             config.MetaDSN,
-		MaxOpenConns:    config.MetaMaxOpenConns,
-		MaxIdleConns:    config.MetaMaxIdleConns,
-		ConnMaxLifetime: config.MetaConnMaxLifetime,
 	})
 	if err != nil {
 		if config.MetaEnabled && config.MetaRequireEndpoint {
@@ -72,18 +65,6 @@ func initAppRuntime() (*appRuntime, func()) {
 			log.Printf("[API] Metadata ping failed: %v", pingErr)
 		} else {
 			rt.metadataStatus = "up"
-			if config.MetaAutoMigrate && strings.EqualFold(config.MetaBackend, "postgres") && strings.TrimSpace(config.MetaEndpoint) == "" {
-				migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				migrateErr := meta.NewMigrator(metaStore).Up(migrateCtx)
-				migrateCancel()
-				if migrateErr != nil {
-					rt.metadataStatus = "down"
-					rt.metadataErr = fmt.Sprintf("auto_migrate_failed: %v", migrateErr)
-					log.Printf("[API] Metadata auto migration failed: %v", migrateErr)
-				} else {
-					log.Printf("[API] Metadata auto migration completed.")
-				}
-			}
 		}
 	}
 	rt.metaStore = metaStore
