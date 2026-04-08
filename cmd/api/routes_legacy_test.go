@@ -51,11 +51,11 @@ func baseLegacyDeps() legacyRouteDeps {
 	}
 }
 
-func TestLegacyWrite_FieldHybridRejected(t *testing.T) {
+func TestLegacyWrite_UnknownStrategyRejected(t *testing.T) {
 	deps := baseLegacyDeps()
 	router := newLegacyTestRouter(deps)
 
-	req := httptest.NewRequest(http.MethodPost, "/write?key=k1&strategy=field_hybrid", strings.NewReader(`{"a":1}`))
+	req := httptest.NewRequest(http.MethodPost, "/write?key=k1&strategy=unknown_strategy", strings.NewReader(`{"a":1}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -79,11 +79,11 @@ func TestLegacyWrite_ECRejected(t *testing.T) {
 	}
 }
 
-func TestLegacyReadAndDelete_FieldHybridRejected(t *testing.T) {
+func TestLegacyReadAndDelete_UnknownStrategyRejected(t *testing.T) {
 	t.Run("read", func(t *testing.T) {
 		deps := baseLegacyDeps()
 		deps.loadMetadata = func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-			return map[string]interface{}{"strategy": "field_hybrid"}, "postgres_normalized", nil
+			return map[string]interface{}{"strategy": "unknown_strategy"}, "normalized_metadata", nil
 		}
 		router := newLegacyTestRouter(deps)
 
@@ -99,7 +99,7 @@ func TestLegacyReadAndDelete_FieldHybridRejected(t *testing.T) {
 	t.Run("delete", func(t *testing.T) {
 		deps := baseLegacyDeps()
 		deps.loadMetadata = func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-			return map[string]interface{}{"strategy": "field_hybrid"}, "postgres_normalized", nil
+			return map[string]interface{}{"strategy": "unknown_strategy"}, "normalized_metadata", nil
 		}
 		router := newLegacyTestRouter(deps)
 

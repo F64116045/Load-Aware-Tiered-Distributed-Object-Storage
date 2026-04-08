@@ -2,34 +2,33 @@ package meta
 
 import (
 	"context"
-	"database/sql"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"hybrid_distributed_store/internal/config"
+	pebble "hybrid_distributed_store/internal/meta/tikvcompat"
 )
 
 const (
-	rocksPrefixObject  = "obj/"
-	rocksPrefixObjVer  = "objv/"
-	rocksPrefixReplica = "repl/"
-	rocksPrefixECShard = "ec/"
-	rocksPrefixTask    = "task/"
-	rocksPrefixHB      = "hb/"
-	rocksPrefixLeader  = "leader/"
+	tiKVPrefixObject  = "obj/"
+	tiKVPrefixObjVer  = "objv/"
+	tiKVPrefixReplica = "repl/"
+	tiKVPrefixECShard = "ec/"
+	tiKVPrefixTask    = "task/"
+	tiKVPrefixHB      = "hb/"
+	tiKVPrefixLeader  = "leader/"
+	tiKVPrefixLk      = "leader_lock/"
 )
 
-type rocksObjectRecord struct {
+type tiKVObjectRecord struct {
 	ObjectID       string    `json:"object_id"`
 	TenantID       string    `json:"tenant_id"`
 	CurrentVersion int64     `json:"current_version"`
@@ -38,7 +37,7 @@ type rocksObjectRecord struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-type rocksObjectVersionRecord struct {
+type tiKVObjectVersionRecord struct {
 	ObjectID       string    `json:"object_id"`
 	Version        int64     `json:"version"`
 	SizeBytes      int64     `json:"size_bytes"`
@@ -50,7 +49,7 @@ type rocksObjectVersionRecord struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-type rocksReplicaRecord struct {
+type tiKVReplicaRecord struct {
 	ObjectID string `json:"object_id"`
 	Version  int64  `json:"version"`
 	NodeID   string `json:"node_id"`
@@ -58,7 +57,7 @@ type rocksReplicaRecord struct {
 	Status   string `json:"status"`
 }
 
-type rocksECShardRecord struct {
+type tiKVECShardRecord struct {
 	ObjectID   string `json:"object_id"`
 	Version    int64  `json:"version"`
 	ShardIndex int    `json:"shard_index"`
@@ -67,7 +66,7 @@ type rocksECShardRecord struct {
 	Status     string `json:"status"`
 }
 
-type rocksTaskRecord struct {
+type tiKVTaskRecord struct {
 	TaskID      string     `json:"task_id"`
 	ObjectID    string     `json:"object_id"`
 	Version     int64      `json:"version"`
@@ -81,135 +80,121 @@ type rocksTaskRecord struct {
 	FinishedAt  *time.Time `json:"finished_at,omitempty"`
 }
 
-type rocksLeaderLock struct {
-	file *os.File
+type tiKVLeaderLock struct {
+	store    *TiKVStore
+	lockKey  []byte
+	owner    []byte
+	ttl      time.Duration
+	released bool
 }
 
-func (l *rocksLeaderLock) Ping(ctx context.Context) error {
-	if l == nil || l.file == nil {
-		return fmt.Errorf("rocks leader lock is nil")
+func (l *tiKVLeaderLock) Ping(ctx context.Context) error {
+	if l == nil || l.store == nil || l.released {
+		return fmt.Errorf("tikv leader lock is nil")
 	}
-	if _, err := l.file.Stat(); err != nil {
-		return fmt.Errorf("rocks leader lock stat failed: %w", err)
+	ok, err := l.store.db.RefreshLock(ctx, l.lockKey, l.owner, l.ttl)
+	if err != nil {
+		return fmt.Errorf("tikv leader lock refresh failed: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("tikv leader lock was lost")
 	}
 	return nil
 }
 
-func (l *rocksLeaderLock) Release(ctx context.Context) error {
-	if l == nil || l.file == nil {
+func (l *tiKVLeaderLock) Release(ctx context.Context) error {
+	if l == nil || l.store == nil || l.released {
 		return nil
 	}
-	fd := int(l.file.Fd())
-	_ = syscall.Flock(fd, syscall.LOCK_UN)
-	err := l.file.Close()
-	l.file = nil
-	if err != nil {
-		return fmt.Errorf("close rocks leader lock failed: %w", err)
+	if err := l.store.db.ReleaseLock(ctx, l.lockKey, l.owner); err != nil {
+		return fmt.Errorf("tikv leader lock release failed: %w", err)
 	}
+	l.released = true
 	return nil
 }
 
-// RocksStore is a pebble-backed metadata repository.
-// Note: pebble itself is single-process per DB path. For multi-process metadata,
-// run a dedicated metadata service process and route all metadata operations through it.
-type RocksStore struct {
-	db   *pebble.DB
-	path string
-	mu   sync.RWMutex
+// TiKVStore is a TiKV-backed metadata repository.
+type TiKVStore struct {
+	db      *pebble.DB
+	mu      sync.RWMutex
+	lockTTL time.Duration
 }
 
-func NewRocksStore(cfg Config) (*RocksStore, error) {
+func NewTiKVStore(cfg Config) (*TiKVStore, error) {
 	if !cfg.Enabled {
-		return &RocksStore{}, nil
+		return &TiKVStore{}, nil
 	}
 
-	path, err := resolveRocksPath(cfg.DSN)
+	dsn, err := resolveTiKVEndpoints(cfg.DSN)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		return nil, fmt.Errorf("create rocks path failed: %w", err)
-	}
 
-	db, err := pebble.Open(path, &pebble.Options{})
+	db, err := pebble.Open(dsn, &pebble.Options{})
 	if err != nil {
-		return nil, fmt.Errorf("open rocks store failed: %w", err)
+		return nil, fmt.Errorf("open tikv store failed: %w", err)
 	}
 
-	return &RocksStore{
-		db:   db,
-		path: path,
+	return &TiKVStore{
+		db:      db,
+		lockTTL: 10 * time.Second,
 	}, nil
 }
 
-func resolveRocksPath(dsn string) (string, error) {
+func resolveTiKVEndpoints(dsn string) (string, error) {
 	raw := strings.TrimSpace(dsn)
 	if raw == "" {
-		return "", fmt.Errorf("meta dsn path is required for rocks backend")
+		return "", fmt.Errorf("meta dsn is required for tikv backend")
 	}
-	if strings.HasPrefix(raw, "file://") {
-		p := strings.TrimPrefix(raw, "file://")
-		if p == "" {
-			return "", fmt.Errorf("invalid rocks file DSN: %q", dsn)
-		}
-		return p, nil
+	lower := strings.ToLower(raw)
+	if lower == "memory" || lower == "mem" || strings.HasPrefix(lower, "memory://") || strings.HasPrefix(lower, "mem://") {
+		return raw, nil
 	}
-	if strings.Contains(raw, "://") {
-		return "", fmt.Errorf("rocks backend expects filesystem path DSN, got %q", dsn)
+	if strings.HasPrefix(strings.ToLower(raw), "tikv://") {
+		raw = strings.TrimPrefix(raw, "tikv://")
+	}
+	if raw == "" {
+		return "", fmt.Errorf("invalid tikv dsn: %q", dsn)
 	}
 	return raw, nil
 }
 
-func (s *RocksStore) Ping(ctx context.Context) error {
+func (s *TiKVStore) Ping(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	// Keep ping read-only to avoid introducing write amplification during health checks.
-	it, err := s.db.NewIter(nil)
-	if err != nil {
-		return fmt.Errorf("rocks ping iterator failed: %w", err)
-	}
-	defer it.Close()
-	return nil
+	return s.db.Ping(ctx)
 }
 
-func (s *RocksStore) DB() *sql.DB {
-	return nil
-}
-
-func (s *RocksStore) Close() error {
+func (s *TiKVStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
 	return s.db.Close()
 }
 
-func (s *RocksStore) TryAcquireLeaderLock(ctx context.Context, key int64) (LeaderLock, bool, error) {
+func (s *TiKVStore) TryAcquireLeaderLock(ctx context.Context, key int64) (LeaderLock, bool, error) {
 	if s == nil || s.db == nil {
 		return nil, false, nil
 	}
-
-	lockDir := filepath.Join(s.path, "locks")
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
-		return nil, false, fmt.Errorf("create lock dir failed: %w", err)
-	}
-	lockPath := filepath.Join(lockDir, fmt.Sprintf("leader_%d.lock", key))
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	lockKey := []byte(tiKVLeaderLockKey(key))
+	owner := tiKVNewLockOwnerToken()
+	acquired, err := s.db.TryAcquireLockWithTTL(ctx, lockKey, owner, s.lockTTL)
 	if err != nil {
-		return nil, false, fmt.Errorf("open lock file failed: %w", err)
+		return nil, false, err
 	}
-
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("acquire flock failed: %w", err)
+	if !acquired {
+		return nil, false, nil
 	}
-	return &rocksLeaderLock{file: f}, true, nil
+	return &tiKVLeaderLock{
+		store:   s,
+		lockKey: lockKey,
+		owner:   owner,
+		ttl:     s.lockTTL,
+	}, true, nil
 }
 
-func (s *RocksStore) UpsertTieringLeaderState(ctx context.Context, lockKey int64, leaderID, status string) error {
+func (s *TiKVStore) UpsertTieringLeaderState(ctx context.Context, lockKey int64, leaderID, status string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -223,7 +208,7 @@ func (s *RocksStore) UpsertTieringLeaderState(ctx context.Context, lockKey int64
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := rocksLeaderKey(lockKey)
+	key := tiKVLeaderKey(lockKey)
 	now := time.Now()
 	rec, found, err := s.getLeaderRecord(key)
 	if err != nil {
@@ -245,7 +230,7 @@ func (s *RocksStore) UpsertTieringLeaderState(ctx context.Context, lockKey int64
 	return s.putJSON(key, rec)
 }
 
-func (s *RocksStore) MarkTieringLeaderStopped(ctx context.Context, lockKey int64, leaderID, status string) error {
+func (s *TiKVStore) MarkTieringLeaderStopped(ctx context.Context, lockKey int64, leaderID, status string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -258,7 +243,7 @@ func (s *RocksStore) MarkTieringLeaderStopped(ctx context.Context, lockKey int64
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := rocksLeaderKey(lockKey)
+	key := tiKVLeaderKey(lockKey)
 	rec, found, err := s.getLeaderRecord(key)
 	if err != nil {
 		return err
@@ -271,13 +256,13 @@ func (s *RocksStore) MarkTieringLeaderStopped(ctx context.Context, lockKey int64
 	return s.putJSON(key, rec)
 }
 
-func (s *RocksStore) GetTieringLeaderState(ctx context.Context, lockKey int64) (*TieringLeaderState, error) {
+func (s *TiKVStore) GetTieringLeaderState(ctx context.Context, lockKey int64) (*TieringLeaderState, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	key := rocksLeaderKey(lockKey)
+	key := tiKVLeaderKey(lockKey)
 	rec, found, err := s.getLeaderRecord(key)
 	if err != nil || !found {
 		return nil, err
@@ -285,7 +270,7 @@ func (s *RocksStore) GetTieringLeaderState(ctx context.Context, lockKey int64) (
 	return rec, nil
 }
 
-func (s *RocksStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, status string) error {
+func (s *TiKVStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, status string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -304,10 +289,10 @@ func (s *RocksStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, fre
 		CPULoad:      cpuLoad,
 		Status:       status,
 	}
-	return s.putJSON(rocksHeartbeatKey(nodeID), &rec)
+	return s.putJSON(tiKVHeartbeatKey(nodeID), &rec)
 }
 
-func (s *RocksStore) ListHealthyNodeIDs(ctx context.Context, staleSec int) ([]string, error) {
+func (s *TiKVStore) ListHealthyNodeIDs(ctx context.Context, staleSec int) ([]string, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -336,7 +321,7 @@ func (s *RocksStore) ListHealthyNodeIDs(ctx context.Context, staleSec int) ([]st
 	return nodes, nil
 }
 
-func (s *RocksStore) ListNodeHeartbeats(ctx context.Context, limit int) ([]NodeHeartbeatSnapshot, error) {
+func (s *TiKVStore) ListNodeHeartbeats(ctx context.Context, limit int) ([]NodeHeartbeatSnapshot, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -362,7 +347,7 @@ func (s *RocksStore) ListNodeHeartbeats(ctx context.Context, limit int) ([]NodeH
 	return records, nil
 }
 
-func (s *RocksStore) UpsertNormalizedMetadata(ctx context.Context, objectID string, metadata map[string]interface{}) error {
+func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID string, metadata map[string]interface{}) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -384,13 +369,13 @@ func (s *RocksStore) UpsertNormalizedMetadata(ctx context.Context, objectID stri
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	objKey := rocksObjectKey(objectID)
+	objKey := tiKVObjectKey(objectID)
 	obj, found, err := s.getObjectRecord(objKey)
 	if err != nil {
 		return err
 	}
 	if !found {
-		obj = &rocksObjectRecord{
+		obj = &tiKVObjectRecord{
 			ObjectID:  objectID,
 			TenantID:  "default",
 			CreatedAt: now,
@@ -403,7 +388,7 @@ func (s *RocksStore) UpsertNormalizedMetadata(ctx context.Context, objectID stri
 	}
 	obj.UpdatedAt = now
 
-	verRec := &rocksObjectVersionRecord{
+	verRec := &tiKVObjectVersionRecord{
 		ObjectID:       objectID,
 		Version:        version,
 		SizeBytes:      sizeBytes,
@@ -429,7 +414,7 @@ func (s *RocksStore) UpsertNormalizedMetadata(ctx context.Context, objectID stri
 	if err := s.batchPutJSON(b, objKey, obj); err != nil {
 		return err
 	}
-	if err := s.batchPutJSON(b, rocksObjectVersionKey(objectID, version), verRec); err != nil {
+	if err := s.batchPutJSON(b, tiKVObjectVersionKey(objectID, version), verRec); err != nil {
 		return err
 	}
 
@@ -439,14 +424,14 @@ func (s *RocksStore) UpsertNormalizedMetadata(ctx context.Context, objectID stri
 			if nodeID == "" {
 				continue
 			}
-			rec := rocksReplicaRecord{
+			rec := tiKVReplicaRecord{
 				ObjectID: objectID,
 				Version:  version,
 				NodeID:   nodeID,
 				Path:     objectID,
 				Status:   "ACTIVE",
 			}
-			if err := s.batchPutJSON(b, rocksReplicaKey(objectID, version, nodeID), &rec); err != nil {
+			if err := s.batchPutJSON(b, tiKVReplicaKey(objectID, version, nodeID), &rec); err != nil {
 				return err
 			}
 		}
@@ -458,7 +443,7 @@ func (s *RocksStore) UpsertNormalizedMetadata(ctx context.Context, objectID stri
 	return nil
 }
 
-func (s *RocksStore) GetNormalizedMetadata(ctx context.Context, objectID string) (map[string]interface{}, error) {
+func (s *TiKVStore) GetNormalizedMetadata(ctx context.Context, objectID string) (map[string]interface{}, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -466,11 +451,11 @@ func (s *RocksStore) GetNormalizedMetadata(ctx context.Context, objectID string)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	obj, found, err := s.getObjectRecord(rocksObjectKey(objectID))
+	obj, found, err := s.getObjectRecord(tiKVObjectKey(objectID))
 	if err != nil || !found {
 		return nil, err
 	}
-	ver, found, err := s.getObjectVersionRecord(rocksObjectVersionKey(objectID, obj.CurrentVersion))
+	ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(objectID, obj.CurrentVersion))
 	if err != nil || !found {
 		return nil, err
 	}
@@ -514,7 +499,7 @@ func (s *RocksStore) GetNormalizedMetadata(ctx context.Context, objectID string)
 	return meta, nil
 }
 
-func (s *RocksStore) DeleteNormalizedMetadata(ctx context.Context, objectID string) error {
+func (s *TiKVStore) DeleteNormalizedMetadata(ctx context.Context, objectID string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -525,14 +510,14 @@ func (s *RocksStore) DeleteNormalizedMetadata(ctx context.Context, objectID stri
 	b := s.db.NewBatch()
 	defer b.Close()
 
-	_ = b.Delete([]byte(rocksObjectKey(objectID)), pebble.NoSync)
-	if err := s.batchDeletePrefix(b, rocksObjectVersionPrefix(objectID)); err != nil {
+	_ = b.Delete([]byte(tiKVObjectKey(objectID)), pebble.NoSync)
+	if err := s.batchDeletePrefix(b, tiKVObjectVersionPrefix(objectID)); err != nil {
 		return err
 	}
-	if err := s.batchDeletePrefix(b, rocksReplicaPrefix(objectID)); err != nil {
+	if err := s.batchDeletePrefix(b, tiKVReplicaPrefix(objectID)); err != nil {
 		return err
 	}
-	if err := s.batchDeletePrefix(b, rocksECShardPrefix(objectID)); err != nil {
+	if err := s.batchDeletePrefix(b, tiKVECShardPrefix(objectID)); err != nil {
 		return err
 	}
 	if err := b.Commit(pebble.Sync); err != nil {
@@ -541,7 +526,7 @@ func (s *RocksStore) DeleteNormalizedMetadata(ctx context.Context, objectID stri
 	return nil
 }
 
-func (s *RocksStore) GetObjectAdminView(ctx context.Context, objectID string) (*ObjectAdminView, error) {
+func (s *TiKVStore) GetObjectAdminView(ctx context.Context, objectID string) (*ObjectAdminView, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -549,7 +534,7 @@ func (s *RocksStore) GetObjectAdminView(ctx context.Context, objectID string) (*
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	obj, found, err := s.getObjectRecord(rocksObjectKey(objectID))
+	obj, found, err := s.getObjectRecord(tiKVObjectKey(objectID))
 	if err != nil || !found {
 		return nil, err
 	}
@@ -562,7 +547,7 @@ func (s *RocksStore) GetObjectAdminView(ctx context.Context, objectID string) (*
 		UpdatedAt:      obj.UpdatedAt,
 	}
 
-	ver, found, err := s.getObjectVersionRecord(rocksObjectVersionKey(objectID, obj.CurrentVersion))
+	ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(objectID, obj.CurrentVersion))
 	if err != nil {
 		return nil, err
 	}
@@ -575,13 +560,16 @@ func (s *RocksStore) GetObjectAdminView(ctx context.Context, objectID string) (*
 			CreatedAt:      ver.CreatedAt,
 		}
 		if ver.ContentType != nil {
-			v.ContentType = sql.NullString{String: *ver.ContentType, Valid: true}
+			contentType := *ver.ContentType
+			v.ContentType = &contentType
 		}
 		if ver.EncodingK != nil {
-			v.EncodingK = sql.NullInt64{Int64: int64(*ver.EncodingK), Valid: true}
+			encodingK := *ver.EncodingK
+			v.EncodingK = &encodingK
 		}
 		if ver.EncodingM != nil {
-			v.EncodingM = sql.NullInt64{Int64: int64(*ver.EncodingM), Valid: true}
+			encodingM := *ver.EncodingM
+			v.EncodingM = &encodingM
 		}
 		out.Version = v
 	}
@@ -620,7 +608,7 @@ func (s *RocksStore) GetObjectAdminView(ctx context.Context, objectID string) (*
 	return out, nil
 }
 
-func (s *RocksStore) EnqueueTieringTask(ctx context.Context, taskID, objectID string, version int64, taskType string, priority int, scheduledAt time.Time) error {
+func (s *TiKVStore) EnqueueTieringTask(ctx context.Context, taskID, objectID string, version int64, taskType string, priority int, scheduledAt time.Time) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -634,7 +622,7 @@ func (s *RocksStore) EnqueueTieringTask(ctx context.Context, taskID, objectID st
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := rocksTaskKey(taskID)
+	key := tiKVTaskKey(taskID)
 	_, found, err := s.getTaskRecord(key)
 	if err != nil {
 		return err
@@ -642,7 +630,7 @@ func (s *RocksStore) EnqueueTieringTask(ctx context.Context, taskID, objectID st
 	if found {
 		return nil
 	}
-	rec := &rocksTaskRecord{
+	rec := &tiKVTaskRecord{
 		TaskID:      taskID,
 		ObjectID:    objectID,
 		Version:     version,
@@ -655,7 +643,7 @@ func (s *RocksStore) EnqueueTieringTask(ctx context.Context, taskID, objectID st
 	return s.putJSON(key, rec)
 }
 
-func (s *RocksStore) ListTieringTasks(ctx context.Context, taskState, taskType string, limit int) ([]TieringTask, error) {
+func (s *TiKVStore) ListTieringTasks(ctx context.Context, taskState, taskType string, limit int) ([]TieringTask, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -672,7 +660,7 @@ func (s *RocksStore) ListTieringTasks(ctx context.Context, taskState, taskType s
 	if err != nil {
 		return nil, err
 	}
-	filtered := make([]rocksTaskRecord, 0, len(recs))
+	filtered := make([]tiKVTaskRecord, 0, len(recs))
 	for _, t := range recs {
 		if taskState != "" && t.TaskState != taskState {
 			continue
@@ -690,12 +678,12 @@ func (s *RocksStore) ListTieringTasks(ctx context.Context, taskState, taskType s
 	}
 	out := make([]TieringTask, 0, len(filtered))
 	for _, r := range filtered {
-		out = append(out, toTieringTask(r))
+		out = append(out, toTieringTaskFromTiKV(r))
 	}
 	return out, nil
 }
 
-func (s *RocksStore) ListTieringTaskStateCounts(ctx context.Context, taskType string) (map[string]int64, error) {
+func (s *TiKVStore) ListTieringTaskStateCounts(ctx context.Context, taskType string) (map[string]int64, error) {
 	if s == nil || s.db == nil {
 		return map[string]int64{}, nil
 	}
@@ -722,7 +710,7 @@ func (s *RocksStore) ListTieringTaskStateCounts(ctx context.Context, taskType st
 	return out, nil
 }
 
-func (s *RocksStore) RequeueTieringTaskNow(ctx context.Context, taskID string) (bool, error) {
+func (s *TiKVStore) RequeueTieringTaskNow(ctx context.Context, taskID string) (bool, error) {
 	if s == nil || s.db == nil {
 		return false, nil
 	}
@@ -732,7 +720,7 @@ func (s *RocksStore) RequeueTieringTaskNow(ctx context.Context, taskID string) (
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := rocksTaskKey(taskID)
+	key := tiKVTaskKey(taskID)
 	rec, found, err := s.getTaskRecord(key)
 	if err != nil || !found {
 		return false, err
@@ -753,7 +741,7 @@ func (s *RocksStore) RequeueTieringTaskNow(ctx context.Context, taskID string) (
 	return true, nil
 }
 
-func (s *RocksStore) CancelTieringTask(ctx context.Context, taskID, reason string) (bool, error) {
+func (s *TiKVStore) CancelTieringTask(ctx context.Context, taskID, reason string) (bool, error) {
 	if s == nil || s.db == nil {
 		return false, nil
 	}
@@ -766,7 +754,7 @@ func (s *RocksStore) CancelTieringTask(ctx context.Context, taskID, reason strin
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := rocksTaskKey(taskID)
+	key := tiKVTaskKey(taskID)
 	rec, found, err := s.getTaskRecord(key)
 	if err != nil || !found {
 		return false, err
@@ -786,7 +774,7 @@ func (s *RocksStore) CancelTieringTask(ctx context.Context, taskID, reason strin
 	return true, nil
 }
 
-func (s *RocksStore) ClaimNextTieringTask(ctx context.Context, taskType string) (*TieringTask, error) {
+func (s *TiKVStore) ClaimNextTieringTask(ctx context.Context, taskType string) (*TieringTask, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -799,7 +787,7 @@ func (s *RocksStore) ClaimNextTieringTask(ctx context.Context, taskType string) 
 		return nil, err
 	}
 	now := time.Now()
-	candidates := make([]rocksTaskRecord, 0, len(recs))
+	candidates := make([]tiKVTaskRecord, 0, len(recs))
 	for _, r := range recs {
 		if r.TaskState != "PENDING" && r.TaskState != "RETRY_WAIT" {
 			continue
@@ -826,20 +814,20 @@ func (s *RocksStore) ClaimNextTieringTask(ctx context.Context, taskType string) 
 	start := time.Now()
 	selected.StartedAt = &start
 	selected.LastError = nil
-	if err := s.putJSON(rocksTaskKey(selected.TaskID), &selected); err != nil {
+	if err := s.putJSON(tiKVTaskKey(selected.TaskID), &selected); err != nil {
 		return nil, err
 	}
-	t := toTieringTask(selected)
+	t := toTieringTaskFromTiKV(selected)
 	return &t, nil
 }
 
-func (s *RocksStore) MarkTieringTaskDone(ctx context.Context, taskID string) error {
+func (s *TiKVStore) MarkTieringTaskDone(ctx context.Context, taskID string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := rocksTaskKey(taskID)
+	key := tiKVTaskKey(taskID)
 	rec, found, err := s.getTaskRecord(key)
 	if err != nil || !found {
 		return err
@@ -850,7 +838,7 @@ func (s *RocksStore) MarkTieringTaskDone(ctx context.Context, taskID string) err
 	return s.putJSON(key, rec)
 }
 
-func (s *RocksStore) MarkTieringTaskRetry(ctx context.Context, taskID, lastErr string, nextRunAt time.Time) error {
+func (s *TiKVStore) MarkTieringTaskRetry(ctx context.Context, taskID, lastErr string, nextRunAt time.Time) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -859,7 +847,7 @@ func (s *RocksStore) MarkTieringTaskRetry(ctx context.Context, taskID, lastErr s
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := rocksTaskKey(taskID)
+	key := tiKVTaskKey(taskID)
 	rec, found, err := s.getTaskRecord(key)
 	if err != nil || !found {
 		return err
@@ -872,7 +860,7 @@ func (s *RocksStore) MarkTieringTaskRetry(ctx context.Context, taskID, lastErr s
 	return s.putJSON(key, rec)
 }
 
-func (s *RocksStore) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr string) error {
+func (s *TiKVStore) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -881,7 +869,7 @@ func (s *RocksStore) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := rocksTaskKey(taskID)
+	key := tiKVTaskKey(taskID)
 	rec, found, err := s.getTaskRecord(key)
 	if err != nil || !found {
 		return err
@@ -893,29 +881,29 @@ func (s *RocksStore) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr 
 	return s.putJSON(key, rec)
 }
 
-func (s *RocksStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
+func (s *TiKVStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
 	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, 0, false)
 }
 
-func (s *RocksStore) EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error) {
+func (s *TiKVStore) EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error) {
 	if sizeThresholdBytes < 0 {
 		sizeThresholdBytes = 0
 	}
 	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, sizeThresholdBytes, 0, false)
 }
 
-func (s *RocksStore) EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+func (s *TiKVStore) EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
 	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, maxBytes, true)
 }
 
-type rocksTieringCandidate struct {
+type tiKVTieringCandidate struct {
 	ObjectID  string
 	Version   int64
 	SizeBytes int64
 	UpdatedAt time.Time
 }
 
-func (s *RocksStore) enqueueTieringCandidates(
+func (s *TiKVStore) enqueueTieringCandidates(
 	ctx context.Context,
 	ageThresholdSec int,
 	maxObjects int,
@@ -941,7 +929,7 @@ func (s *RocksStore) enqueueTieringCandidates(
 		return 0, err
 	}
 	eligibleBefore := time.Now().Add(-time.Duration(ageThresholdSec) * time.Second)
-	candidates := make([]rocksTieringCandidate, 0, len(objects))
+	candidates := make([]tiKVTieringCandidate, 0, len(objects))
 	for _, o := range objects {
 		if o.State != "HOT_ACTIVE" {
 			continue
@@ -949,7 +937,7 @@ func (s *RocksStore) enqueueTieringCandidates(
 		if o.UpdatedAt.After(eligibleBefore) {
 			continue
 		}
-		ver, found, err := s.getObjectVersionRecord(rocksObjectVersionKey(o.ObjectID, o.CurrentVersion))
+		ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(o.ObjectID, o.CurrentVersion))
 		if err != nil {
 			return 0, err
 		}
@@ -959,7 +947,7 @@ func (s *RocksStore) enqueueTieringCandidates(
 		if minSizeBytes > 0 && ver.SizeBytes < minSizeBytes {
 			continue
 		}
-		candidates = append(candidates, rocksTieringCandidate{
+		candidates = append(candidates, tiKVTieringCandidate{
 			ObjectID:  o.ObjectID,
 			Version:   o.CurrentVersion,
 			SizeBytes: ver.SizeBytes,
@@ -997,13 +985,13 @@ func (s *RocksStore) enqueueTieringCandidates(
 		selected++
 
 		taskID := fmt.Sprintf("repl2ec:%s:%d", c.ObjectID, c.Version)
-		taskKey := rocksTaskKey(taskID)
+		taskKey := tiKVTaskKey(taskID)
 		_, found, err := s.getTaskRecord(taskKey)
 		if err != nil {
 			return enqueued, err
 		}
 		if !found {
-			task := &rocksTaskRecord{
+			task := &tiKVTaskRecord{
 				TaskID:      taskID,
 				ObjectID:    c.ObjectID,
 				Version:     c.Version,
@@ -1019,7 +1007,7 @@ func (s *RocksStore) enqueueTieringCandidates(
 			enqueued++
 		}
 
-		obj, found, err := s.getObjectRecord(rocksObjectKey(c.ObjectID))
+		obj, found, err := s.getObjectRecord(tiKVObjectKey(c.ObjectID))
 		if err != nil {
 			return enqueued, err
 		}
@@ -1031,7 +1019,7 @@ func (s *RocksStore) enqueueTieringCandidates(
 		}
 		obj.State = "MIGRATION_PENDING"
 		obj.UpdatedAt = time.Now()
-		if err := s.putJSON(rocksObjectKey(c.ObjectID), obj); err != nil {
+		if err := s.putJSON(tiKVObjectKey(c.ObjectID), obj); err != nil {
 			return enqueued, err
 		}
 	}
@@ -1039,7 +1027,7 @@ func (s *RocksStore) enqueueTieringCandidates(
 	return enqueued, nil
 }
 
-func (s *RocksStore) EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error) {
+func (s *TiKVStore) EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error) {
 	if s == nil || s.db == nil {
 		return 0, nil
 	}
@@ -1070,7 +1058,7 @@ func (s *RocksStore) EnqueueRepairCandidates(ctx context.Context, maxObjects int
 			break
 		}
 
-		ver, found, err := s.getObjectVersionRecord(rocksObjectVersionKey(o.ObjectID, o.CurrentVersion))
+		ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(o.ObjectID, o.CurrentVersion))
 		if err != nil {
 			return enqueued, err
 		}
@@ -1134,15 +1122,15 @@ func (s *RocksStore) EnqueueRepairCandidates(ctx context.Context, maxObjects int
 	return enqueued, nil
 }
 
-func (s *RocksStore) enqueueRepairTask(taskID, objectID string, version int64) (bool, error) {
+func (s *TiKVStore) enqueueRepairTask(taskID, objectID string, version int64) (bool, error) {
 	now := time.Now()
-	key := rocksTaskKey(taskID)
+	key := tiKVTaskKey(taskID)
 	rec, found, err := s.getTaskRecord(key)
 	if err != nil {
 		return false, err
 	}
 	if !found {
-		task := &rocksTaskRecord{
+		task := &tiKVTaskRecord{
 			TaskID:      taskID,
 			ObjectID:    objectID,
 			Version:     version,
@@ -1176,18 +1164,18 @@ func (s *RocksStore) enqueueRepairTask(taskID, objectID string, version int64) (
 	}
 }
 
-func (s *RocksStore) GetObjectVersionSnapshot(ctx context.Context, objectID string, taskVersion int64) (*ObjectVersionSnapshot, error) {
+func (s *TiKVStore) GetObjectVersionSnapshot(ctx context.Context, objectID string, taskVersion int64) (*ObjectVersionSnapshot, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	obj, found, err := s.getObjectRecord(rocksObjectKey(objectID))
+	obj, found, err := s.getObjectRecord(tiKVObjectKey(objectID))
 	if err != nil || !found {
 		return nil, err
 	}
-	ver, found, err := s.getObjectVersionRecord(rocksObjectVersionKey(objectID, taskVersion))
+	ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(objectID, taskVersion))
 	if err != nil || !found {
 		return nil, err
 	}
@@ -1200,13 +1188,13 @@ func (s *RocksStore) GetObjectVersionSnapshot(ctx context.Context, objectID stri
 	}, nil
 }
 
-func (s *RocksStore) MarkObjectMigrating(ctx context.Context, objectID string, version int64) error {
+func (s *TiKVStore) MarkObjectMigrating(ctx context.Context, objectID string, version int64) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	obj, found, err := s.getObjectRecord(rocksObjectKey(objectID))
+	obj, found, err := s.getObjectRecord(tiKVObjectKey(objectID))
 	if err != nil || !found {
 		return fmt.Errorf("object not eligible for migrating state transition")
 	}
@@ -1220,10 +1208,10 @@ func (s *RocksStore) MarkObjectMigrating(ctx context.Context, objectID string, v
 	}
 	obj.State = "MIGRATING"
 	obj.UpdatedAt = time.Now()
-	return s.putJSON(rocksObjectKey(objectID), obj)
+	return s.putJSON(tiKVObjectKey(objectID), obj)
 }
 
-func (s *RocksStore) PromoteObjectVersionToEC(ctx context.Context, objectID string, version int64, checksum string, k int, m int, locations []ECShardLocation) error {
+func (s *TiKVStore) PromoteObjectVersionToEC(ctx context.Context, objectID string, version int64, checksum string, k int, m int, locations []ECShardLocation) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -1234,14 +1222,14 @@ func (s *RocksStore) PromoteObjectVersionToEC(ctx context.Context, objectID stri
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	obj, found, err := s.getObjectRecord(rocksObjectKey(objectID))
+	obj, found, err := s.getObjectRecord(tiKVObjectKey(objectID))
 	if err != nil || !found {
 		return fmt.Errorf("object version is no longer current during ec promotion")
 	}
 	if obj.CurrentVersion != version {
 		return fmt.Errorf("object version is no longer current during ec promotion")
 	}
-	ver, found, err := s.getObjectVersionRecord(rocksObjectVersionKey(objectID, version))
+	ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(objectID, version))
 	if err != nil || !found {
 		return fmt.Errorf("object version missing during ec promotion")
 	}
@@ -1254,7 +1242,7 @@ func (s *RocksStore) PromoteObjectVersionToEC(ctx context.Context, objectID stri
 		if status == "" {
 			status = "ACTIVE"
 		}
-		rec := rocksECShardRecord{
+		rec := tiKVECShardRecord{
 			ObjectID:   objectID,
 			Version:    version,
 			ShardIndex: loc.ShardIndex,
@@ -1262,7 +1250,7 @@ func (s *RocksStore) PromoteObjectVersionToEC(ctx context.Context, objectID stri
 			Path:       loc.Path,
 			Status:     status,
 		}
-		if err := s.batchPutJSON(b, rocksECShardKey(objectID, version, loc.ShardIndex), &rec); err != nil {
+		if err := s.batchPutJSON(b, tiKVECShardKey(objectID, version, loc.ShardIndex), &rec); err != nil {
 			return err
 		}
 	}
@@ -1274,13 +1262,13 @@ func (s *RocksStore) PromoteObjectVersionToEC(ctx context.Context, objectID stri
 	kk, mm := k, m
 	ver.EncodingK = &kk
 	ver.EncodingM = &mm
-	if err := s.batchPutJSON(b, rocksObjectVersionKey(objectID, version), ver); err != nil {
+	if err := s.batchPutJSON(b, tiKVObjectVersionKey(objectID, version), ver); err != nil {
 		return err
 	}
 
 	obj.State = "EC_ACTIVE"
 	obj.UpdatedAt = time.Now()
-	if err := s.batchPutJSON(b, rocksObjectKey(objectID), obj); err != nil {
+	if err := s.batchPutJSON(b, tiKVObjectKey(objectID), obj); err != nil {
 		return err
 	}
 
@@ -1290,7 +1278,7 @@ func (s *RocksStore) PromoteObjectVersionToEC(ctx context.Context, objectID stri
 	return nil
 }
 
-func (s *RocksStore) ListActiveReplicaLocations(ctx context.Context, objectID string, version int64) ([]ReplicaLocation, error) {
+func (s *TiKVStore) ListActiveReplicaLocations(ctx context.Context, objectID string, version int64) ([]ReplicaLocation, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -1313,7 +1301,7 @@ func (s *RocksStore) ListActiveReplicaLocations(ctx context.Context, objectID st
 	return out, nil
 }
 
-func (s *RocksStore) UpsertReplicaLocations(ctx context.Context, objectID string, version int64, nodeIDs []string) error {
+func (s *TiKVStore) UpsertReplicaLocations(ctx context.Context, objectID string, version int64, nodeIDs []string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -1328,21 +1316,21 @@ func (s *RocksStore) UpsertReplicaLocations(ctx context.Context, objectID string
 		if nodeID == "" {
 			continue
 		}
-		rec := rocksReplicaRecord{
+		rec := tiKVReplicaRecord{
 			ObjectID: objectID,
 			Version:  version,
 			NodeID:   nodeID,
 			Path:     objectID,
 			Status:   "ACTIVE",
 		}
-		if err := s.putJSON(rocksReplicaKey(objectID, version, nodeID), &rec); err != nil {
+		if err := s.putJSON(tiKVReplicaKey(objectID, version, nodeID), &rec); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *RocksStore) MarkReplicaLocationsDeleted(ctx context.Context, objectID string, version int64, nodeIDs []string) error {
+func (s *TiKVStore) MarkReplicaLocationsDeleted(ctx context.Context, objectID string, version int64, nodeIDs []string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -1353,8 +1341,8 @@ func (s *RocksStore) MarkReplicaLocationsDeleted(ctx context.Context, objectID s
 	defer s.mu.Unlock()
 
 	for _, nodeID := range nodeIDs {
-		key := rocksReplicaKey(objectID, version, nodeID)
-		rec := &rocksReplicaRecord{}
+		key := tiKVReplicaKey(objectID, version, nodeID)
+		rec := &tiKVReplicaRecord{}
 		found, err := s.getJSON(key, rec)
 		if err != nil || !found {
 			continue
@@ -1367,15 +1355,15 @@ func (s *RocksStore) MarkReplicaLocationsDeleted(ctx context.Context, objectID s
 	return nil
 }
 
-func (s *RocksStore) listObjects() ([]rocksObjectRecord, error) {
-	it, err := s.newPrefixIter(rocksPrefixObject)
+func (s *TiKVStore) listObjects() ([]tiKVObjectRecord, error) {
+	it, err := s.newPrefixIter(tiKVPrefixObject)
 	if err != nil {
 		return nil, err
 	}
 	defer it.Close()
-	out := make([]rocksObjectRecord, 0)
+	out := make([]tiKVObjectRecord, 0)
 	for it.First(); it.Valid(); it.Next() {
-		var rec rocksObjectRecord
+		var rec tiKVObjectRecord
 		if err := json.Unmarshal(it.Value(), &rec); err != nil {
 			return nil, fmt.Errorf("decode object record failed: %w", err)
 		}
@@ -1387,8 +1375,8 @@ func (s *RocksStore) listObjects() ([]rocksObjectRecord, error) {
 	return out, nil
 }
 
-func (s *RocksStore) listHeartbeats() ([]NodeHeartbeatSnapshot, error) {
-	it, err := s.newPrefixIter(rocksPrefixHB)
+func (s *TiKVStore) listHeartbeats() ([]NodeHeartbeatSnapshot, error) {
+	it, err := s.newPrefixIter(tiKVPrefixHB)
 	if err != nil {
 		return nil, err
 	}
@@ -1407,15 +1395,15 @@ func (s *RocksStore) listHeartbeats() ([]NodeHeartbeatSnapshot, error) {
 	return out, nil
 }
 
-func (s *RocksStore) listTaskRecords() ([]rocksTaskRecord, error) {
-	it, err := s.newPrefixIter(rocksPrefixTask)
+func (s *TiKVStore) listTaskRecords() ([]tiKVTaskRecord, error) {
+	it, err := s.newPrefixIter(tiKVPrefixTask)
 	if err != nil {
 		return nil, err
 	}
 	defer it.Close()
-	out := make([]rocksTaskRecord, 0)
+	out := make([]tiKVTaskRecord, 0)
 	for it.First(); it.Valid(); it.Next() {
-		var rec rocksTaskRecord
+		var rec tiKVTaskRecord
 		if err := json.Unmarshal(it.Value(), &rec); err != nil {
 			return nil, fmt.Errorf("decode task record failed: %w", err)
 		}
@@ -1427,16 +1415,16 @@ func (s *RocksStore) listTaskRecords() ([]rocksTaskRecord, error) {
 	return out, nil
 }
 
-func (s *RocksStore) listReplicaRecords(objectID string, version int64, status string) ([]rocksReplicaRecord, error) {
-	prefix := rocksReplicaVersionPrefix(objectID, version)
+func (s *TiKVStore) listReplicaRecords(objectID string, version int64, status string) ([]tiKVReplicaRecord, error) {
+	prefix := tiKVReplicaVersionPrefix(objectID, version)
 	it, err := s.newPrefixIter(prefix)
 	if err != nil {
 		return nil, err
 	}
 	defer it.Close()
-	out := make([]rocksReplicaRecord, 0)
+	out := make([]tiKVReplicaRecord, 0)
 	for it.First(); it.Valid(); it.Next() {
-		var rec rocksReplicaRecord
+		var rec tiKVReplicaRecord
 		if err := json.Unmarshal(it.Value(), &rec); err != nil {
 			return nil, fmt.Errorf("decode replica record failed: %w", err)
 		}
@@ -1451,16 +1439,16 @@ func (s *RocksStore) listReplicaRecords(objectID string, version int64, status s
 	return out, nil
 }
 
-func (s *RocksStore) listECShardRecords(objectID string, version int64) ([]rocksECShardRecord, error) {
-	prefix := rocksECShardVersionPrefix(objectID, version)
+func (s *TiKVStore) listECShardRecords(objectID string, version int64) ([]tiKVECShardRecord, error) {
+	prefix := tiKVECShardVersionPrefix(objectID, version)
 	it, err := s.newPrefixIter(prefix)
 	if err != nil {
 		return nil, err
 	}
 	defer it.Close()
-	out := make([]rocksECShardRecord, 0)
+	out := make([]tiKVECShardRecord, 0)
 	for it.First(); it.Valid(); it.Next() {
-		var rec rocksECShardRecord
+		var rec tiKVECShardRecord
 		if err := json.Unmarshal(it.Value(), &rec); err != nil {
 			return nil, fmt.Errorf("decode ec shard record failed: %w", err)
 		}
@@ -1472,8 +1460,8 @@ func (s *RocksStore) listECShardRecords(objectID string, version int64) ([]rocks
 	return out, nil
 }
 
-func (s *RocksStore) getObjectRecord(key string) (*rocksObjectRecord, bool, error) {
-	var rec rocksObjectRecord
+func (s *TiKVStore) getObjectRecord(key string) (*tiKVObjectRecord, bool, error) {
+	var rec tiKVObjectRecord
 	found, err := s.getJSON(key, &rec)
 	if err != nil || !found {
 		return nil, found, err
@@ -1481,8 +1469,8 @@ func (s *RocksStore) getObjectRecord(key string) (*rocksObjectRecord, bool, erro
 	return &rec, true, nil
 }
 
-func (s *RocksStore) getObjectVersionRecord(key string) (*rocksObjectVersionRecord, bool, error) {
-	var rec rocksObjectVersionRecord
+func (s *TiKVStore) getObjectVersionRecord(key string) (*tiKVObjectVersionRecord, bool, error) {
+	var rec tiKVObjectVersionRecord
 	found, err := s.getJSON(key, &rec)
 	if err != nil || !found {
 		return nil, found, err
@@ -1490,8 +1478,8 @@ func (s *RocksStore) getObjectVersionRecord(key string) (*rocksObjectVersionReco
 	return &rec, true, nil
 }
 
-func (s *RocksStore) getTaskRecord(key string) (*rocksTaskRecord, bool, error) {
-	var rec rocksTaskRecord
+func (s *TiKVStore) getTaskRecord(key string) (*tiKVTaskRecord, bool, error) {
+	var rec tiKVTaskRecord
 	found, err := s.getJSON(key, &rec)
 	if err != nil || !found {
 		return nil, found, err
@@ -1499,7 +1487,7 @@ func (s *RocksStore) getTaskRecord(key string) (*rocksTaskRecord, bool, error) {
 	return &rec, true, nil
 }
 
-func (s *RocksStore) getLeaderRecord(key string) (*TieringLeaderState, bool, error) {
+func (s *TiKVStore) getLeaderRecord(key string) (*TieringLeaderState, bool, error) {
 	var rec TieringLeaderState
 	found, err := s.getJSON(key, &rec)
 	if err != nil || !found {
@@ -1508,7 +1496,7 @@ func (s *RocksStore) getLeaderRecord(key string) (*TieringLeaderState, bool, err
 	return &rec, true, nil
 }
 
-func (s *RocksStore) putJSON(key string, value interface{}) error {
+func (s *TiKVStore) putJSON(key string, value interface{}) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("marshal value for key=%s failed: %w", key, err)
@@ -1519,7 +1507,7 @@ func (s *RocksStore) putJSON(key string, value interface{}) error {
 	return nil
 }
 
-func (s *RocksStore) getJSON(key string, out interface{}) (bool, error) {
+func (s *TiKVStore) getJSON(key string, out interface{}) (bool, error) {
 	v, closer, err := s.db.Get([]byte(key))
 	if err != nil {
 		if errors.Is(err, pebble.ErrNotFound) {
@@ -1535,7 +1523,7 @@ func (s *RocksStore) getJSON(key string, out interface{}) (bool, error) {
 	return true, nil
 }
 
-func (s *RocksStore) batchPutJSON(b *pebble.Batch, key string, value interface{}) error {
+func (s *TiKVStore) batchPutJSON(b *pebble.Batch, key string, value interface{}) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("marshal batch value for key=%s failed: %w", key, err)
@@ -1546,7 +1534,7 @@ func (s *RocksStore) batchPutJSON(b *pebble.Batch, key string, value interface{}
 	return nil
 }
 
-func (s *RocksStore) batchDeletePrefix(b *pebble.Batch, prefix string) error {
+func (s *TiKVStore) batchDeletePrefix(b *pebble.Batch, prefix string) error {
 	it, err := s.newPrefixIter(prefix)
 	if err != nil {
 		return err
@@ -1563,15 +1551,15 @@ func (s *RocksStore) batchDeletePrefix(b *pebble.Batch, prefix string) error {
 	return nil
 }
 
-func (s *RocksStore) newPrefixIter(prefix string) (*pebble.Iterator, error) {
-	upper := prefixUpperBound([]byte(prefix))
+func (s *TiKVStore) newPrefixIter(prefix string) (*pebble.Iterator, error) {
+	upper := tiKVPrefixUpperBound([]byte(prefix))
 	return s.db.NewIter(&pebble.IterOptions{
 		LowerBound: []byte(prefix),
 		UpperBound: upper,
 	})
 }
 
-func prefixUpperBound(prefix []byte) []byte {
+func tiKVPrefixUpperBound(prefix []byte) []byte {
 	out := append([]byte(nil), prefix...)
 	for i := len(out) - 1; i >= 0; i-- {
 		if out[i] != 0xFF {
@@ -1582,7 +1570,7 @@ func prefixUpperBound(prefix []byte) []byte {
 	return nil
 }
 
-func toTieringTask(r rocksTaskRecord) TieringTask {
+func toTieringTaskFromTiKV(r tiKVTaskRecord) TieringTask {
 	out := TieringTask{
 		TaskID:      r.TaskID,
 		ObjectID:    r.ObjectID,
@@ -1594,69 +1582,84 @@ func toTieringTask(r rocksTaskRecord) TieringTask {
 		ScheduledAt: r.ScheduledAt,
 	}
 	if r.LastError != nil {
-		out.LastError = sql.NullString{String: *r.LastError, Valid: true}
+		lastError := *r.LastError
+		out.LastError = &lastError
 	}
 	if r.StartedAt != nil {
-		out.StartedAt = sql.NullTime{Time: *r.StartedAt, Valid: true}
+		startedAt := *r.StartedAt
+		out.StartedAt = &startedAt
 	}
 	if r.FinishedAt != nil {
-		out.FinishedAt = sql.NullTime{Time: *r.FinishedAt, Valid: true}
+		finishedAt := *r.FinishedAt
+		out.FinishedAt = &finishedAt
 	}
 	return out
 }
 
-func rocksObjectKey(objectID string) string {
-	return rocksPrefixObject + objectID
+func tiKVObjectKey(objectID string) string {
+	return tiKVPrefixObject + objectID
 }
 
-func rocksObjectVersionKey(objectID string, version int64) string {
-	return rocksPrefixObjVer + objectID + "/" + encodeInt64(version)
+func tiKVObjectVersionKey(objectID string, version int64) string {
+	return tiKVPrefixObjVer + objectID + "/" + tiKVEncodeInt64(version)
 }
 
-func rocksObjectVersionPrefix(objectID string) string {
-	return rocksPrefixObjVer + objectID + "/"
+func tiKVObjectVersionPrefix(objectID string) string {
+	return tiKVPrefixObjVer + objectID + "/"
 }
 
-func rocksReplicaKey(objectID string, version int64, nodeID string) string {
-	return rocksPrefixReplica + objectID + "/" + encodeInt64(version) + "/" + nodeID
+func tiKVReplicaKey(objectID string, version int64, nodeID string) string {
+	return tiKVPrefixReplica + objectID + "/" + tiKVEncodeInt64(version) + "/" + nodeID
 }
 
-func rocksReplicaPrefix(objectID string) string {
-	return rocksPrefixReplica + objectID + "/"
+func tiKVReplicaPrefix(objectID string) string {
+	return tiKVPrefixReplica + objectID + "/"
 }
 
-func rocksReplicaVersionPrefix(objectID string, version int64) string {
-	return rocksPrefixReplica + objectID + "/" + encodeInt64(version) + "/"
+func tiKVReplicaVersionPrefix(objectID string, version int64) string {
+	return tiKVPrefixReplica + objectID + "/" + tiKVEncodeInt64(version) + "/"
 }
 
-func rocksECShardKey(objectID string, version int64, shardIndex int) string {
-	return rocksPrefixECShard + objectID + "/" + encodeInt64(version) + "/" + encodeInt(shardIndex)
+func tiKVECShardKey(objectID string, version int64, shardIndex int) string {
+	return tiKVPrefixECShard + objectID + "/" + tiKVEncodeInt64(version) + "/" + tiKVEncodeInt(shardIndex)
 }
 
-func rocksECShardPrefix(objectID string) string {
-	return rocksPrefixECShard + objectID + "/"
+func tiKVECShardPrefix(objectID string) string {
+	return tiKVPrefixECShard + objectID + "/"
 }
 
-func rocksECShardVersionPrefix(objectID string, version int64) string {
-	return rocksPrefixECShard + objectID + "/" + encodeInt64(version) + "/"
+func tiKVECShardVersionPrefix(objectID string, version int64) string {
+	return tiKVPrefixECShard + objectID + "/" + tiKVEncodeInt64(version) + "/"
 }
 
-func rocksTaskKey(taskID string) string {
-	return rocksPrefixTask + taskID
+func tiKVTaskKey(taskID string) string {
+	return tiKVPrefixTask + taskID
 }
 
-func rocksHeartbeatKey(nodeID string) string {
-	return rocksPrefixHB + nodeID
+func tiKVHeartbeatKey(nodeID string) string {
+	return tiKVPrefixHB + nodeID
 }
 
-func rocksLeaderKey(lockKey int64) string {
-	return rocksPrefixLeader + strconv.FormatInt(lockKey, 10)
+func tiKVLeaderKey(lockKey int64) string {
+	return tiKVPrefixLeader + strconv.FormatInt(lockKey, 10)
 }
 
-func encodeInt64(v int64) string {
+func tiKVLeaderLockKey(lockKey int64) string {
+	return tiKVPrefixLk + strconv.FormatInt(lockKey, 10)
+}
+
+func tiKVNewLockOwnerToken() []byte {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return []byte(fmt.Sprintf("owner-%d", time.Now().UnixNano()))
+	}
+	return []byte(hex.EncodeToString(b))
+}
+
+func tiKVEncodeInt64(v int64) string {
 	return fmt.Sprintf("%020d", v)
 }
 
-func encodeInt(v int) string {
+func tiKVEncodeInt(v int) string {
 	return fmt.Sprintf("%010d", v)
 }

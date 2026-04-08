@@ -2,29 +2,15 @@ package meta
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 )
 
-func TestNewRepository_UnsupportedBackend(t *testing.T) {
-	t.Parallel()
-
-	_, err := NewRepository(Config{
-		Enabled: true,
-		Backend: "unknown-backend",
-	})
-	if err == nil {
-		t.Fatalf("expected unsupported backend error")
-	}
-}
-
-func TestNewRepository_RocksBackend(t *testing.T) {
+func TestNewRepository_TiKVMemoryBackend(t *testing.T) {
 	t.Parallel()
 
 	repo, err := NewRepository(Config{
 		Enabled: true,
-		Backend: "rocksdb",
-		DSN:     filepath.Join(t.TempDir(), "meta-rocks"),
+		DSN:     "memory://unit-test",
 	})
 	if err != nil {
 		t.Fatalf("new repository failed: %v", err)
@@ -36,15 +22,14 @@ func TestNewRepository_RocksBackend(t *testing.T) {
 	}
 }
 
-func TestNewRepository_RocksBackendRequiresDSN(t *testing.T) {
+func TestNewRepository_TiKVBackendRequiresDSN(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewRepository(Config{
 		Enabled: true,
-		Backend: "rocksdb",
 	})
 	if err == nil {
-		t.Fatalf("expected error when rocks backend dsn is empty")
+		t.Fatalf("expected error when tikv backend dsn is empty")
 	}
 }
 

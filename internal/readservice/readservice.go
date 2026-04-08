@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"sync"
 
 	"hybrid_distributed_store/internal/config"
@@ -14,7 +15,7 @@ import (
 )
 
 // Service implements IReadService.
-// It orchestrates data retrieval across Replication, EC, and Hybrid strategies.
+// It orchestrates data retrieval across Replication and EC strategies.
 type Service struct {
 	http  interfaces.IHttpClient
 	ec    interfaces.IEcDriver
@@ -46,9 +47,9 @@ func (s *Service) CheckFirstWrite(ctx context.Context, replicaNodes []string, ho
 	// Query all replica nodes in parallel
 	for _, nodeURL := range replicaNodes {
 		wg.Add(1)
-		go func(url string) {
+		go func(nodeURL string) {
 			defer wg.Done()
-			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", url, hotKey), nil)
+			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", nodeURL, neturl.PathEscape(hotKey)), nil)
 			if err != nil {
 				return
 			}
@@ -92,9 +93,9 @@ func (s *Service) ReadReplication(ctx context.Context, replicaNodes []string, ke
 
 	for _, nodeURL := range replicaNodes {
 		wg.Add(1)
-		go func(url string) {
+		go func(nodeURL string) {
 			defer wg.Done()
-			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", url, key), nil)
+			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", nodeURL, neturl.PathEscape(key)), nil)
 			if err != nil {
 				return
 			}
@@ -156,11 +157,11 @@ func (s *Service) ReadEC(ctx context.Context, ecNodes []string, metadata map[str
 
 	for i, nodeURL := range ecNodes {
 		wg.Add(1)
-		go func(index int, url string) {
+		go func(index int, nodeURL string) {
 			defer wg.Done()
 			chunkKey := fmt.Sprintf("%s%d", chunkPrefix, index)
 
-			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", url, chunkKey), nil)
+			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", nodeURL, neturl.PathEscape(chunkKey)), nil)
 			if err != nil {
 				return
 			}

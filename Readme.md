@@ -1,10 +1,10 @@
 # Replication + Erasure Coding Object Store
 
 Fault-tolerant distributed object storage system written in Go.
-The current mainline architecture is PostgreSQL-first:
+The current mainline architecture is TiKV metadata service first:
 - foreground writes land in HOT replication
 - background workers migrate eligible objects to EC
-- metadata and task state are managed in normalized PostgreSQL tables
+- metadata and task state are managed by `meta_service` (TiKV-backed)
 
 
 ## Features
@@ -13,7 +13,7 @@ The current mainline architecture is PostgreSQL-first:
   - **Replication**: low-latency HOT write path.
   - **Erasure Coding (RS 4+2)**: storage-efficient cold tier.
   - **Background tiering**: periodic policy enqueues REPL->EC tasks.
-- **PostgreSQL metadata source of truth**
+- **Metadata service source of truth (TiKV-backed)**
   - object/version/state tracking
   - node heartbeat tracking
   - task queue lifecycle for tiering
@@ -32,9 +32,9 @@ graph TD
     LB --> API[API Gateway Cluster x3]
 
     subgraph Control_Plane [Control Plane]
-        API -->|Metadata Commit| PG[(PostgreSQL)]
-        API -->|Task Enqueue| PG
-        TW[Tiering Worker] -->|Claim/Update Tasks| PG
+        API -->|Metadata Commit| MS[(meta_service / TiKV)]
+        API -->|Task Enqueue| MS
+        TW[Tiering Worker] -->|Claim/Update Tasks| MS
     end
 
     subgraph Data_Plane [Data Plane]
@@ -72,7 +72,7 @@ graph TD
 | Service | Scale | Description |
 | --- | --- | --- |
 | **API Gateway** | 3x | Traffic entry point. Handles foreground writes and v2/admin APIs. |
-| **PostgreSQL** | 1x | Metadata and task store (`objects`, `object_versions`, `tiering_tasks`, etc.). |
+| **meta_service (TiKV)** | 1x | Metadata and task store (`objects`, `object_versions`, `tiering_tasks`, etc.). |
 | **Storage Node** | 6x | Stores object replicas and EC shard blobs. |
 | **Tiering Worker** | 1x | Background policy scan + REPL->EC migration processor. |
 

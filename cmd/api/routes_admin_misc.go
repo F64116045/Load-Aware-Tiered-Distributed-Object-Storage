@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"os"
 	"strconv"
@@ -36,15 +35,13 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 			"service":  "api_gateway",
 			"hostname": hostname,
 			"metadata": gin.H{
-				"enabled":      config.MetaEnabled,
-				"status":       deps.metadataStatus,
-				"driver":       config.MetaDriver,
-				"source":       metadataSourceLabel(),
-				"backend":      config.MetaBackend,
-				"endpoint":     strings.TrimSpace(config.MetaEndpoint),
-				"auto_migrate": config.MetaAutoMigrate,
-				"error":        deps.metadataErr,
-				"lookup":       metadataLookupSnapshot(),
+				"enabled":  config.MetaEnabled,
+				"status":   deps.metadataStatus,
+				"source":   metadataSourceLabel(),
+				"endpoint": strings.TrimSpace(config.MetaEndpoint),
+				"dsn":      strings.TrimSpace(config.MetaDSN),
+				"error":    deps.metadataErr,
+				"lookup":   metadataLookupSnapshot(),
 			},
 			"node_discovery": gin.H{
 				"configured_source": metadataSourceLabel(),
@@ -214,9 +211,9 @@ func registerAdminMetadataRoutes(router gin.IRoutes, metaStore meta.Repository) 
 				"size_bytes":      view.Version.SizeBytes,
 				"checksum_sha256": view.Version.ChecksumSHA256,
 				"tier":            view.Version.Tier,
-				"content_type":    nullStringOrNil(view.Version.ContentType),
-				"encoding_k":      nullInt64OrNil(view.Version.EncodingK),
-				"encoding_m":      nullInt64OrNil(view.Version.EncodingM),
+				"content_type":    pointerStringOrNil(view.Version.ContentType),
+				"encoding_k":      pointerIntOrNil(view.Version.EncodingK),
+				"encoding_m":      pointerIntOrNil(view.Version.EncodingM),
 				"created_at":      view.Version.CreatedAt,
 			}
 		}
@@ -253,27 +250,26 @@ func registerAdminMetadataRoutes(router gin.IRoutes, metaStore meta.Repository) 
 	})
 }
 
-func nullInt64OrNil(v sql.NullInt64) interface{} {
-	if !v.Valid {
+func pointerIntOrNil(v *int) interface{} {
+	if v == nil {
 		return nil
 	}
-	return v.Int64
+	return *v
 }
 
-func nullStringOrNil(v sql.NullString) interface{} {
-	if !v.Valid {
+func pointerStringOrNil(v *string) interface{} {
+	if v == nil {
 		return nil
 	}
-	return v.String
+	return *v
 }
 
 func metadataSourceLabel() string {
 	if strings.TrimSpace(config.MetaEndpoint) != "" {
 		return "meta_service"
 	}
-	backend := strings.TrimSpace(config.MetaBackend)
-	if backend == "" {
-		return "postgres"
+	if strings.TrimSpace(config.MetaDSN) != "" {
+		return "tikv_direct"
 	}
-	return backend
+	return "metadata_disabled"
 }

@@ -152,15 +152,12 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			}
 			c.JSON(http.StatusOK, dataDict)
 
-		case config.StorageStrategy("field_hybrid"):
+		default:
 			c.JSON(http.StatusConflict, gin.H{
-				"error":    "field_hybrid is deprecated",
+				"error":    "unsupported strategy in metadata",
 				"strategy": strategyStr,
 			})
 			return
-
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Unknown strategy in metadata: %s", strategyStr)})
 		}
 	})
 
@@ -196,14 +193,11 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			case config.StrategyEC:
 				coldCount, delErr = deps.deleteEC(c.Request.Context(), ecNodes, metadata)
 				result["chunks_deleted"] = coldCount
-			case config.StorageStrategy("field_hybrid"):
+			default:
 				c.JSON(http.StatusConflict, gin.H{
-					"error":    "field_hybrid is deprecated",
+					"error":    "unsupported strategy in metadata",
 					"strategy": strategyStr,
 				})
-				return
-			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Unknown strategy: %s", strategyStr)})
 				return
 			}
 			if delErr != nil {
@@ -211,7 +205,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 				return
 			}
 			if err := deps.deleteNormalizedMetadata(c.Request.Context(), key); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Metadata(Postgres normalized) deletion failed: %v", err)})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("metadata(normalized) deletion failed: %v", err)})
 				return
 			}
 		} else {

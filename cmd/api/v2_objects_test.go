@@ -92,7 +92,7 @@ func TestV2GetObject_ReplicationAndEC(t *testing.T) {
 				return map[string]interface{}{
 					"strategy":     string(config.StrategyReplication),
 					"content_type": "image/png",
-				}, "postgres_normalized", nil
+				}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return []byte("replica-data"), nil
@@ -129,7 +129,7 @@ func TestV2GetObject_ReplicationAndEC(t *testing.T) {
 			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
 				return map[string]interface{}{
 					"strategy": string(config.StrategyEC),
-				}, "postgres_normalized", nil
+				}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return nil, nil
@@ -195,7 +195,7 @@ func TestV2GetObject_MetadataNotFoundAndConflict(t *testing.T) {
 				return nil, nil
 			},
 			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-				return map[string]interface{}{"strategy": "field_hybrid"}, "postgres_normalized", nil
+				return map[string]interface{}{"strategy": "unknown_strategy"}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return nil, errors.New("should not be called")
@@ -280,7 +280,7 @@ func TestV2Object_ErrorPaths(t *testing.T) {
 				return nil, nil
 			},
 			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-				return map[string]interface{}{"strategy": string(config.StrategyReplication)}, "postgres_normalized", nil
+				return map[string]interface{}{"strategy": string(config.StrategyReplication)}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return nil, errors.New("read failed")
@@ -309,7 +309,7 @@ func TestV2Object_ErrorPaths(t *testing.T) {
 				return nil, nil
 			},
 			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-				return map[string]interface{}{"strategy": string(config.StrategyEC)}, "postgres_normalized", nil
+				return map[string]interface{}{"strategy": string(config.StrategyEC)}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return nil, nil
@@ -341,7 +341,7 @@ func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
 				return nil, nil
 			},
 			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-				return map[string]interface{}{"strategy": string(config.StrategyReplication)}, "postgres_normalized", nil
+				return map[string]interface{}{"strategy": string(config.StrategyReplication)}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return nil, nil
@@ -389,7 +389,7 @@ func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
 				return map[string]interface{}{
 					"strategy":     string(config.StrategyEC),
 					"chunk_prefix": "d2_cold_chunk_",
-				}, "postgres_normalized", nil
+				}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return nil, nil
@@ -467,7 +467,7 @@ func TestV2DeleteObject_ErrorPaths(t *testing.T) {
 				return nil, nil
 			},
 			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-				return map[string]interface{}{"strategy": "field_hybrid"}, "postgres_normalized", nil
+				return map[string]interface{}{"strategy": "unknown_strategy"}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return nil, nil

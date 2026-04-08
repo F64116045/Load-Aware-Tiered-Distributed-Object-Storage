@@ -219,3 +219,20 @@ func TestReadEC_Fails_NotEnoughChunks(t *testing.T) {
 		t.Logf("Got expected error: %v", err)
 	}
 }
+
+func TestReadReplication_EscapesSpecialKey(t *testing.T) {
+	mockHttp := NewMockHttpClient()
+	nodes := []string{"http://node1"}
+
+	// '/' must be escaped in path segment to avoid route-splitting.
+	mockHttp.SetResponse("http://node1/retrieve/a%2Fb", 200, "ok")
+
+	readSvc := createMockService(mockHttp, nil, nil)
+	data, err := readSvc.ReadReplication(context.Background(), nodes, "a/b")
+	if err != nil {
+		t.Fatalf("ReadReplication() expected success, got error: %v", err)
+	}
+	if string(data) != "ok" {
+		t.Fatalf("ReadReplication() expected 'ok', got '%s'", string(data))
+	}
+}

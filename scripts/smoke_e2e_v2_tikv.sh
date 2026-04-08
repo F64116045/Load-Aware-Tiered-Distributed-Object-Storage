@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-export COMPOSE_FILES="${COMPOSE_FILES:-docker-compose.yaml docker-compose.rocks.yaml}"
-export RUN_META_MIGRATE="${RUN_META_MIGRATE:-false}"
+export META_DSN="${META_DSN:-pd:2379}"
+export COMPOSE_FILES="${COMPOSE_FILES:-docker-compose.yaml}"
 
 exec "${SCRIPT_DIR}/smoke_e2e_v2.sh" "$@"

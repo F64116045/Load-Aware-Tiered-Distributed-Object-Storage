@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -103,13 +102,12 @@ func TestReplicationRepairProcessor_RepairsMissingReplica(t *testing.T) {
 	}()
 	config.HotReplicaCount = 3
 
-	store, err := meta.NewRocksStore(meta.Config{
+	store, err := meta.NewTiKVStore(meta.Config{
 		Enabled: true,
-		Backend: "rocksdb",
-		DSN:     filepath.Join(t.TempDir(), "meta"),
+		DSN:     "memory://repair-repl",
 	})
 	if err != nil {
-		t.Fatalf("new rocks store failed: %v", err)
+		t.Fatalf("new tikv store failed: %v", err)
 	}
 	defer store.Close()
 
@@ -170,13 +168,12 @@ func TestReplicationRepairProcessor_RepairsMissingReplica(t *testing.T) {
 }
 
 func TestReplicationRepairProcessor_RepairsMissingECShard(t *testing.T) {
-	store, err := meta.NewRocksStore(meta.Config{
+	store, err := meta.NewTiKVStore(meta.Config{
 		Enabled: true,
-		Backend: "rocksdb",
-		DSN:     filepath.Join(t.TempDir(), "meta-ec"),
+		DSN:     "memory://repair-ec",
 	})
 	if err != nil {
-		t.Fatalf("new rocks store failed: %v", err)
+		t.Fatalf("new tikv store failed: %v", err)
 	}
 	defer store.Close()
 

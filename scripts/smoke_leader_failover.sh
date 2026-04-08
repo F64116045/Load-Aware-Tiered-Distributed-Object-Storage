@@ -6,7 +6,6 @@ API_BASE="${API_BASE:-http://127.0.0.1:8000}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-120}"
 START_STACK="${START_STACK:-true}"
 COMPOSE_FILES="${COMPOSE_FILES:-docker-compose.yaml}"
-RUN_META_MIGRATE="${RUN_META_MIGRATE:-auto}" # auto|true|false
 
 dc() {
   local args=()
@@ -15,13 +14,6 @@ dc() {
     args+=(-f "${f}")
   done
   docker compose "${args[@]}" "$@"
-}
-
-auto_should_migrate() {
-  if [[ "${COMPOSE_FILES}" == *"rocks"* ]]; then
-    return 1
-  fi
-  return 0
 }
 
 leader_json() {
@@ -61,16 +53,11 @@ wait_leader() {
   return 1
 }
 
-if [[ "${RUN_META_MIGRATE}" == "true" ]] || ([[ "${RUN_META_MIGRATE}" == "auto" ]] && auto_should_migrate); then
-  echo "[0/6] Prepare metadata schema"
-  dc run --rm meta_migrate >/dev/null
-else
-  echo "[0/6] Skip metadata migrate"
-fi
+echo "[0/6] Metadata schema migration is not required (TiKV keyspace model)"
 
 if [[ "${START_STACK}" == "true" ]]; then
   echo "[1/6] Start stack with 2 tiering workers"
-  dc up -d --build meta_service storage_node_1 storage_node_2 storage_node_3 storage_node_4 storage_node_5 storage_node_6 api --scale tiering_worker=2 tiering_worker >/dev/null
+  dc up -d --build --remove-orphans --force-recreate meta_service storage_node_1 storage_node_2 storage_node_3 storage_node_4 storage_node_5 storage_node_6 api --scale tiering_worker=2 tiering_worker >/dev/null
 else
   echo "[1/6] Skip stack startup (START_STACK=false)"
 fi

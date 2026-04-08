@@ -14,52 +14,6 @@ services:
       - storage_net
 
   # ---------------------------------------------------------------------------
-  # Metadata DB (PostgreSQL)
-  # ---------------------------------------------------------------------------
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=metadata
-      - POSTGRES_USER=metadata
-      - POSTGRES_PASSWORD=metadata
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U metadata -d metadata"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    networks:
-      - storage_net
-
-  # ---------------------------------------------------------------------------
-  # Metadata Migration (run-on-demand)
-  # ---------------------------------------------------------------------------
-  meta_migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["/usr/local/bin/meta_migrate"]
-    environment:
-      - META_ENABLED=true
-      - META_BACKEND=postgres
-      - META_REQUIRE_ENDPOINT=false
-      - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=5
-      - META_MAX_IDLE_CONNS=2
-      - META_CONN_MAX_LIFETIME_SEC=60
-      - META_MIGRATE_ACTION=up
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - storage_net
-    restart: "no"
-
-  # ---------------------------------------------------------------------------
   # Metadata Service (single writer/reader owner for metadata backend)
   # ---------------------------------------------------------------------------
   meta_service:
@@ -70,15 +24,9 @@ services:
     restart: on-failure
     environment:
       - META_ENABLED=true
-      - META_BACKEND=postgres
       - META_REQUIRE_ENDPOINT=false
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_AUTO_MIGRATE=false
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=20
-      - META_MAX_IDLE_CONNS=10
-      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_DSN=${META_DSN:-pd:2379}
       - META_SERVICE_PORT=8091
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
@@ -86,8 +34,47 @@ services:
       timeout: 3s
       retries: 20
     depends_on:
-      postgres:
-        condition: service_healthy
+      pd:
+        condition: service_started
+      tikv:
+        condition: service_started
+    networks:
+      - storage_net
+
+  # ---------------------------------------------------------------------------
+  # TiKV Metadata Cluster
+  # ---------------------------------------------------------------------------
+  pd:
+    image: pingcap/pd:v7.5.0
+    command:
+      - --name=pd
+      - --data-dir=/var/lib/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://pd:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-peer-urls=http://pd:2380
+      - --initial-cluster=pd=http://pd:2380
+      - --log-level=info
+    restart: on-failure
+    volumes:
+      - tikv_pd_data:/var/lib/pd
+    networks:
+      - storage_net
+
+  tikv:
+    image: pingcap/tikv:v7.5.0
+    command:
+      - --pd=pd:2379
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv:20160
+      - --status-addr=0.0.0.0:20180
+      - --data-dir=/var/lib/tikv
+      - --log-level=info
+    depends_on:
+      - pd
+    restart: on-failure
+    volumes:
+      - tikv_store_data:/var/lib/tikv
     networks:
       - storage_net
 
@@ -107,12 +94,7 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=20
-      - META_MAX_IDLE_CONNS=10
-      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_DSN=${META_DSN:-}
       - HOT_REPLICA_COUNT=3
       - HOT_WRITE_QUORUM=2
       - NODE_HEARTBEAT_STALE_SEC=15
@@ -144,6 +126,10 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
+    restart: on-failure
+    depends_on:
+      meta_service:
+        condition: service_healthy
     environment:
       - NODE_NAME=storage_node_1
       - NODE_PORT=8001
@@ -152,12 +138,7 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=10
-      - META_MAX_IDLE_CONNS=5
-      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_1:/data/node1
@@ -169,6 +150,10 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
+    restart: on-failure
+    depends_on:
+      meta_service:
+        condition: service_healthy
     environment:
       - NODE_NAME=storage_node_2
       - NODE_PORT=8002
@@ -177,12 +162,7 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=10
-      - META_MAX_IDLE_CONNS=5
-      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_2:/data/node2
@@ -194,6 +174,10 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
+    restart: on-failure
+    depends_on:
+      meta_service:
+        condition: service_healthy
     environment:
       - NODE_NAME=storage_node_3
       - NODE_PORT=8003
@@ -202,12 +186,7 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=10
-      - META_MAX_IDLE_CONNS=5
-      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_3:/data/node3
@@ -219,6 +198,10 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
+    restart: on-failure
+    depends_on:
+      meta_service:
+        condition: service_healthy
     environment:
       - NODE_NAME=storage_node_4
       - NODE_PORT=8004
@@ -227,12 +210,7 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=10
-      - META_MAX_IDLE_CONNS=5
-      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_4:/data/node4
@@ -244,6 +222,10 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
+    restart: on-failure
+    depends_on:
+      meta_service:
+        condition: service_healthy
     environment:
       - NODE_NAME=storage_node_5
       - NODE_PORT=8005
@@ -252,12 +234,7 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=10
-      - META_MAX_IDLE_CONNS=5
-      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_5:/data/node5
@@ -269,6 +246,10 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["/usr/local/bin/storage_node"]
+    restart: on-failure
+    depends_on:
+      meta_service:
+        condition: service_healthy
     environment:
       - NODE_NAME=storage_node_6
       - NODE_PORT=8006
@@ -277,12 +258,7 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=10
-      - META_MAX_IDLE_CONNS=5
-      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
     volumes:
       - storage_data_6:/data/node6
@@ -303,12 +279,7 @@ services:
       - META_ENDPOINT=http://meta_service:8091
       - META_REQUIRE_ENDPOINT=true
       - META_RPC_AUTH_TOKEN=dev-meta-token
-      - META_BACKEND=postgres
-      - META_DRIVER=postgres
-      - META_DSN=postgres://metadata:metadata@postgres:5432/metadata?sslmode=disable
-      - META_MAX_OPEN_CONNS=10
-      - META_MAX_IDLE_CONNS=5
-      - META_CONN_MAX_LIFETIME_SEC=300
+      - META_DSN=${META_DSN:-}
       - TIERING_WORKER_POLL_SEC=2
       - TIERING_POLICY_PERIOD_SEC=300
       - TIERING_POLICY_VARIANT=A1
@@ -339,7 +310,8 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
+  tikv_pd_data:
+  tikv_store_data:
   storage_data_1:
   storage_data_2:
   storage_data_3:

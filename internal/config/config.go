@@ -61,20 +61,8 @@ var (
 	MetaRequireEndpoint = getEnvBool("META_REQUIRE_ENDPOINT", false)
 	// MetaRPCAuthToken is an optional shared-secret token for metadata RPC calls.
 	MetaRPCAuthToken = getEnv("META_RPC_AUTH_TOKEN", "")
-	// MetaBackend selects metadata backend implementation.
-	MetaBackend = getEnv("META_BACKEND", "postgres")
-	// MetaAutoMigrate controls whether API runs metadata migration on startup.
-	MetaAutoMigrate = getEnvBool("META_AUTO_MIGRATE", false)
-	// MetaDriver is the database/sql driver name.
-	MetaDriver = getEnv("META_DRIVER", "postgres")
-	// MetaDSN is the metadata DB connection string.
+	// MetaDSN is the TiKV PD endpoint list (comma-separated) used when META_ENDPOINT is empty.
 	MetaDSN = getEnv("META_DSN", "")
-	// MetaMaxOpenConns controls the DB pool max open connections.
-	MetaMaxOpenConns = getEnvInt("META_MAX_OPEN_CONNS", 20)
-	// MetaMaxIdleConns controls the DB pool max idle connections.
-	MetaMaxIdleConns = getEnvInt("META_MAX_IDLE_CONNS", 10)
-	// MetaConnMaxLifetime controls DB connection max lifetime.
-	MetaConnMaxLifetime = time.Duration(getEnvInt("META_CONN_MAX_LIFETIME_SEC", 300)) * time.Second
 	// NodeHeartbeatInterval controls storage-node heartbeat report interval.
 	NodeHeartbeatInterval = time.Duration(getEnvInt("NODE_HEARTBEAT_INTERVAL_SEC", 3)) * time.Second
 	// NodeHeartbeatStaleSec defines staleness threshold when listing healthy nodes.

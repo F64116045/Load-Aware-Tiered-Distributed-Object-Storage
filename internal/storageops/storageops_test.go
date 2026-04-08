@@ -119,3 +119,27 @@ func TestDeleteEC(t *testing.T) {
 		t.Errorf("URL call mismatch:\nExpected: %v\nActual:   %v", expectedURLs, mockHttp.CalledURLs)
 	}
 }
+
+func TestDeleteReplication_EscapesSpecialKey(t *testing.T) {
+	mockHttp := NewMockHttpClient()
+	svc := createMockService(mockHttp)
+
+	nodes := []string{"http://n1"}
+	key := "a/b"
+	ctx := context.Background()
+
+	count, err := svc.DeleteReplication(ctx, nodes, key)
+	if err != nil {
+		t.Fatalf("DeleteReplication() expected success, got error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected successCount 1, got %d", count)
+	}
+
+	expectedURLs := map[string]int{
+		"http://n1/delete/a%2Fb": 1,
+	}
+	if !reflect.DeepEqual(mockHttp.CalledURLs, expectedURLs) {
+		t.Errorf("URL call mismatch:\nExpected: %v\nActual:   %v", expectedURLs, mockHttp.CalledURLs)
+	}
+}

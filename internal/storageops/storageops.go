@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"sync"
 
 	"hybrid_distributed_store/internal/config"
@@ -34,18 +35,18 @@ func (s *Service) DeleteReplication(ctx context.Context, replicaNodes []string, 
 
 	for _, nodeURL := range replicaNodes {
 		wg.Add(1)
-		go func(url string) {
+		go func(nodeURL string) {
 			defer wg.Done()
 
-			req, err := http.NewRequestWithContext(ctx, "DELETE", fmt.Sprintf("%s/delete/%s", url, key), nil)
+			req, err := http.NewRequestWithContext(ctx, "DELETE", fmt.Sprintf("%s/delete/%s", nodeURL, neturl.PathEscape(key)), nil)
 			if err != nil {
-				log.Printf("[%s] Delete failed (req creation error): %v\n", url, err)
+				log.Printf("[%s] Delete failed (req creation error): %v\n", nodeURL, err)
 				return
 			}
 
 			resp, err := client.Do(req)
 			if err != nil {
-				log.Printf("[%s] Delete failed (network error): %v\n", url, err)
+				log.Printf("[%s] Delete failed (network error): %v\n", nodeURL, err)
 				return
 			}
 			defer resp.Body.Close()
@@ -56,7 +57,7 @@ func (s *Service) DeleteReplication(ctx context.Context, replicaNodes []string, 
 				successCount++
 				mutex.Unlock()
 			} else {
-				log.Printf("[%s] Delete failed (status: %d)\n", url, resp.StatusCode)
+				log.Printf("[%s] Delete failed (status: %d)\n", nodeURL, resp.StatusCode)
 			}
 		}(nodeURL)
 	}
@@ -85,19 +86,19 @@ func (s *Service) DeleteEC(ctx context.Context, ecNodes []string, metadata map[s
 
 	for i, nodeURL := range ecNodes {
 		wg.Add(1)
-		go func(url string, chunkIndex int) {
+		go func(nodeURL string, chunkIndex int) {
 			defer wg.Done()
 
 			chunkKey := fmt.Sprintf("%s%d", chunkPrefix, chunkIndex)
-			req, err := http.NewRequestWithContext(ctx, "DELETE", fmt.Sprintf("%s/delete/%s", url, chunkKey), nil)
+			req, err := http.NewRequestWithContext(ctx, "DELETE", fmt.Sprintf("%s/delete/%s", nodeURL, neturl.PathEscape(chunkKey)), nil)
 			if err != nil {
-				log.Printf("[%s] EC Delete failed (req creation error): %v\n", url, err)
+				log.Printf("[%s] EC Delete failed (req creation error): %v\n", nodeURL, err)
 				return
 			}
 
 			resp, err := client.Do(req)
 			if err != nil {
-				log.Printf("[%s] EC Delete failed (network error): %v\n", url, err)
+				log.Printf("[%s] EC Delete failed (network error): %v\n", nodeURL, err)
 				return
 			}
 			defer resp.Body.Close()
@@ -107,7 +108,7 @@ func (s *Service) DeleteEC(ctx context.Context, ecNodes []string, metadata map[s
 				successCount++
 				mutex.Unlock()
 			} else {
-				log.Printf("[%s] EC Delete failed (status: %d)\n", url, resp.StatusCode)
+				log.Printf("[%s] EC Delete failed (status: %d)\n", nodeURL, resp.StatusCode)
 			}
 		}(nodeURL, i)
 	}

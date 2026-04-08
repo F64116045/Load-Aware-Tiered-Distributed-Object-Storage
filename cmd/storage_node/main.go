@@ -23,6 +23,7 @@ import (
 type WriteTask struct {
 	Key  string
 	Data []byte
+	Done chan error
 }
 
 // storageEngine handles raw file I/O operations with asynchronous write support.
@@ -61,25 +62,54 @@ func newStorageEngine(port, nodeName, storageDir string) *storageEngine {
 	return engine
 }
 
-// startIoWorker consumes write tasks from the queue and performs blocking disk I/O.
+func writeFileDurably(path string, data []byte) error {
+	// Ensure parent directories exist for nested keys.
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// startIoWorker consumes write tasks from the queue and performs blocking durable disk I/O.
 func (s *storageEngine) startIoWorker() {
 	log.Println("[Async IO] Worker started. Waiting for tasks...")
 	for task := range s.writeQueue {
+		writeErr := error(nil)
+
 		filePath, err := s._getSafePath(task.Key)
 		if err != nil {
 			log.Printf("[Async IO] Error resolving path for key %s: %v", task.Key, err)
-			continue
+			writeErr = err
+		} else {
+			// Perform the blocking disk write operation with fsync before ACK.
+			if err := writeFileDurably(filePath, task.Data); err != nil {
+				log.Printf("[Async IO] Disk Write Failed for %s: %v", filePath, err)
+				writeErr = err
+			}
 		}
 
-		// Perform the actual blocking disk write operation.
-		if err := os.WriteFile(filePath, task.Data, 0644); err != nil {
-			log.Printf("[Async IO] Disk Write Failed for %s: %v", filePath, err)
-		}
-
-		// Update metrics
+		// Update metrics (attempt count)
 		s.lock.Lock()
 		s.totalOperations++
 		s.lock.Unlock()
+
+		if task.Done != nil {
+			task.Done <- writeErr
+			close(task.Done)
+		}
 	}
 }
 
@@ -92,8 +122,8 @@ func (s *storageEngine) _getSafePath(key string) (string, error) {
 	return filepath.Join(s.storageDir, safeKey), nil
 }
 
-// store queues the write task for asynchronous processing.
-func (s *storageEngine) store(key string, data []byte) (int, error) {
+// store enqueues a write task and waits for durable completion before returning.
+func (s *storageEngine) store(ctx context.Context, key string, data []byte) (int, error) {
 	_, err := s._getSafePath(key)
 	if err != nil {
 		return 0, err
@@ -102,12 +132,22 @@ func (s *storageEngine) store(key string, data []byte) (int, error) {
 	task := &WriteTask{
 		Key:  key,
 		Data: data,
+		Done: make(chan error, 1),
 	}
 
 	// Non-blocking enqueue
 	select {
 	case s.writeQueue <- task:
-		return len(data), nil
+		// Wait until worker reports durable write result.
+		select {
+		case err := <-task.Done:
+			if err != nil {
+				return 0, err
+			}
+			return len(data), nil
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
 	default:
 		log.Printf("[Async IO] Queue Full! Dropping request for key: %s", key)
 		return 0, fmt.Errorf("storage node overloaded (queue full)")
@@ -250,16 +290,11 @@ func main() {
 	}
 
 	metaStore, metaErr := meta.NewRepository(meta.Config{
-		Backend:         config.MetaBackend,
 		Endpoint:        config.MetaEndpoint,
 		RequireEndpoint: config.MetaRequireEndpoint,
 		AuthToken:       config.MetaRPCAuthToken,
 		Enabled:         config.MetaEnabled,
-		Driver:          config.MetaDriver,
 		DSN:             config.MetaDSN,
-		MaxOpenConns:    config.MetaMaxOpenConns,
-		MaxIdleConns:    config.MetaMaxIdleConns,
-		ConnMaxLifetime: config.MetaConnMaxLifetime,
 	})
 	if metaErr != nil {
 		if config.MetaEnabled && config.MetaRequireEndpoint {
@@ -330,7 +365,7 @@ func main() {
 			return
 		}
 
-		size, err := storage.store(key, data)
+		size, err := storage.store(c.Request.Context(), key, data)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return

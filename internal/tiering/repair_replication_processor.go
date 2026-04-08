@@ -156,11 +156,11 @@ func (p *ReplicationRepairProcessor) processECRepair(ctx context.Context, task *
 
 	k := config.K
 	m := config.M
-	if view.Version.EncodingK.Valid && view.Version.EncodingK.Int64 > 0 {
-		k = int(view.Version.EncodingK.Int64)
+	if view.Version.EncodingK != nil && *view.Version.EncodingK > 0 {
+		k = *view.Version.EncodingK
 	}
-	if view.Version.EncodingM.Valid && view.Version.EncodingM.Int64 > 0 {
-		m = int(view.Version.EncodingM.Int64)
+	if view.Version.EncodingM != nil && *view.Version.EncodingM > 0 {
+		m = *view.Version.EncodingM
 	}
 	totalShards := k + m
 	if totalShards <= 0 {
