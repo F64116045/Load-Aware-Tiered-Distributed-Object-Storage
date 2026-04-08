@@ -29,7 +29,6 @@ import (
 
 	// Register workload
 
-	"github.com/spf13/cobra"
 	_ "github.com/pingcap/go-ycsb/db/hybridstore"
 	"github.com/pingcap/go-ycsb/pkg/client"
 	"github.com/pingcap/go-ycsb/pkg/measurement"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/go-ycsb/pkg/util"
 	_ "github.com/pingcap/go-ycsb/pkg/workload"
 	"github.com/pingcap/go-ycsb/pkg/ycsb"
+	"github.com/spf13/cobra"
 
 	// Register basic database
 	_ "github.com/pingcap/go-ycsb/db/basic"
@@ -44,8 +44,6 @@ import (
 	_ "github.com/pingcap/go-ycsb/db/mysql"
 	// Register TiKV database
 	_ "github.com/pingcap/go-ycsb/db/tikv"
-	// Register PostgreSQL database
-	_ "github.com/pingcap/go-ycsb/db/pg"
 	// Register Aerospike database
 	_ "github.com/pingcap/go-ycsb/db/aerospike"
 	// Register Badger database

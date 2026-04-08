@@ -42,10 +42,6 @@ case ${DB} in
         SLEEPTIME=60
         DB="mysql"
         ;;
-    pg)
-        PROPS+=" -p pg.host=pg"
-        SLEEPTIME=30
-        ;;
     tikv)
         PROPS+=" -p tikv.pd=pd:2379 -p tikv.type=txn"
         ;;
@@ -55,9 +51,6 @@ case ${DB} in
         ;;
     tidb)
         PROPS+=" -p mysql.host=tidb -p mysql.port=4000"
-        ;;
-    cockroach)
-        PROPS+=" -p pg.host=cockroach -p pg.port=26257"
         ;;
     sqlite)
         PROPS+=" -p sqlite.db=/data/sqlite.db"
