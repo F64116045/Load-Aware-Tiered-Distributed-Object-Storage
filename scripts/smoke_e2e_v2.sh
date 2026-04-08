@@ -7,7 +7,6 @@ TIMEOUT_SEC="${TIMEOUT_SEC:-120}"
 START_STACK="${START_STACK:-true}"
 FORCE_TASK_NOW="${FORCE_TASK_NOW:-true}"
 COMPOSE_FILES="${COMPOSE_FILES:-docker-compose.yaml}"
-RUN_META_MIGRATE="${RUN_META_MIGRATE:-auto}" # auto|true|false
 
 KEY="v2-smoke-$(date +%s)"
 PAYLOAD_FILE="$(mktemp)"
@@ -28,18 +27,25 @@ dc() {
   docker compose "${args[@]}" "$@"
 }
 
-auto_should_migrate() {
-  # Rocks profile does not need SQL migrations.
-  if [[ "${COMPOSE_FILES}" == *"rocks"* ]]; then
-    return 1
-  fi
-  return 0
-}
-
 wait_api_health() {
   local deadline=$((SECONDS + TIMEOUT_SEC))
   while (( SECONDS < deadline )); do
     if curl -sS -f "${API_BASE}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+wait_node_discovery_ready() {
+  local deadline=$((SECONDS + TIMEOUT_SEC))
+  while (( SECONDS < deadline )); do
+    local body
+    body="$(curl -sS -f "${API_BASE}/v2/admin/nodes?limit=10" || true)"
+    local count
+    count="$(printf "%s" "${body}" | sed -n 's/.*"count":\([0-9]\+\).*/\1/p' | head -n1)"
+    if [[ -n "${count}" ]] && (( count >= 3 )); then
       return 0
     fi
     sleep 2
@@ -63,16 +69,11 @@ find_task_state_by_object() {
   printf "%s" "${resp}" | grep -o '"task_state":"[^"]*"' | head -n1 | cut -d'"' -f4
 }
 
-if [[ "${RUN_META_MIGRATE}" == "true" ]] || ([[ "${RUN_META_MIGRATE}" == "auto" ]] && auto_should_migrate); then
-  echo "[0/9] Prepare metadata schema"
-  dc run --rm meta_migrate >/dev/null
-else
-  echo "[0/9] Skip metadata migrate"
-fi
+echo "[0/9] Metadata schema migration is not required (TiKV keyspace model)"
 
 if [[ "${START_STACK}" == "true" ]]; then
   echo "[1/9] Start stack"
-  dc up -d --build meta_service storage_node_1 storage_node_2 storage_node_3 storage_node_4 storage_node_5 storage_node_6 api tiering_worker nginx >/dev/null
+  dc up -d --build --remove-orphans --force-recreate meta_service storage_node_1 storage_node_2 storage_node_3 storage_node_4 storage_node_5 storage_node_6 api tiering_worker nginx >/dev/null
 else
   echo "[1/9] Skip stack startup (START_STACK=false)"
 fi
@@ -83,15 +84,21 @@ if ! wait_api_health; then
   exit 1
 fi
 
+echo "[3/9] Wait node discovery ready"
+if ! wait_node_discovery_ready; then
+  echo "ERROR: node discovery did not reach quorum in time" >&2
+  exit 1
+fi
+
 printf "%s" "${PAYLOAD}" >"${PAYLOAD_FILE}"
 
-echo "[3/9] PUT /v2/objects/${KEY}"
+echo "[4/9] PUT /v2/objects/${KEY}"
 curl -sS -f -X PUT \
   "${API_BASE}/v2/objects/${KEY}" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @"${PAYLOAD_FILE}" >/dev/null
 
-echo "[4/9] Verify tiering task exists"
+echo "[5/9] Verify tiering task exists"
 TASK_ID=""
 deadline=$((SECONDS + TIMEOUT_SEC))
 while (( SECONDS < deadline )); do
@@ -107,7 +114,7 @@ if [[ -z "${TASK_ID}" ]]; then
 fi
 echo "Task: ${TASK_ID}"
 
-echo "[5/9] Verify admin tasks endpoint sees object"
+echo "[6/9] Verify admin tasks endpoint sees object"
 tasks_resp="$(curl -sS -f "${API_BASE}/v2/admin/tasks?task_type=REPL_TO_EC&object_id=${KEY}&limit=1000")"
 if ! printf "%s" "${tasks_resp}" | grep -q "\"object_id\":\"${KEY}\""; then
   echo "ERROR: /v2/admin/tasks does not contain object ${KEY}" >&2
@@ -115,13 +122,13 @@ if ! printf "%s" "${tasks_resp}" | grep -q "\"object_id\":\"${KEY}\""; then
 fi
 
 if [[ "${FORCE_TASK_NOW}" == "true" ]]; then
-  echo "[6/9] Force task runnable now via admin retry-now"
+  echo "[7/9] Force task runnable now via admin retry-now"
   curl -sS -f -X POST "${API_BASE}/v2/admin/tasks/${TASK_ID}/retry-now" >/dev/null
 else
-  echo "[6/9] Skip force scheduling (FORCE_TASK_NOW=false)"
+  echo "[7/9] Skip force scheduling (FORCE_TASK_NOW=false)"
 fi
 
-echo "[7/9] Wait object promotion to EC_ACTIVE"
+echo "[8/9] Wait object promotion to EC_ACTIVE"
 deadline=$((SECONDS + TIMEOUT_SEC))
 while (( SECONDS < deadline )); do
   obj_resp="$(curl -sS -f "${API_BASE}/v2/admin/objects/${KEY}" || true)"
@@ -145,7 +152,7 @@ if ! printf "%s" "${obj_resp}" | grep -q "\"state\":\"EC_ACTIVE\"" ||
   exit 1
 fi
 
-echo "[8/9] GET /v2/objects/${KEY} and verify payload"
+echo "[9/9] GET /v2/objects/${KEY} and verify payload"
 curl -sS -f "${API_BASE}/v2/objects/${KEY}" -o "${READ_FILE}"
 if ! cmp -s "${PAYLOAD_FILE}" "${READ_FILE}"; then
   echo "ERROR: payload mismatch after readback" >&2
@@ -154,7 +161,7 @@ if ! cmp -s "${PAYLOAD_FILE}" "${READ_FILE}"; then
   exit 1
 fi
 
-echo "[9/9] Verify GC task done and replica locations marked DELETED"
+echo "[10/9] Verify GC task done and replica locations marked DELETED"
 deadline=$((SECONDS + TIMEOUT_SEC))
 while (( SECONDS < deadline )); do
   gc_task_state="$(find_task_state_by_object "GC" "${KEY}")"
