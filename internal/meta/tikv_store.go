@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"hybrid_distributed_store/internal/config"
-	pebble "hybrid_distributed_store/internal/meta/tikvcompat"
+	kvstore "hybrid_distributed_store/internal/meta/kvstore"
 )
 
 const (
@@ -115,7 +115,7 @@ func (l *tiKVLeaderLock) Release(ctx context.Context) error {
 
 // TiKVStore is a TiKV-backed metadata repository.
 type TiKVStore struct {
-	db      *pebble.DB
+	db      *kvstore.DB
 	mu      sync.RWMutex
 	lockTTL time.Duration
 }
@@ -130,7 +130,7 @@ func NewTiKVStore(cfg Config) (*TiKVStore, error) {
 		return nil, err
 	}
 
-	db, err := pebble.Open(dsn, &pebble.Options{})
+	db, err := kvstore.Open(dsn, &kvstore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("open tikv store failed: %w", err)
 	}
@@ -437,7 +437,7 @@ func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID strin
 		}
 	}
 
-	if err := b.Commit(pebble.Sync); err != nil {
+	if err := b.Commit(kvstore.Sync); err != nil {
 		return fmt.Errorf("commit normalized metadata batch failed: %w", err)
 	}
 	return nil
@@ -510,7 +510,7 @@ func (s *TiKVStore) DeleteNormalizedMetadata(ctx context.Context, objectID strin
 	b := s.db.NewBatch()
 	defer b.Close()
 
-	_ = b.Delete([]byte(tiKVObjectKey(objectID)), pebble.NoSync)
+	_ = b.Delete([]byte(tiKVObjectKey(objectID)), kvstore.NoSync)
 	if err := s.batchDeletePrefix(b, tiKVObjectVersionPrefix(objectID)); err != nil {
 		return err
 	}
@@ -520,7 +520,7 @@ func (s *TiKVStore) DeleteNormalizedMetadata(ctx context.Context, objectID strin
 	if err := s.batchDeletePrefix(b, tiKVECShardPrefix(objectID)); err != nil {
 		return err
 	}
-	if err := b.Commit(pebble.Sync); err != nil {
+	if err := b.Commit(kvstore.Sync); err != nil {
 		return fmt.Errorf("commit delete normalized metadata failed: %w", err)
 	}
 	return nil
@@ -1272,7 +1272,7 @@ func (s *TiKVStore) PromoteObjectVersionToEC(ctx context.Context, objectID strin
 		return err
 	}
 
-	if err := b.Commit(pebble.Sync); err != nil {
+	if err := b.Commit(kvstore.Sync); err != nil {
 		return fmt.Errorf("commit promote ec batch failed: %w", err)
 	}
 	return nil
@@ -1501,7 +1501,7 @@ func (s *TiKVStore) putJSON(key string, value interface{}) error {
 	if err != nil {
 		return fmt.Errorf("marshal value for key=%s failed: %w", key, err)
 	}
-	if err := s.db.Set([]byte(key), data, pebble.Sync); err != nil {
+	if err := s.db.Set([]byte(key), data, kvstore.Sync); err != nil {
 		return fmt.Errorf("set key=%s failed: %w", key, err)
 	}
 	return nil
@@ -1510,7 +1510,7 @@ func (s *TiKVStore) putJSON(key string, value interface{}) error {
 func (s *TiKVStore) getJSON(key string, out interface{}) (bool, error) {
 	v, closer, err := s.db.Get([]byte(key))
 	if err != nil {
-		if errors.Is(err, pebble.ErrNotFound) {
+		if errors.Is(err, kvstore.ErrNotFound) {
 			return false, nil
 		}
 		return false, fmt.Errorf("get key=%s failed: %w", key, err)
@@ -1523,25 +1523,25 @@ func (s *TiKVStore) getJSON(key string, out interface{}) (bool, error) {
 	return true, nil
 }
 
-func (s *TiKVStore) batchPutJSON(b *pebble.Batch, key string, value interface{}) error {
+func (s *TiKVStore) batchPutJSON(b *kvstore.Batch, key string, value interface{}) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("marshal batch value for key=%s failed: %w", key, err)
 	}
-	if err := b.Set([]byte(key), data, pebble.NoSync); err != nil {
+	if err := b.Set([]byte(key), data, kvstore.NoSync); err != nil {
 		return fmt.Errorf("batch set key=%s failed: %w", key, err)
 	}
 	return nil
 }
 
-func (s *TiKVStore) batchDeletePrefix(b *pebble.Batch, prefix string) error {
+func (s *TiKVStore) batchDeletePrefix(b *kvstore.Batch, prefix string) error {
 	it, err := s.newPrefixIter(prefix)
 	if err != nil {
 		return err
 	}
 	defer it.Close()
 	for it.First(); it.Valid(); it.Next() {
-		if err := b.Delete(it.Key(), pebble.NoSync); err != nil {
+		if err := b.Delete(it.Key(), kvstore.NoSync); err != nil {
 			return fmt.Errorf("batch delete key=%s failed: %w", string(it.Key()), err)
 		}
 	}
@@ -1551,9 +1551,9 @@ func (s *TiKVStore) batchDeletePrefix(b *pebble.Batch, prefix string) error {
 	return nil
 }
 
-func (s *TiKVStore) newPrefixIter(prefix string) (*pebble.Iterator, error) {
+func (s *TiKVStore) newPrefixIter(prefix string) (*kvstore.Iterator, error) {
 	upper := tiKVPrefixUpperBound([]byte(prefix))
-	return s.db.NewIter(&pebble.IterOptions{
+	return s.db.NewIter(&kvstore.IterOptions{
 		LowerBound: []byte(prefix),
 		UpperBound: upper,
 	})
