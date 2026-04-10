@@ -115,7 +115,7 @@ func (l *tiKVLeaderLock) Release(ctx context.Context) error {
 
 // TiKVStore is a TiKV-backed metadata repository.
 type TiKVStore struct {
-	db      *kvstore.DB
+	db      *kvstore.Client
 	mu      sync.RWMutex
 	lockTTL time.Duration
 }

@@ -27,7 +27,7 @@ const (
 
 var ErrNotFound = errors.New("not found")
 
-type DB struct {
+type Client struct {
 	client *txnkv.Client
 	mem    *memoryStore
 }
@@ -43,9 +43,9 @@ func newMemoryStore() *memoryStore {
 	}
 }
 
-func Open(dsn string, _ *Options) (*DB, error) {
+func Open(dsn string, _ *Options) (*Client, error) {
 	if isMemoryDSN(dsn) {
-		return &DB{mem: newMemoryStore()}, nil
+		return &Client{mem: newMemoryStore()}, nil
 	}
 	pdAddrs, err := parsePDAddrs(dsn)
 	if err != nil {
@@ -55,10 +55,10 @@ func Open(dsn string, _ *Options) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create tikv client failed: %w", err)
 	}
-	return &DB{client: c}, nil
+	return &Client{client: c}, nil
 }
 
-func (d *DB) Ping(ctx context.Context) error {
+func (d *Client) Ping(ctx context.Context) error {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return nil
 	}
@@ -77,7 +77,7 @@ func (d *DB) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (d *DB) Close() error {
+func (d *Client) Close() error {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return nil
 	}
@@ -87,7 +87,7 @@ func (d *DB) Close() error {
 	return d.client.Close()
 }
 
-func (d *DB) Set(key []byte, value []byte, _ WriteOptions) error {
+func (d *Client) Set(key []byte, value []byte, _ WriteOptions) error {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return nil
 	}
@@ -114,7 +114,7 @@ func (d *DB) Set(key []byte, value []byte, _ WriteOptions) error {
 	return nil
 }
 
-func (d *DB) Delete(key []byte, _ WriteOptions) error {
+func (d *Client) Delete(key []byte, _ WriteOptions) error {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return nil
 	}
@@ -145,7 +145,7 @@ type nopCloser struct{}
 
 func (nopCloser) Close() error { return nil }
 
-func (d *DB) Get(key []byte) ([]byte, io.Closer, error) {
+func (d *Client) Get(key []byte) ([]byte, io.Closer, error) {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return nil, nopCloser{}, ErrNotFound
 	}
@@ -184,11 +184,11 @@ type batchOp struct {
 }
 
 type Batch struct {
-	db  *DB
+	db  *Client
 	ops []batchOp
 }
 
-func (d *DB) NewBatch() *Batch {
+func (d *Client) NewBatch() *Batch {
 	return &Batch{db: d}
 }
 
@@ -280,7 +280,7 @@ type Iterator struct {
 	err  error
 }
 
-func (d *DB) NewIter(opts *IterOptions) (*Iterator, error) {
+func (d *Client) NewIter(opts *IterOptions) (*Iterator, error) {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return &Iterator{idx: -1}, nil
 	}
@@ -344,11 +344,11 @@ func (d *DB) NewIter(opts *IterOptions) (*Iterator, error) {
 	return out, nil
 }
 
-func (d *DB) TryAcquireLock(ctx context.Context, key []byte, owner []byte) (bool, error) {
+func (d *Client) TryAcquireLock(ctx context.Context, key []byte, owner []byte) (bool, error) {
 	return d.TryAcquireLockWithTTL(ctx, key, owner, 10*time.Second)
 }
 
-func (d *DB) TryAcquireLockWithTTL(ctx context.Context, key []byte, owner []byte, ttl time.Duration) (bool, error) {
+func (d *Client) TryAcquireLockWithTTL(ctx context.Context, key []byte, owner []byte, ttl time.Duration) (bool, error) {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return false, nil
 	}
@@ -444,7 +444,7 @@ func (d *DB) TryAcquireLockWithTTL(ctx context.Context, key []byte, owner []byte
 	}
 }
 
-func (d *DB) IsLockOwner(ctx context.Context, key []byte, owner []byte) (bool, error) {
+func (d *Client) IsLockOwner(ctx context.Context, key []byte, owner []byte) (bool, error) {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return false, nil
 	}
@@ -486,7 +486,7 @@ func (d *DB) IsLockOwner(ctx context.Context, key []byte, owner []byte) (bool, e
 	return lockOwner == string(owner), nil
 }
 
-func (d *DB) RefreshLock(ctx context.Context, key []byte, owner []byte, ttl time.Duration) (bool, error) {
+func (d *Client) RefreshLock(ctx context.Context, key []byte, owner []byte, ttl time.Duration) (bool, error) {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return false, nil
 	}
@@ -556,7 +556,7 @@ func (d *DB) RefreshLock(ctx context.Context, key []byte, owner []byte, ttl time
 	return true, nil
 }
 
-func (d *DB) ReleaseLock(ctx context.Context, key []byte, owner []byte) error {
+func (d *Client) ReleaseLock(ctx context.Context, key []byte, owner []byte) error {
 	if d == nil || (d.client == nil && d.mem == nil) {
 		return nil
 	}
