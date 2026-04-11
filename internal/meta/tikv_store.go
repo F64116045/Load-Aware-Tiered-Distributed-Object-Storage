@@ -92,7 +92,7 @@ func (l *tiKVLeaderLock) Ping(ctx context.Context) error {
 	if l == nil || l.store == nil || l.released {
 		return fmt.Errorf("tikv leader lock is nil")
 	}
-	ok, err := l.store.db.RefreshLock(ctx, l.lockKey, l.owner, l.ttl)
+	ok, err := l.store.kv.RefreshLock(ctx, l.lockKey, l.owner, l.ttl)
 	if err != nil {
 		return fmt.Errorf("tikv leader lock refresh failed: %w", err)
 	}
@@ -106,7 +106,7 @@ func (l *tiKVLeaderLock) Release(ctx context.Context) error {
 	if l == nil || l.store == nil || l.released {
 		return nil
 	}
-	if err := l.store.db.ReleaseLock(ctx, l.lockKey, l.owner); err != nil {
+	if err := l.store.kv.ReleaseLock(ctx, l.lockKey, l.owner); err != nil {
 		return fmt.Errorf("tikv leader lock release failed: %w", err)
 	}
 	l.released = true
@@ -115,7 +115,7 @@ func (l *tiKVLeaderLock) Release(ctx context.Context) error {
 
 // TiKVStore is a TiKV-backed metadata repository.
 type TiKVStore struct {
-	db      *kvstore.Client
+	kv      *kvstore.Client
 	mu      sync.RWMutex
 	lockTTL time.Duration
 }
@@ -130,13 +130,13 @@ func NewTiKVStore(cfg Config) (*TiKVStore, error) {
 		return nil, err
 	}
 
-	db, err := kvstore.Open(dsn, &kvstore.Options{})
+	kvClient, err := kvstore.Open(dsn, &kvstore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("open tikv store failed: %w", err)
 	}
 
 	return &TiKVStore{
-		db:      db,
+		kv:      kvClient,
 		lockTTL: 10 * time.Second,
 	}, nil
 }
@@ -160,26 +160,26 @@ func resolveTiKVEndpoints(dsn string) (string, error) {
 }
 
 func (s *TiKVStore) Ping(ctx context.Context) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
-	return s.db.Ping(ctx)
+	return s.kv.Ping(ctx)
 }
 
 func (s *TiKVStore) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
-	return s.db.Close()
+	return s.kv.Close()
 }
 
 func (s *TiKVStore) TryAcquireLeaderLock(ctx context.Context, key int64) (LeaderLock, bool, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, false, nil
 	}
 	lockKey := []byte(tiKVLeaderLockKey(key))
 	owner := tiKVNewLockOwnerToken()
-	acquired, err := s.db.TryAcquireLockWithTTL(ctx, lockKey, owner, s.lockTTL)
+	acquired, err := s.kv.TryAcquireLockWithTTL(ctx, lockKey, owner, s.lockTTL)
 	if err != nil {
 		return nil, false, err
 	}
@@ -195,7 +195,7 @@ func (s *TiKVStore) TryAcquireLeaderLock(ctx context.Context, key int64) (Leader
 }
 
 func (s *TiKVStore) UpsertTieringLeaderState(ctx context.Context, lockKey int64, leaderID, status string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if leaderID == "" {
@@ -231,7 +231,7 @@ func (s *TiKVStore) UpsertTieringLeaderState(ctx context.Context, lockKey int64,
 }
 
 func (s *TiKVStore) MarkTieringLeaderStopped(ctx context.Context, lockKey int64, leaderID, status string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if leaderID == "" {
@@ -257,7 +257,7 @@ func (s *TiKVStore) MarkTieringLeaderStopped(ctx context.Context, lockKey int64,
 }
 
 func (s *TiKVStore) GetTieringLeaderState(ctx context.Context, lockKey int64) (*TieringLeaderState, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, nil
 	}
 	s.mu.RLock()
@@ -271,7 +271,7 @@ func (s *TiKVStore) GetTieringLeaderState(ctx context.Context, lockKey int64) (*
 }
 
 func (s *TiKVStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, status string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if nodeID == "" {
@@ -293,7 +293,7 @@ func (s *TiKVStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, free
 }
 
 func (s *TiKVStore) ListHealthyNodeIDs(ctx context.Context, staleSec int) ([]string, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, nil
 	}
 	if staleSec <= 0 {
@@ -322,7 +322,7 @@ func (s *TiKVStore) ListHealthyNodeIDs(ctx context.Context, staleSec int) ([]str
 }
 
 func (s *TiKVStore) ListNodeHeartbeats(ctx context.Context, limit int) ([]NodeHeartbeatSnapshot, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, nil
 	}
 	if limit <= 0 {
@@ -348,7 +348,7 @@ func (s *TiKVStore) ListNodeHeartbeats(ctx context.Context, limit int) ([]NodeHe
 }
 
 func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID string, metadata map[string]interface{}) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if objectID == "" {
@@ -408,7 +408,7 @@ func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID strin
 		verRec.EncodingM = &vv
 	}
 
-	b := s.db.NewBatch()
+	b := s.kv.NewBatch()
 	defer b.Close()
 
 	if err := s.batchPutJSON(b, objKey, obj); err != nil {
@@ -444,7 +444,7 @@ func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID strin
 }
 
 func (s *TiKVStore) GetNormalizedMetadata(ctx context.Context, objectID string) (map[string]interface{}, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, nil
 	}
 
@@ -500,14 +500,14 @@ func (s *TiKVStore) GetNormalizedMetadata(ctx context.Context, objectID string) 
 }
 
 func (s *TiKVStore) DeleteNormalizedMetadata(ctx context.Context, objectID string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	b := s.db.NewBatch()
+	b := s.kv.NewBatch()
 	defer b.Close()
 
 	_ = b.Delete([]byte(tiKVObjectKey(objectID)), kvstore.NoSync)
@@ -527,7 +527,7 @@ func (s *TiKVStore) DeleteNormalizedMetadata(ctx context.Context, objectID strin
 }
 
 func (s *TiKVStore) GetObjectAdminView(ctx context.Context, objectID string) (*ObjectAdminView, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, nil
 	}
 
@@ -609,7 +609,7 @@ func (s *TiKVStore) GetObjectAdminView(ctx context.Context, objectID string) (*O
 }
 
 func (s *TiKVStore) EnqueueTieringTask(ctx context.Context, taskID, objectID string, version int64, taskType string, priority int, scheduledAt time.Time) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if taskID == "" {
@@ -644,7 +644,7 @@ func (s *TiKVStore) EnqueueTieringTask(ctx context.Context, taskID, objectID str
 }
 
 func (s *TiKVStore) ListTieringTasks(ctx context.Context, taskState, taskType string, limit int) ([]TieringTask, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, nil
 	}
 	if limit <= 0 {
@@ -684,7 +684,7 @@ func (s *TiKVStore) ListTieringTasks(ctx context.Context, taskState, taskType st
 }
 
 func (s *TiKVStore) ListTieringTaskStateCounts(ctx context.Context, taskType string) (map[string]int64, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return map[string]int64{}, nil
 	}
 	s.mu.RLock()
@@ -711,7 +711,7 @@ func (s *TiKVStore) ListTieringTaskStateCounts(ctx context.Context, taskType str
 }
 
 func (s *TiKVStore) RequeueTieringTaskNow(ctx context.Context, taskID string) (bool, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return false, nil
 	}
 	if taskID == "" {
@@ -742,7 +742,7 @@ func (s *TiKVStore) RequeueTieringTaskNow(ctx context.Context, taskID string) (b
 }
 
 func (s *TiKVStore) CancelTieringTask(ctx context.Context, taskID, reason string) (bool, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return false, nil
 	}
 	if taskID == "" {
@@ -775,7 +775,7 @@ func (s *TiKVStore) CancelTieringTask(ctx context.Context, taskID, reason string
 }
 
 func (s *TiKVStore) ClaimNextTieringTask(ctx context.Context, taskType string) (*TieringTask, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, nil
 	}
 
@@ -822,7 +822,7 @@ func (s *TiKVStore) ClaimNextTieringTask(ctx context.Context, taskType string) (
 }
 
 func (s *TiKVStore) MarkTieringTaskDone(ctx context.Context, taskID string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	s.mu.Lock()
@@ -839,7 +839,7 @@ func (s *TiKVStore) MarkTieringTaskDone(ctx context.Context, taskID string) erro
 }
 
 func (s *TiKVStore) MarkTieringTaskRetry(ctx context.Context, taskID, lastErr string, nextRunAt time.Time) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if nextRunAt.IsZero() {
@@ -861,7 +861,7 @@ func (s *TiKVStore) MarkTieringTaskRetry(ctx context.Context, taskID, lastErr st
 }
 
 func (s *TiKVStore) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if lastErr == "" {
@@ -911,7 +911,7 @@ func (s *TiKVStore) enqueueTieringCandidates(
 	maxBytes int64,
 	applyByteBudget bool,
 ) (int, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return 0, nil
 	}
 	if ageThresholdSec < 0 {
@@ -1028,7 +1028,7 @@ func (s *TiKVStore) enqueueTieringCandidates(
 }
 
 func (s *TiKVStore) EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return 0, nil
 	}
 	if maxObjects <= 0 {
@@ -1165,7 +1165,7 @@ func (s *TiKVStore) enqueueRepairTask(taskID, objectID string, version int64) (b
 }
 
 func (s *TiKVStore) GetObjectVersionSnapshot(ctx context.Context, objectID string, taskVersion int64) (*ObjectVersionSnapshot, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, nil
 	}
 	s.mu.RLock()
@@ -1189,7 +1189,7 @@ func (s *TiKVStore) GetObjectVersionSnapshot(ctx context.Context, objectID strin
 }
 
 func (s *TiKVStore) MarkObjectMigrating(ctx context.Context, objectID string, version int64) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	s.mu.Lock()
@@ -1212,7 +1212,7 @@ func (s *TiKVStore) MarkObjectMigrating(ctx context.Context, objectID string, ve
 }
 
 func (s *TiKVStore) PromoteObjectVersionToEC(ctx context.Context, objectID string, version int64, checksum string, k int, m int, locations []ECShardLocation) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if len(locations) == 0 {
@@ -1234,7 +1234,7 @@ func (s *TiKVStore) PromoteObjectVersionToEC(ctx context.Context, objectID strin
 		return fmt.Errorf("object version missing during ec promotion")
 	}
 
-	b := s.db.NewBatch()
+	b := s.kv.NewBatch()
 	defer b.Close()
 
 	for _, loc := range locations {
@@ -1279,7 +1279,7 @@ func (s *TiKVStore) PromoteObjectVersionToEC(ctx context.Context, objectID strin
 }
 
 func (s *TiKVStore) ListActiveReplicaLocations(ctx context.Context, objectID string, version int64) ([]ReplicaLocation, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil, nil
 	}
 	s.mu.RLock()
@@ -1302,7 +1302,7 @@ func (s *TiKVStore) ListActiveReplicaLocations(ctx context.Context, objectID str
 }
 
 func (s *TiKVStore) UpsertReplicaLocations(ctx context.Context, objectID string, version int64, nodeIDs []string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if len(nodeIDs) == 0 {
@@ -1331,7 +1331,7 @@ func (s *TiKVStore) UpsertReplicaLocations(ctx context.Context, objectID string,
 }
 
 func (s *TiKVStore) MarkReplicaLocationsDeleted(ctx context.Context, objectID string, version int64, nodeIDs []string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.kv == nil {
 		return nil
 	}
 	if len(nodeIDs) == 0 {
@@ -1501,14 +1501,14 @@ func (s *TiKVStore) putJSON(key string, value interface{}) error {
 	if err != nil {
 		return fmt.Errorf("marshal value for key=%s failed: %w", key, err)
 	}
-	if err := s.db.Set([]byte(key), data, kvstore.Sync); err != nil {
+	if err := s.kv.Set([]byte(key), data, kvstore.Sync); err != nil {
 		return fmt.Errorf("set key=%s failed: %w", key, err)
 	}
 	return nil
 }
 
 func (s *TiKVStore) getJSON(key string, out interface{}) (bool, error) {
-	v, closer, err := s.db.Get([]byte(key))
+	v, closer, err := s.kv.Get([]byte(key))
 	if err != nil {
 		if errors.Is(err, kvstore.ErrNotFound) {
 			return false, nil
@@ -1553,7 +1553,7 @@ func (s *TiKVStore) batchDeletePrefix(b *kvstore.Batch, prefix string) error {
 
 func (s *TiKVStore) newPrefixIter(prefix string) (*kvstore.Iterator, error) {
 	upper := tiKVPrefixUpperBound([]byte(prefix))
-	return s.db.NewIter(&kvstore.IterOptions{
+	return s.kv.NewIter(&kvstore.IterOptions{
 		LowerBound: []byte(prefix),
 		UpperBound: upper,
 	})
