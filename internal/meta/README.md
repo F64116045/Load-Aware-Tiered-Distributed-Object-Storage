@@ -10,7 +10,10 @@ This package is the metadata/control-plane backend used by API, tiering worker, 
 - `tikv_store.go`
   - TiKV store bootstrap and lifecycle (`NewTiKVStore`, `Ping`, `Close`)
   - leader lock acquire entry (`TryAcquireLeaderLock`)
-  - core record structs and key prefixes
+  - leader lock object methods (`Ping`, `Release`)
+- `tikv_store_schema.go`
+  - key-prefix constants (`obj/`, `objv/`, `repl/`, ...)
+  - internal TiKV record structs (`tiKVObjectRecord`, `tiKVTaskRecord`, ...)
 - `tikv_store_objects.go`
   - object metadata CRUD (`Upsert/Get/DeleteNormalizedMetadata`)
   - admin object detail view (`GetObjectAdminView`)
