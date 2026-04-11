@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -286,87 +284,7 @@ func main() {
 	router.Use(gin.Logger()) // [ADDED] 開啟 Access Log
 
 	// 6. Bind Routes
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "healthy",
-			"service": fmt.Sprintf("storage_node_%s", storage.port),
-		})
-	})
-
-	router.GET("/info", func(c *gin.Context) {
-		info, err := storage.getInfo()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, info)
-	})
-
-	router.POST("/store", func(c *gin.Context) {
-		key := c.Query("key")
-		if key == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing 'key' query parameter"})
-			return
-		}
-
-		data, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read body"})
-			return
-		}
-
-		size, err := storage.store(c.Request.Context(), key, data)
-		if err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-			return
-		}
-
-		info, _ := storage.getInfo()
-		c.JSON(http.StatusOK, gin.H{
-			"status":     "ok",
-			"key":        key,
-			"size":       size,
-			"total_keys": info["total_keys"],
-		})
-	})
-
-	// [FIX] 提取 Handler 並同時支援 GET 和 HEAD 方法
-	retrieveHandler := func(c *gin.Context) {
-		key := c.Param("key")
-		data, err := storage.retrieve(key)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if data == nil {
-			c.JSON(http.StatusNotFound, gin.H{"detail": "Key not found"})
-			return
-		}
-		// 如果是 HEAD 請求，不需要回傳 Body，只要狀態碼即可
-		if c.Request.Method == http.MethodHead {
-			c.Status(http.StatusOK)
-			return
-		}
-		c.Data(http.StatusOK, "application/octet-stream", data)
-	}
-
-	// 註冊兩個 Method
-	router.GET("/retrieve/:key", retrieveHandler)
-	router.HEAD("/retrieve/:key", retrieveHandler)
-
-	router.DELETE("/delete/:key", func(c *gin.Context) {
-		key := c.Param("key")
-		deleted, err := storage.delete(key)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if !deleted {
-			c.JSON(http.StatusOK, gin.H{"status": "ok", "key": key, "detail": "not_found"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "key": key, "message": "deleted"})
-	})
+	registerRoutes(router, storage)
 
 	// 7. Start Server
 	listenAddr := "0.0.0.0:" + nodePort

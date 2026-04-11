@@ -1,0 +1,88 @@
+package main
+
+import (
+	"io"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+func registerRoutes(router gin.IRoutes, storage *storageEngine) {
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "healthy",
+			"service": "storage_node_" + storage.port,
+		})
+	})
+
+	router.GET("/info", func(c *gin.Context) {
+		info, err := storage.getInfo()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, info)
+	})
+
+	router.POST("/store", func(c *gin.Context) {
+		key := c.Query("key")
+		if key == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing 'key' query parameter"})
+			return
+		}
+
+		data, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read body"})
+			return
+		}
+
+		size, err := storage.store(c.Request.Context(), key, data)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
+
+		info, _ := storage.getInfo()
+		c.JSON(http.StatusOK, gin.H{
+			"status":     "ok",
+			"key":        key,
+			"size":       size,
+			"total_keys": info["total_keys"],
+		})
+	})
+
+	retrieveHandler := func(c *gin.Context) {
+		key := c.Param("key")
+		data, err := storage.retrieve(key)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if data == nil {
+			c.JSON(http.StatusNotFound, gin.H{"detail": "Key not found"})
+			return
+		}
+		if c.Request.Method == http.MethodHead {
+			c.Status(http.StatusOK)
+			return
+		}
+		c.Data(http.StatusOK, "application/octet-stream", data)
+	}
+	router.GET("/retrieve/:key", retrieveHandler)
+	router.HEAD("/retrieve/:key", retrieveHandler)
+
+	router.DELETE("/delete/:key", func(c *gin.Context) {
+		key := c.Param("key")
+		deleted, err := storage.delete(key)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !deleted {
+			c.JSON(http.StatusOK, gin.H{"status": "ok", "key": key, "detail": "not_found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "key": key, "message": "deleted"})
+	})
+}
