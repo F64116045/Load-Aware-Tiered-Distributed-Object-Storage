@@ -10,39 +10,6 @@ import (
 	kvstore "hybrid_distributed_store/internal/meta/kvstore"
 )
 
-type tiKVLeaderLock struct {
-	store    *TiKVStore
-	lockKey  []byte
-	owner    []byte
-	ttl      time.Duration
-	released bool
-}
-
-func (l *tiKVLeaderLock) Ping(ctx context.Context) error {
-	if l == nil || l.store == nil || l.released {
-		return fmt.Errorf("tikv leader lock is nil")
-	}
-	ok, err := l.store.kv.RefreshLock(ctx, l.lockKey, l.owner, l.ttl)
-	if err != nil {
-		return fmt.Errorf("tikv leader lock refresh failed: %w", err)
-	}
-	if !ok {
-		return fmt.Errorf("tikv leader lock was lost")
-	}
-	return nil
-}
-
-func (l *tiKVLeaderLock) Release(ctx context.Context) error {
-	if l == nil || l.store == nil || l.released {
-		return nil
-	}
-	if err := l.store.kv.ReleaseLock(ctx, l.lockKey, l.owner); err != nil {
-		return fmt.Errorf("tikv leader lock release failed: %w", err)
-	}
-	l.released = true
-	return nil
-}
-
 // TiKVStore is a TiKV-backed metadata repository.
 type TiKVStore struct {
 	kv      *kvstore.Client

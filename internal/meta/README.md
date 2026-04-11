@@ -10,7 +10,13 @@ This package is the metadata/control-plane backend used by API, tiering worker, 
 - `tikv_store.go`
   - TiKV store bootstrap and lifecycle (`NewTiKVStore`, `Ping`, `Close`)
   - leader lock acquire entry (`TryAcquireLeaderLock`)
-  - leader lock object methods (`Ping`, `Release`)
+- `tikv_store_lock.go`
+  - leader lock object (`tiKVLeaderLock`)
+  - lock owner token generation
+  - lock keepalive/release (`Ping`, `Release`)
+- `tikv_store_keys.go`
+  - key builders/prefix helpers (`tiKVObjectKey`, `tiKVTaskKey`, ...)
+  - ordered key encoders and prefix upper-bound helper
 - `tikv_store_schema.go`
   - key-prefix constants (`obj/`, `objv/`, `repl/`, ...)
   - internal TiKV record structs (`tiKVObjectRecord`, `tiKVTaskRecord`, ...)
@@ -29,7 +35,7 @@ This package is the metadata/control-plane backend used by API, tiering worker, 
   - tiering leader state persistence
   - node heartbeat upsert/query
 - `tikv_store_helpers.go`
-  - internal iterators/json helpers/key builders
+  - internal iterators/json encode/decode helpers
 - `kvstore/`
   - TiKV/Pebble-compatible client abstraction (`Client`, `Batch`, `Iterator`)
 
