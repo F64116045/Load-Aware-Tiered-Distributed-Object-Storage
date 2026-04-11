@@ -1,4 +1,4 @@
-package tikvcompat
+package kvstore
 
 import (
 	"testing"
