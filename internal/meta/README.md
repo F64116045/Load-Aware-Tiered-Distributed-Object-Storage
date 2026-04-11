@@ -39,6 +39,39 @@ This package is the metadata/control-plane backend used by API, tiering worker, 
 - `kvstore/`
   - TiKV/Pebble-compatible client abstraction (`Client`, `Batch`, `Iterator`)
 
+## Module graph
+
+```mermaid
+flowchart TD
+    S[tikv_store.go\nbootstrap + store lifecycle]
+    K[tikv_store_keys.go\nkey builders]
+    H[tikv_store_helpers.go\njson + iter helpers]
+    SC[tikv_store_schema.go\nrecord structs]
+    L[tikv_store_lock.go\nleader lock object]
+    C[tikv_store_cluster.go\nleader state + heartbeats]
+    O[tikv_store_objects.go\nobject metadata CRUD]
+    T[tikv_store_tasks.go\ntask lifecycle]
+    P[tikv_store_policy.go\nA1/A2/A3 + repair scan]
+    M[tikv_store_migration.go\nmigration/promote/replica]
+    KV[kvstore/*\nTiKV client abstraction]
+
+    S --> K
+    S --> L
+    S --> KV
+    L --> KV
+    C --> H
+    O --> H
+    T --> H
+    P --> H
+    M --> H
+    H --> K
+    H --> KV
+    O --> SC
+    T --> SC
+    P --> SC
+    M --> SC
+```
+
 ## Data flow (high level)
 
 1. API `PUT` writes payload to storage nodes, then calls `UpsertNormalizedMetadata`.
