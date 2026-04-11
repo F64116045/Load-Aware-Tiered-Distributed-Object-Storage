@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -237,6 +239,29 @@ func getDiskBytes(path string) (int64, int64) {
 	return freeBytes, totalBytes
 }
 
+func parseCPULoad(loadavg string, cpuCount int) float64 {
+	fields := strings.Fields(loadavg)
+	if len(fields) == 0 {
+		return 0
+	}
+	load1, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0
+	}
+	if cpuCount <= 0 {
+		return load1
+	}
+	return load1 / float64(cpuCount)
+}
+
+func getCPULoad() float64 {
+	data, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0
+	}
+	return parseCPULoad(string(data), runtime.NumCPU())
+}
+
 func registerAndHeartbeatMeta(ctx context.Context, metaStore meta.Repository, nodeURL string, storage *storageEngine) {
 	if metaStore == nil {
 		return
@@ -256,7 +281,7 @@ func registerAndHeartbeatMeta(ctx context.Context, metaStore meta.Repository, no
 			freeBytes,
 			totalBytes,
 			len(storage.writeQueue),
-			0, // TODO: wire actual cpu load in phase-2.
+			getCPULoad(),
 			status,
 		)
 		if err != nil {
