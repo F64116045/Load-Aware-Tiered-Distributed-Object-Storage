@@ -25,8 +25,14 @@ const (
 	Sync
 )
 
+// ErrNotFound indicates key absence for Get operations.
 var ErrNotFound = errors.New("not found")
 
+// Client is a tiny KV facade used by metadata repositories.
+//
+// Runtime mode:
+//   - TiKV txn client when DSN points to PD endpoints
+//   - in-memory map when DSN is memory:// or mem:// (tests/dev)
 type Client struct {
 	client *txnkv.Client
 	mem    *memoryStore
