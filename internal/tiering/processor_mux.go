@@ -9,17 +9,24 @@ import (
 
 // ProcessorMux routes tiering tasks to dedicated processors.
 type ProcessorMux struct {
-	replToEC   *ReplicationToECProcessor
-	replRepair *ReplicationRepairProcessor
-	replGC     *ReplicationGCProcessor
+	replToEC     *ReplicationToECProcessor
+	replRepair   *ReplicationRepairProcessor
+	replGC       *ReplicationGCProcessor
+	oldVersionGC *OldVersionGCProcessor
 }
 
 // NewProcessorMux constructs a task processor multiplexer.
-func NewProcessorMux(replToEC *ReplicationToECProcessor, replRepair *ReplicationRepairProcessor, replGC *ReplicationGCProcessor) *ProcessorMux {
+func NewProcessorMux(
+	replToEC *ReplicationToECProcessor,
+	replRepair *ReplicationRepairProcessor,
+	replGC *ReplicationGCProcessor,
+	oldVersionGC *OldVersionGCProcessor,
+) *ProcessorMux {
 	return &ProcessorMux{
-		replToEC:   replToEC,
-		replRepair: replRepair,
-		replGC:     replGC,
+		replToEC:     replToEC,
+		replRepair:   replRepair,
+		replGC:       replGC,
+		oldVersionGC: oldVersionGC,
 	}
 }
 
@@ -45,4 +52,12 @@ func (m *ProcessorMux) ProcessReplicationGC(ctx context.Context, task *meta.Tier
 		return fmt.Errorf("gc processor unavailable")
 	}
 	return m.replGC.ProcessReplicationGC(ctx, task)
+}
+
+// ProcessOldVersionGC delegates GC_OLD_VERSION tasks.
+func (m *ProcessorMux) ProcessOldVersionGC(ctx context.Context, task *meta.TieringTask) error {
+	if m == nil || m.oldVersionGC == nil {
+		return fmt.Errorf("old-version gc processor unavailable")
+	}
+	return m.oldVersionGC.ProcessOldVersionGC(ctx, task)
 }

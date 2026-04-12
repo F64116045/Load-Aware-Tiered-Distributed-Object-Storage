@@ -186,25 +186,30 @@ func main() {
 	replToECProcessor := tiering.NewReplicationToECProcessor(store, httpclient.GetClient(), ec.NewService())
 	replRepairProcessor := tiering.NewReplicationRepairProcessor(store, httpclient.GetClient(), ec.NewService())
 	replGCProcessor := tiering.NewReplicationGCProcessor(store, httpclient.GetClient())
-	processor := tiering.NewProcessorMux(replToECProcessor, replRepairProcessor, replGCProcessor)
+	oldVersionGCProcessor := tiering.NewOldVersionGCProcessor(store, httpclient.GetClient())
+	processor := tiering.NewProcessorMux(replToECProcessor, replRepairProcessor, replGCProcessor, oldVersionGCProcessor)
 	worker := tiering.NewWorker(store, processor, pollInterval, taskType)
 	scanner := tiering.NewPolicyScanner(
 		store,
 		tiering.PolicyScannerConfig{
-			PeriodicInterval:       policyPeriod,
-			ThresholdCheckInterval: time.Duration(config.TieringThresholdCheckSec) * time.Second,
-			ThresholdCooldown:      time.Duration(config.TieringThresholdCooldownSec) * time.Second,
-			TriggerMode:            config.TieringTriggerModeSetting,
-			PolicyVariant:          config.TieringPolicyVariantSetting,
-			AgeThresholdSec:        config.AgeThresholdSec,
-			SizeThresholdBytes:     config.SizeThresholdBytes,
-			MaxObjects:             config.MaxObjectsPerRound,
-			MaxBytes:               config.MaxBytesPerRound,
-			HotPressureDiskPct:     config.HotPressureDiskPct,
-			HotPressureQueueDepth:  config.HotPressureQueueDepth,
-			HeartbeatStaleSec:      config.NodeHeartbeatStaleSec,
-			RepairEnabled:          config.RepairScanEnabled,
-			RepairMaxObjects:       config.RepairMaxObjectsPerRound,
+			PeriodicInterval:        policyPeriod,
+			ThresholdCheckInterval:  time.Duration(config.TieringThresholdCheckSec) * time.Second,
+			ThresholdCooldown:       time.Duration(config.TieringThresholdCooldownSec) * time.Second,
+			TriggerMode:             config.TieringTriggerModeSetting,
+			PolicyVariant:           config.TieringPolicyVariantSetting,
+			AgeThresholdSec:         config.AgeThresholdSec,
+			SizeThresholdBytes:      config.SizeThresholdBytes,
+			MaxObjects:              config.MaxObjectsPerRound,
+			MaxBytes:                config.MaxBytesPerRound,
+			HotPressureDiskPct:      config.HotPressureDiskPct,
+			HotPressureQueueDepth:   config.HotPressureQueueDepth,
+			HeartbeatStaleSec:       config.NodeHeartbeatStaleSec,
+			RepairEnabled:           config.RepairScanEnabled,
+			RepairMaxObjects:        config.RepairMaxObjectsPerRound,
+			OldVersionReaperEnabled: config.OldVersionReaperEnabled,
+			OldVersionRetentionN:    config.OldVersionRetentionCount,
+			OldVersionRetentionAge:  config.OldVersionRetentionAgeSec,
+			OldVersionMaxTasks:      config.OldVersionReaperMaxTasksPerRound,
 		},
 	)
 

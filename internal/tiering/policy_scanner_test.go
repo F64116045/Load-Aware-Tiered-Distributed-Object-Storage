@@ -35,6 +35,13 @@ type policyScannerStubStore struct {
 	repairCalls   int
 	lastRepairMax int
 
+	oldVersionCalls int
+	lastOldVersion  struct {
+		keepLatest int
+		minAgeSec  int
+		maxTasks   int
+	}
+
 	heartbeats []meta.NodeHeartbeatSnapshot
 }
 
@@ -75,6 +82,16 @@ func (s *policyScannerStubStore) EnqueueRepairCandidates(ctx context.Context, ma
 	return 1, nil
 }
 
+func (s *policyScannerStubStore) EnqueueOldVersionGCCandidates(ctx context.Context, keepLatest int, minAgeSec int, maxTasks int) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.oldVersionCalls++
+	s.lastOldVersion.keepLatest = keepLatest
+	s.lastOldVersion.minAgeSec = minAgeSec
+	s.lastOldVersion.maxTasks = maxTasks
+	return 1, nil
+}
+
 func (s *policyScannerStubStore) ListNodeHeartbeats(ctx context.Context, limit int) ([]meta.NodeHeartbeatSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,11 +106,15 @@ func TestPolicyScanner_EnqueuePolicyDispatch(t *testing.T) {
 	t.Run("A1", func(t *testing.T) {
 		store := &policyScannerStubStore{}
 		scanner := NewPolicyScanner(store, PolicyScannerConfig{
-			PolicyVariant:    config.TieringPolicyA1,
-			AgeThresholdSec:  10,
-			MaxObjects:       20,
-			RepairEnabled:    true,
-			RepairMaxObjects: 7,
+			PolicyVariant:           config.TieringPolicyA1,
+			AgeThresholdSec:         10,
+			MaxObjects:              20,
+			RepairEnabled:           true,
+			RepairMaxObjects:        7,
+			OldVersionReaperEnabled: true,
+			OldVersionRetentionN:    2,
+			OldVersionRetentionAge:  3600,
+			OldVersionMaxTasks:      9,
 		})
 
 		scanner.runPolicyAndRepair(context.Background(), "test")
@@ -106,6 +127,12 @@ func TestPolicyScanner_EnqueuePolicyDispatch(t *testing.T) {
 		}
 		if store.repairCalls != 1 || store.lastRepairMax != 7 {
 			t.Fatalf("unexpected repair calls=%d max=%d", store.repairCalls, store.lastRepairMax)
+		}
+		if store.oldVersionCalls != 1 {
+			t.Fatalf("unexpected old-version calls=%d", store.oldVersionCalls)
+		}
+		if store.lastOldVersion.keepLatest != 2 || store.lastOldVersion.minAgeSec != 3600 || store.lastOldVersion.maxTasks != 9 {
+			t.Fatalf("unexpected old-version args: %+v", store.lastOldVersion)
 		}
 	})
 
