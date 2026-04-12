@@ -3,6 +3,8 @@ package meta
 import (
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 )
 
 func tiKVObjectKey(objectID string) string {
@@ -55,6 +57,41 @@ func tiKVLeaderKey(lockKey int64) string {
 
 func tiKVLeaderLockKey(lockKey int64) string {
 	return tiKVPrefixLk + strconv.FormatInt(lockKey, 10)
+}
+
+func tiKVTierDueKey(eligibleAt time.Time, objectID string, version int64) string {
+	return tiKVPrefixTierDue + tiKVEncodeInt64(eligibleAt.UnixNano()) + "/" + objectID + "/" + tiKVEncodeInt64(version)
+}
+
+func tiKVTierDuePrefix() string {
+	return tiKVPrefixTierDue
+}
+
+func tiKVTierDueRefKey(objectID string, version int64) string {
+	return tiKVPrefixTierRef + objectID + "/" + tiKVEncodeInt64(version)
+}
+
+func tiKVTierDueRefPrefix(objectID string) string {
+	return tiKVPrefixTierRef + objectID + "/"
+}
+
+func tiKVParseTierDueKey(key string) (int64, string, int64, bool) {
+	if !strings.HasPrefix(key, tiKVPrefixTierDue) {
+		return 0, "", 0, false
+	}
+	parts := strings.Split(strings.TrimPrefix(key, tiKVPrefixTierDue), "/")
+	if len(parts) != 3 {
+		return 0, "", 0, false
+	}
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, "", 0, false
+	}
+	ver, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return 0, "", 0, false
+	}
+	return ts, parts[1], ver, true
 }
 
 func tiKVEncodeInt64(v int64) string {

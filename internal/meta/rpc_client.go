@@ -208,6 +208,12 @@ func (c *RPCClient) GetObjectAdminView(ctx context.Context, objectID string) (*O
 	return out, err
 }
 
+func (c *RPCClient) GetTieringIndexStats(ctx context.Context) (*TieringIndexStats, error) {
+	var out *TieringIndexStats
+	err := c.call(ctx, rpcMethodGetTieringIndexStats, nil, &out)
+	return out, err
+}
+
 func (c *RPCClient) EnqueueTieringTask(ctx context.Context, taskID, objectID string, version int64, taskType string, priority int, scheduledAt time.Time) error {
 	return c.call(ctx, rpcMethodEnqueueTieringTask, rpcEnqueueTieringTaskArgs{
 		TaskID:      taskID,
@@ -309,6 +315,16 @@ func (c *RPCClient) EnqueueRepairCandidates(ctx context.Context, maxObjects int)
 	return out.Value, err
 }
 
+func (c *RPCClient) EnqueueOldVersionGCCandidates(ctx context.Context, keepLatest int, minAgeSec int, maxTasks int) (int, error) {
+	var out rpcIntResult
+	err := c.call(ctx, rpcMethodEnqueueOldVersionGCCands, rpcEnqueueOldVersionGCCandidatesArgs{
+		KeepLatest: keepLatest,
+		MinAgeSec:  minAgeSec,
+		MaxTasks:   maxTasks,
+	}, &out)
+	return out.Value, err
+}
+
 func (c *RPCClient) GetObjectVersionSnapshot(ctx context.Context, objectID string, taskVersion int64) (*ObjectVersionSnapshot, error) {
 	var out *ObjectVersionSnapshot
 	err := c.call(ctx, rpcMethodGetObjectVersionSnapshot, rpcGetObjectVersionSnapshotArgs{
@@ -316,6 +332,22 @@ func (c *RPCClient) GetObjectVersionSnapshot(ctx context.Context, objectID strin
 		TaskVersion: taskVersion,
 	}, &out)
 	return out, err
+}
+
+func (c *RPCClient) GetObjectVersionGCView(ctx context.Context, objectID string, version int64) (*ObjectVersionGCView, error) {
+	var out *ObjectVersionGCView
+	err := c.call(ctx, rpcMethodGetObjectVersionGCView, rpcGetObjectVersionGCViewArgs{
+		ObjectID: objectID,
+		Version:  version,
+	}, &out)
+	return out, err
+}
+
+func (c *RPCClient) PurgeObjectVersionMetadata(ctx context.Context, objectID string, version int64) error {
+	return c.call(ctx, rpcMethodPurgeObjectVersionMetadata, rpcPurgeObjectVersionMetadataArgs{
+		ObjectID: objectID,
+		Version:  version,
+	}, nil)
 }
 
 func (c *RPCClient) MarkObjectMigrating(ctx context.Context, objectID string, version int64) error {

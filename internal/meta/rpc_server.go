@@ -228,6 +228,8 @@ func (s *RPCServer) dispatch(ctx context.Context, req rpcRequest) (interface{}, 
 			return nil, err
 		}
 		return s.repo.GetObjectAdminView(ctx, a.ObjectID)
+	case rpcMethodGetTieringIndexStats:
+		return s.repo.GetTieringIndexStats(ctx)
 	case rpcMethodEnqueueTieringTask:
 		var a rpcEnqueueTieringTaskArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {
@@ -312,12 +314,31 @@ func (s *RPCServer) dispatch(ctx context.Context, req rpcRequest) (interface{}, 
 		}
 		v, err := s.repo.EnqueueRepairCandidates(ctx, a.MaxObjects)
 		return rpcIntResult{Value: v}, err
+	case rpcMethodEnqueueOldVersionGCCands:
+		var a rpcEnqueueOldVersionGCCandidatesArgs
+		if err := decodeRPCParams(req.Params, &a); err != nil {
+			return nil, err
+		}
+		v, err := s.repo.EnqueueOldVersionGCCandidates(ctx, a.KeepLatest, a.MinAgeSec, a.MaxTasks)
+		return rpcIntResult{Value: v}, err
 	case rpcMethodGetObjectVersionSnapshot:
 		var a rpcGetObjectVersionSnapshotArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {
 			return nil, err
 		}
 		return s.repo.GetObjectVersionSnapshot(ctx, a.ObjectID, a.TaskVersion)
+	case rpcMethodGetObjectVersionGCView:
+		var a rpcGetObjectVersionGCViewArgs
+		if err := decodeRPCParams(req.Params, &a); err != nil {
+			return nil, err
+		}
+		return s.repo.GetObjectVersionGCView(ctx, a.ObjectID, a.Version)
+	case rpcMethodPurgeObjectVersionMetadata:
+		var a rpcPurgeObjectVersionMetadataArgs
+		if err := decodeRPCParams(req.Params, &a); err != nil {
+			return nil, err
+		}
+		return nil, s.repo.PurgeObjectVersionMetadata(ctx, a.ObjectID, a.Version)
 	case rpcMethodMarkObjectMigrating:
 		var a rpcMarkObjectMigratingArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {
