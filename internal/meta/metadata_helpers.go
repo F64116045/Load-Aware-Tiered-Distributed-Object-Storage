@@ -2,7 +2,9 @@ package meta
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"hybrid_distributed_store/internal/config"
@@ -129,4 +131,18 @@ func strategyFromTier(tier string) string {
 	default:
 		return string(config.StrategyReplication)
 	}
+}
+
+// BuildHotReplicaPath returns the versioned blob key used for HOT replica storage.
+// Versioned paths decouple physical blob identity from logical object id and make
+// multi-version cleanup/repair operations deterministic.
+func BuildHotReplicaPath(objectID string, version int64) string {
+	objectID = strings.TrimSpace(objectID)
+	if objectID == "" {
+		return ""
+	}
+	if version <= 0 {
+		return objectID
+	}
+	return fmt.Sprintf("hot/%s/%020d", objectID, version)
 }

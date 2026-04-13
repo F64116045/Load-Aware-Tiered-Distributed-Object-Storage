@@ -112,8 +112,10 @@ func TestReplicationRepairProcessor_RepairsMissingReplica(t *testing.T) {
 	defer store.Close()
 
 	payload := []byte("repair-payload")
-	nodeA := newTestStorageNode(map[string][]byte{"obj-repair": payload})
-	nodeB := newTestStorageNode(map[string][]byte{"obj-repair": payload})
+	const version = int64(777)
+	replicaPath := meta.BuildHotReplicaPath("obj-repair", version)
+	nodeA := newTestStorageNode(map[string][]byte{replicaPath: payload})
+	nodeB := newTestStorageNode(map[string][]byte{replicaPath: payload})
 	nodeC := newTestStorageNode(nil)
 
 	srvA := httptest.NewServer(http.HandlerFunc(nodeA.handler))
@@ -130,10 +132,10 @@ func TestReplicationRepairProcessor_RepairsMissingReplica(t *testing.T) {
 		}
 	}
 
-	const version = int64(777)
 	if err := store.UpsertNormalizedMetadata(ctx, "obj-repair", map[string]interface{}{
 		"strategy":        "replication",
 		"hot_version":     version,
+		"hot_key":         replicaPath,
 		"original_length": len(payload),
 		"replica_nodes":   []string{srvA.URL, srvB.URL},
 	}); err != nil {
@@ -150,7 +152,7 @@ func TestReplicationRepairProcessor_RepairsMissingReplica(t *testing.T) {
 		t.Fatalf("repair processor failed: %v", err)
 	}
 
-	got, ok := nodeC.get("obj-repair")
+	got, ok := nodeC.get(replicaPath)
 	if !ok {
 		t.Fatalf("expected repaired payload on target node")
 	}

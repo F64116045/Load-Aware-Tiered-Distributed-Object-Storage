@@ -81,6 +81,7 @@ func TestV2PutObject_DefaultContentType(t *testing.T) {
 
 func TestV2GetObject_ReplicationAndEC(t *testing.T) {
 	t.Run("replication", func(t *testing.T) {
+		var gotReadKey string
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
 			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
@@ -92,9 +93,11 @@ func TestV2GetObject_ReplicationAndEC(t *testing.T) {
 				return map[string]interface{}{
 					"strategy":     string(config.StrategyReplication),
 					"content_type": "image/png",
+					"hot_key":      "hot/o2/00000000000000000001",
 				}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+				gotReadKey = key
 				return []byte("replica-data"), nil
 			},
 			readEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) ([]byte, error) {
@@ -115,6 +118,9 @@ func TestV2GetObject_ReplicationAndEC(t *testing.T) {
 		}
 		if rec.Body.String() != "replica-data" {
 			t.Fatalf("expected body replica-data, got %q", rec.Body.String())
+		}
+		if gotReadKey != "hot/o2/00000000000000000001" {
+			t.Fatalf("expected hot_key read, got %q", gotReadKey)
 		}
 	})
 
@@ -333,6 +339,7 @@ func TestV2Object_ErrorPaths(t *testing.T) {
 func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
 	t.Run("replication", func(t *testing.T) {
 		var deletedMetaKey string
+		var deletedDataKey string
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
 			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
@@ -341,7 +348,10 @@ func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
 				return nil, nil
 			},
 			loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {
-				return map[string]interface{}{"strategy": string(config.StrategyReplication)}, "normalized_metadata", nil
+				return map[string]interface{}{
+					"strategy": string(config.StrategyReplication),
+					"hot_key":  "hot/d1/00000000000000000042",
+				}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
 				return nil, nil
@@ -350,9 +360,7 @@ func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
 				return nil, nil
 			},
 			deleteReplication: func(ctx context.Context, replicaNodes []string, key string) (int, error) {
-				if key != "d1" {
-					t.Fatalf("unexpected delete key: %s", key)
-				}
+				deletedDataKey = key
 				return 3, nil
 			},
 			deleteEC: func(ctx context.Context, ecNodes []string, metadata map[string]interface{}) (int, error) {
@@ -374,6 +382,9 @@ func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
 		}
 		if deletedMetaKey != "d1" {
 			t.Fatalf("expected deleted metadata key d1, got %q", deletedMetaKey)
+		}
+		if deletedDataKey != "hot/d1/00000000000000000042" {
+			t.Fatalf("expected hot_key delete, got %q", deletedDataKey)
 		}
 	})
 
