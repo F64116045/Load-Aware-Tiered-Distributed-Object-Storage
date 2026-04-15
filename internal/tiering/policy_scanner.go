@@ -29,6 +29,11 @@ type PolicyScannerConfig struct {
 
 	RepairEnabled    bool
 	RepairMaxObjects int
+
+	OldVersionReaperEnabled bool
+	OldVersionRetentionN    int
+	OldVersionRetentionAge  int
+	OldVersionMaxTasks      int
 }
 
 type PolicyScanStore interface {
@@ -36,6 +41,7 @@ type PolicyScanStore interface {
 	EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error)
 	EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
 	EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error)
+	EnqueueOldVersionGCCandidates(ctx context.Context, keepLatest int, minAgeSec int, maxTasks int) (int, error)
 	ListNodeHeartbeats(ctx context.Context, limit int) ([]meta.NodeHeartbeatSnapshot, error)
 }
 
@@ -62,6 +68,12 @@ func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicySca
 	}
 	if cfg.RepairMaxObjects <= 0 {
 		cfg.RepairMaxObjects = 200
+	}
+	if cfg.OldVersionRetentionN <= 0 {
+		cfg.OldVersionRetentionN = 1
+	}
+	if cfg.OldVersionMaxTasks <= 0 {
+		cfg.OldVersionMaxTasks = 200
 	}
 	if cfg.HeartbeatStaleSec <= 0 {
 		cfg.HeartbeatStaleSec = 15
@@ -155,6 +167,23 @@ func (s *PolicyScanner) runPolicyAndRepair(ctx context.Context, source string) {
 	}
 	if repairCount > 0 {
 		log.Printf("[TieringPolicy] %s repair enqueued %d tasks", source, repairCount)
+	}
+
+	if !s.cfg.OldVersionReaperEnabled {
+		return
+	}
+	gcCount, gcErr := s.store.EnqueueOldVersionGCCandidates(
+		ctx,
+		s.cfg.OldVersionRetentionN,
+		s.cfg.OldVersionRetentionAge,
+		s.cfg.OldVersionMaxTasks,
+	)
+	if gcErr != nil {
+		log.Printf("[TieringPolicy] %s old-version-gc scan failed: %v", source, gcErr)
+		return
+	}
+	if gcCount > 0 {
+		log.Printf("[TieringPolicy] %s old-version-gc enqueued %d tasks", source, gcCount)
 	}
 }
 

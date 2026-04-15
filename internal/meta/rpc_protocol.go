@@ -33,12 +33,16 @@ const (
 	rpcMethodEnqueueTieringCandidatesA2  = "enqueue_tiering_candidates_a2"
 	rpcMethodEnqueueTieringCandidatesA3  = "enqueue_tiering_candidates_a3"
 	rpcMethodEnqueueRepairCandidates     = "enqueue_repair_candidates"
+	rpcMethodEnqueueOldVersionGCCands    = "enqueue_old_version_gc_candidates"
 	rpcMethodGetObjectVersionSnapshot    = "get_object_version_snapshot"
+	rpcMethodGetObjectVersionGCView      = "get_object_version_gc_view"
+	rpcMethodPurgeObjectVersionMetadata  = "purge_object_version_metadata"
 	rpcMethodMarkObjectMigrating         = "mark_object_migrating"
 	rpcMethodPromoteObjectVersionToEC    = "promote_object_version_to_ec"
 	rpcMethodListActiveReplicaLocations  = "list_active_replica_locations"
 	rpcMethodUpsertReplicaLocations      = "upsert_replica_locations"
 	rpcMethodMarkReplicaLocationsDeleted = "mark_replica_locations_deleted"
+	rpcMethodGetTieringIndexStats        = "get_tiering_index_stats"
 )
 
 type rpcRequest struct {
@@ -165,9 +169,25 @@ type rpcEnqueueRepairCandidatesArgs struct {
 	MaxObjects int `json:"max_objects"`
 }
 
+type rpcEnqueueOldVersionGCCandidatesArgs struct {
+	KeepLatest int `json:"keep_latest"`
+	MinAgeSec  int `json:"min_age_sec"`
+	MaxTasks   int `json:"max_tasks"`
+}
+
 type rpcGetObjectVersionSnapshotArgs struct {
 	ObjectID    string `json:"object_id"`
 	TaskVersion int64  `json:"task_version"`
+}
+
+type rpcGetObjectVersionGCViewArgs struct {
+	ObjectID string `json:"object_id"`
+	Version  int64  `json:"version"`
+}
+
+type rpcPurgeObjectVersionMetadataArgs struct {
+	ObjectID string `json:"object_id"`
+	Version  int64  `json:"version"`
 }
 
 type rpcMarkObjectMigratingArgs struct {

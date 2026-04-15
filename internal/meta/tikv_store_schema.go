@@ -11,6 +11,8 @@ const (
 	tiKVPrefixHB      = "hb/"
 	tiKVPrefixLeader  = "leader/"
 	tiKVPrefixLk      = "leader_lock/"
+	tiKVPrefixTierDue = "tdue/"
+	tiKVPrefixTierRef = "tdue_ref/"
 )
 
 type tiKVObjectRecord struct {
@@ -63,4 +65,20 @@ type tiKVTaskRecord struct {
 	ScheduledAt time.Time  `json:"scheduled_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+}
+
+type tiKVTierDueRecord struct {
+	ObjectID   string    `json:"object_id"`
+	Version    int64     `json:"version"`
+	EligibleAt time.Time `json:"eligible_at"`
+	SizeBytes  int64     `json:"size_bytes"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type tiKVTierDueRefRecord struct {
+	ObjectID   string    `json:"object_id"`
+	Version    int64     `json:"version"`
+	DueKey     string    `json:"due_key"`
+	EligibleAt time.Time `json:"eligible_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }

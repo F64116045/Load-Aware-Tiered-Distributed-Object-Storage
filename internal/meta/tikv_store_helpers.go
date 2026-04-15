@@ -68,6 +68,27 @@ func (s *TiKVStore) listTaskRecords() ([]tiKVTaskRecord, error) {
 	return out, nil
 }
 
+func (s *TiKVStore) listObjectVersionRecords(objectID string) ([]tiKVObjectVersionRecord, error) {
+	it, err := s.newPrefixIter(tiKVObjectVersionPrefix(objectID))
+	if err != nil {
+		return nil, err
+	}
+	defer it.Close()
+
+	out := make([]tiKVObjectVersionRecord, 0)
+	for it.First(); it.Valid(); it.Next() {
+		var rec tiKVObjectVersionRecord
+		if err := json.Unmarshal(it.Value(), &rec); err != nil {
+			return nil, fmt.Errorf("decode object-version record failed: %w", err)
+		}
+		out = append(out, rec)
+	}
+	if err := it.Error(); err != nil {
+		return nil, fmt.Errorf("iterate object-version records failed: %w", err)
+	}
+	return out, nil
+}
+
 func (s *TiKVStore) listReplicaRecords(objectID string, version int64, status string) ([]tiKVReplicaRecord, error) {
 	prefix := tiKVReplicaVersionPrefix(objectID, version)
 	it, err := s.newPrefixIter(prefix)

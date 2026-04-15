@@ -27,6 +27,7 @@ func (s *TiKVStore) EnqueueTieringCandidatesA3(ctx context.Context, ageThreshold
 type tiKVTieringCandidate struct {
 	ObjectID  string
 	Version   int64
+	DueKey    string
 	SizeBytes int64
 	UpdatedAt time.Time
 }
@@ -52,34 +53,55 @@ func (s *TiKVStore) enqueueTieringCandidates(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	objects, err := s.listObjects()
+	now := time.Now()
+	eligibleBefore := now.Add(-time.Duration(ageThresholdSec) * time.Second)
+	dueCandidates, err := s.listTieringDueCandidatesReady(now, config.TieringDueIndexMaxScan)
 	if err != nil {
 		return 0, err
 	}
-	eligibleBefore := time.Now().Add(-time.Duration(ageThresholdSec) * time.Second)
-	candidates := make([]tiKVTieringCandidate, 0, len(objects))
-	for _, o := range objects {
-		if o.State != "HOT_ACTIVE" {
+	candidates := make([]tiKVTieringCandidate, 0, len(dueCandidates))
+	for _, due := range dueCandidates {
+		rec := due.Record
+		if rec.ObjectID == "" || rec.Version <= 0 {
 			continue
 		}
-		if o.UpdatedAt.After(eligibleBefore) {
+
+		obj, found, err := s.getObjectRecord(tiKVObjectKey(rec.ObjectID))
+		if err != nil {
+			return 0, err
+		}
+		if !found {
+			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
 			continue
 		}
-		ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(o.ObjectID, o.CurrentVersion))
+		if obj.CurrentVersion != rec.Version {
+			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+			continue
+		}
+		if obj.State != "HOT_ACTIVE" && obj.State != "MIGRATION_PENDING" {
+			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+			continue
+		}
+		if obj.UpdatedAt.After(eligibleBefore) {
+			continue
+		}
+		ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(rec.ObjectID, rec.Version))
 		if err != nil {
 			return 0, err
 		}
 		if !found || ver.Tier != "HOT" {
+			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
 			continue
 		}
 		if minSizeBytes > 0 && ver.SizeBytes < minSizeBytes {
 			continue
 		}
 		candidates = append(candidates, tiKVTieringCandidate{
-			ObjectID:  o.ObjectID,
-			Version:   o.CurrentVersion,
+			ObjectID:  rec.ObjectID,
+			Version:   rec.Version,
+			DueKey:    due.Key,
 			SizeBytes: ver.SizeBytes,
-			UpdatedAt: o.UpdatedAt,
+			UpdatedAt: obj.UpdatedAt,
 		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
@@ -127,12 +149,15 @@ func (s *TiKVStore) enqueueTieringCandidates(
 				TaskState:   "PENDING",
 				Priority:    100,
 				RetryCount:  0,
-				ScheduledAt: time.Now(),
+				ScheduledAt: now,
 			}
 			if err := s.putJSON(taskKey, task); err != nil {
 				return enqueued, err
 			}
 			enqueued++
+		}
+		if err := s.removeTieringDueIndexByVersion(c.ObjectID, c.Version); err != nil {
+			return enqueued, err
 		}
 
 		obj, found, err := s.getObjectRecord(tiKVObjectKey(c.ObjectID))
@@ -146,7 +171,7 @@ func (s *TiKVStore) enqueueTieringCandidates(
 			continue
 		}
 		obj.State = "MIGRATION_PENDING"
-		obj.UpdatedAt = time.Now()
+		obj.UpdatedAt = now
 		if err := s.putJSON(tiKVObjectKey(c.ObjectID), obj); err != nil {
 			return enqueued, err
 		}

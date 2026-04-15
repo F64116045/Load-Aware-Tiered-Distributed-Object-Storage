@@ -97,6 +97,16 @@ var (
 	RepairScanEnabled = getEnvBool("REPAIR_SCAN_ENABLED", true)
 	// RepairMaxObjectsPerRound caps periodic repair enqueue count per round.
 	RepairMaxObjectsPerRound = getEnvInt("REPAIR_MAX_OBJECTS_PER_ROUND", 200)
+	// OldVersionReaperEnabled controls periodic old-version GC candidate enqueue.
+	OldVersionReaperEnabled = getEnvBool("OLD_VERSION_REAPER_ENABLED", true)
+	// OldVersionRetentionCount keeps latest N versions (including current version).
+	OldVersionRetentionCount = getEnvInt("OLD_VERSION_RETENTION_COUNT", 2)
+	// OldVersionRetentionAgeSec keeps versions newer than this age even if over N.
+	OldVersionRetentionAgeSec = getEnvInt("OLD_VERSION_RETENTION_AGE_SEC", 86400)
+	// OldVersionReaperMaxTasksPerRound caps old-version GC task enqueue count per round.
+	OldVersionReaperMaxTasksPerRound = getEnvInt("OLD_VERSION_REAPER_MAX_TASKS_PER_ROUND", 200)
+	// TieringDueIndexMaxScan caps due-index candidates scanned per policy pass.
+	TieringDueIndexMaxScan = getEnvInt("TIERING_DUE_INDEX_MAX_SCAN", 2000)
 	// TieringTaskMaxRetryCount caps automatic retries before task becomes FAILED.
 	TieringTaskMaxRetryCount = getEnvInt("TIERING_TASK_MAX_RETRY_COUNT", 8)
 	// TieringPolicyLeaderLockKey is the advisory lock key for scanner leader election.

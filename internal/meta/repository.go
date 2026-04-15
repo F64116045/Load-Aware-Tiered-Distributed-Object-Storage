@@ -33,6 +33,7 @@ type Repository interface {
 	DeleteNormalizedMetadata(ctx context.Context, objectID string) error
 
 	GetObjectAdminView(ctx context.Context, objectID string) (*ObjectAdminView, error)
+	GetTieringIndexStats(ctx context.Context) (*TieringIndexStats, error)
 
 	EnqueueTieringTask(ctx context.Context, taskID, objectID string, version int64, taskType string, priority int, scheduledAt time.Time) error
 	ListTieringTasks(ctx context.Context, taskState, taskType string, limit int) ([]TieringTask, error)
@@ -48,7 +49,10 @@ type Repository interface {
 	EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error)
 	EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
 	EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error)
+	EnqueueOldVersionGCCandidates(ctx context.Context, keepLatest int, minAgeSec int, maxTasks int) (int, error)
 	GetObjectVersionSnapshot(ctx context.Context, objectID string, taskVersion int64) (*ObjectVersionSnapshot, error)
+	GetObjectVersionGCView(ctx context.Context, objectID string, version int64) (*ObjectVersionGCView, error)
+	PurgeObjectVersionMetadata(ctx context.Context, objectID string, version int64) error
 	MarkObjectMigrating(ctx context.Context, objectID string, version int64) error
 	PromoteObjectVersionToEC(ctx context.Context, objectID string, version int64, checksum string, k int, m int, locations []ECShardLocation) error
 	ListActiveReplicaLocations(ctx context.Context, objectID string, version int64) ([]ReplicaLocation, error)

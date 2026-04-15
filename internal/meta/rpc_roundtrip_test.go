@@ -8,8 +8,6 @@ import (
 )
 
 func TestRPCClientServerRoundTrip(t *testing.T) {
-	t.Parallel()
-
 	store, err := NewTiKVStore(Config{
 		Enabled: true,
 		DSN:     "memory://rpc-roundtrip",
@@ -58,8 +56,8 @@ func TestRPCClientServerRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueue A2 candidates failed: %v", err)
 	}
-	if a2Count != 1 {
-		t.Fatalf("expected A2 enqueued=1, got=%d", a2Count)
+	if a2Count != 0 {
+		t.Fatalf("expected A2 enqueued=0 before due time, got=%d", a2Count)
 	}
 	if _, err := client.EnqueueTieringCandidatesA3(ctx, 0, 10, 1024); err != nil {
 		t.Fatalf("enqueue A3 candidates failed: %v", err)

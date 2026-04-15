@@ -105,6 +105,9 @@ func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID strin
 			}
 		}
 	}
+	if err := s.upsertTieringDueIndex(b, objectID, version, tier, sizeBytes, now); err != nil {
+		return err
+	}
 
 	if err := b.Commit(kvstore.Sync); err != nil {
 		return fmt.Errorf("commit normalized metadata batch failed: %w", err)
@@ -202,6 +205,9 @@ func (s *TiKVStore) DeleteNormalizedMetadata(ctx context.Context, objectID strin
 		return err
 	}
 	if err := s.batchDeletePrefix(b, tiKVECShardPrefix(objectID)); err != nil {
+		return err
+	}
+	if err := s.removeTieringDueIndexForObjectInBatch(b, objectID); err != nil {
 		return err
 	}
 	if err := b.Commit(kvstore.Sync); err != nil {

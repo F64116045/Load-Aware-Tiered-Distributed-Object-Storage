@@ -14,6 +14,7 @@ const (
 	TaskTypeReplicationToEC = "REPL_TO_EC"
 	TaskTypeRepair          = "REPAIR"
 	TaskTypeGC              = "GC"
+	TaskTypeOldVersionGC    = "GC_OLD_VERSION"
 )
 
 // Processor encapsulates task business logic.
@@ -21,6 +22,7 @@ type Processor interface {
 	ProcessReplicationToEC(ctx context.Context, task *meta.TieringTask) error
 	ProcessReplicationRepair(ctx context.Context, task *meta.TieringTask) error
 	ProcessReplicationGC(ctx context.Context, task *meta.TieringTask) error
+	ProcessOldVersionGC(ctx context.Context, task *meta.TieringTask) error
 }
 
 // Worker polls tasks and executes processor logic.
@@ -86,6 +88,8 @@ func (w *Worker) runOnce(ctx context.Context) error {
 		procErr = w.processor.ProcessReplicationRepair(ctx, task)
 	case TaskTypeGC:
 		procErr = w.processor.ProcessReplicationGC(ctx, task)
+	case TaskTypeOldVersionGC:
+		procErr = w.processor.ProcessOldVersionGC(ctx, task)
 	default:
 		procErr = fmt.Errorf("unsupported task type: %s", task.TaskType)
 	}

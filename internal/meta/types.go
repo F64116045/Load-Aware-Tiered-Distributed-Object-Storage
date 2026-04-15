@@ -46,6 +46,23 @@ type ObjectVersionSnapshot struct {
 	Tier           string
 }
 
+// ObjectVersionGCView is used by old-version reaper tasks.
+type ObjectVersionGCView struct {
+	ObjectID         string
+	Version          int64
+	CurrentVersion   int64
+	Tier             string
+	CreatedAt        time.Time
+	ReplicaLocations []ReplicaLocation
+	ECShardLocations []ECShardLocation
+}
+
+// TieringIndexStats is an observability snapshot for tiering due-index.
+type TieringIndexStats struct {
+	DueTotal int64
+	DueReady int64
+}
+
 // ECShardLocation describes one shard placement record.
 type ECShardLocation struct {
 	ShardIndex int

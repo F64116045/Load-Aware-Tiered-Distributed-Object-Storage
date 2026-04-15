@@ -52,6 +52,16 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 	})
 
 	router.GET("/v2/admin/metrics-snapshot", func(c *gin.Context) {
+		dueIndex := gin.H{
+			"enabled": config.MetaEnabled && deps.metaStore != nil,
+		}
+		oldVersionReaper := gin.H{
+			"enabled":             config.OldVersionReaperEnabled,
+			"retention_count":     config.OldVersionRetentionCount,
+			"retention_age_sec":   config.OldVersionRetentionAgeSec,
+			"max_tasks_per_round": config.OldVersionReaperMaxTasksPerRound,
+		}
+
 		leader := gin.H{
 			"lock_key": config.TieringPolicyLeaderLockKey,
 			"enabled":  config.MetaEnabled && deps.metaStore != nil,
@@ -72,6 +82,25 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 				leader["is_stale"] = lastBeatAgoSec > config.TieringLeaderStaleSec
 				leader["stale_sec"] = config.TieringLeaderStaleSec
 			}
+
+			statsCtx, statsCancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			indexStats, idxErr := deps.metaStore.GetTieringIndexStats(statsCtx)
+			statsCancel()
+			if idxErr != nil {
+				dueIndex["error"] = idxErr.Error()
+			} else if indexStats != nil {
+				dueIndex["due_total"] = indexStats.DueTotal
+				dueIndex["due_ready"] = indexStats.DueReady
+			}
+
+			reaperCtx, reaperCancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			reaperCounts, reaperErr := deps.metaStore.ListTieringTaskStateCounts(reaperCtx, "GC_OLD_VERSION")
+			reaperCancel()
+			if reaperErr != nil {
+				oldVersionReaper["error"] = reaperErr.Error()
+			} else {
+				oldVersionReaper["task_state_counts"] = reaperCounts
+			}
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -81,8 +110,10 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 				"active_source":     deps.nodeDiscoveryActive,
 				"active_node_count": deps.getActiveNodeCount(),
 			},
-			"tiering_leader": leader,
-			"timestamp_unix": time.Now().Unix(),
+			"tiering_due_index":  dueIndex,
+			"old_version_reaper": oldVersionReaper,
+			"tiering_leader":     leader,
+			"timestamp_unix":     time.Now().Unix(),
 		})
 	})
 }
