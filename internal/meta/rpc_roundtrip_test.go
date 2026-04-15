@@ -30,7 +30,7 @@ func TestRPCClientServerRoundTrip(t *testing.T) {
 		t.Fatalf("rpc ping failed: %v", err)
 	}
 
-	if err := client.UpsertNodeHeartbeat(ctx, "node-rpc", 100, 1000, 0, 0.1, "UP"); err != nil {
+	if err := client.UpsertNodeHeartbeat(ctx, "node-rpc", 100, 1000, 0, 0.1, 32.5, 1.2, "UP"); err != nil {
 		t.Fatalf("upsert node heartbeat failed: %v", err)
 	}
 	nodes, err := client.ListHealthyNodeIDs(ctx, 60)

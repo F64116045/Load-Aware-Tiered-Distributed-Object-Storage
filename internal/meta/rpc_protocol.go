@@ -57,12 +57,14 @@ type rpcResponse struct {
 }
 
 type rpcNodeHeartbeatArgs struct {
-	NodeID       string  `json:"node_id"`
-	FreeBytes    int64   `json:"free_bytes"`
-	TotalBytes   int64   `json:"total_bytes"`
-	IOQueueDepth int     `json:"io_queue_depth"`
-	CPULoad      float64 `json:"cpu_load"`
-	Status       string  `json:"status"`
+	NodeID        string  `json:"node_id"`
+	FreeBytes     int64   `json:"free_bytes"`
+	TotalBytes    int64   `json:"total_bytes"`
+	IOQueueDepth  int     `json:"io_queue_depth"`
+	CPULoad       float64 `json:"cpu_load"`
+	MemoryUsedPct float64 `json:"memory_used_pct"`
+	DiskIOWaitPct float64 `json:"disk_iowait_pct"`
+	Status        string  `json:"status"`
 }
 
 type rpcListHealthyNodeIDsArgs struct {

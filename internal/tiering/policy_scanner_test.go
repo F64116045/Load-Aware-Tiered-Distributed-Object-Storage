@@ -189,25 +189,31 @@ func TestPolicyScanner_ThresholdCooldown(t *testing.T) {
 	store := &policyScannerStubStore{
 		heartbeats: []meta.NodeHeartbeatSnapshot{
 			{
-				NodeID:       "n1",
-				Status:       "UP",
-				LastSeenAt:   time.Now(),
-				TotalBytes:   100,
-				FreeBytes:    10,
-				IOQueueDepth: 5,
+				NodeID:        "n1",
+				Status:        "UP",
+				LastSeenAt:    time.Now(),
+				TotalBytes:    100,
+				FreeBytes:     10,
+				IOQueueDepth:  1,
+				CPULoad:       0.10,
+				MemoryUsedPct: 35,
+				DiskIOWaitPct: 2,
 			},
 		},
 	}
 	scanner := NewPolicyScanner(store, PolicyScannerConfig{
-		PolicyVariant:         config.TieringPolicyA1,
-		AgeThresholdSec:       1,
-		MaxObjects:            100,
-		TriggerMode:           config.TieringTriggerThreshold,
-		ThresholdCooldown:     2 * time.Second,
-		HotPressureDiskPct:    80,
-		HotPressureQueueDepth: 0,
-		HeartbeatStaleSec:     30,
-		RepairEnabled:         false,
+		PolicyVariant:     config.TieringPolicyA1,
+		AgeThresholdSec:   1,
+		MaxObjects:        100,
+		TriggerMode:       config.TieringTriggerThreshold,
+		ThresholdCooldown: 2 * time.Second,
+		HeartbeatStaleSec: 30,
+		IdleStableRounds:  1,
+		IdleCPUPercent:    70,
+		IdleMemoryPercent: 80,
+		IdleIOWaitPercent: 20,
+		IdleQueueDepth:    16,
+		RepairEnabled:     false,
 	})
 
 	scanner.runThresholdPass(context.Background(), "test")
@@ -227,41 +233,112 @@ func TestPolicyScanner_ThresholdCooldown(t *testing.T) {
 	}
 }
 
-func TestPolicyScanner_IsUnderPressure_StaleHeartbeatIgnored(t *testing.T) {
+func TestPolicyScanner_IsIdleWindow_StaleHeartbeatIgnored(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
 	store := &policyScannerStubStore{
 		heartbeats: []meta.NodeHeartbeatSnapshot{
 			{
-				NodeID:       "stale-high-queue",
-				Status:       "UP",
-				LastSeenAt:   now.Add(-2 * time.Minute),
-				IOQueueDepth: 9999,
-				TotalBytes:   100,
-				FreeBytes:    1,
+				NodeID:        "stale-high-queue",
+				Status:        "UP",
+				LastSeenAt:    now.Add(-2 * time.Minute),
+				IOQueueDepth:  9999,
+				CPULoad:       0.99,
+				MemoryUsedPct: 99,
+				DiskIOWaitPct: 99,
+				TotalBytes:    100,
+				FreeBytes:     1,
 			},
 			{
-				NodeID:       "live-low-queue",
-				Status:       "UP",
-				LastSeenAt:   now,
-				IOQueueDepth: 1,
-				TotalBytes:   100,
-				FreeBytes:    80,
+				NodeID:        "live-low-queue",
+				Status:        "UP",
+				LastSeenAt:    now,
+				IOQueueDepth:  1,
+				CPULoad:       0.20,
+				MemoryUsedPct: 45,
+				DiskIOWaitPct: 1,
+				TotalBytes:    100,
+				FreeBytes:     80,
 			},
 		},
 	}
 	scanner := NewPolicyScanner(store, PolicyScannerConfig{
-		HotPressureQueueDepth: 100,
-		HotPressureDiskPct:    90,
-		HeartbeatStaleSec:     10,
+		IdleCPUPercent:    70,
+		IdleMemoryPercent: 80,
+		IdleIOWaitPercent: 20,
+		IdleQueueDepth:    16,
+		HeartbeatStaleSec: 10,
 	})
 
-	underPressure, _, err := scanner.isUnderPressure(context.Background())
+	idle, _, err := scanner.isIdleWindow(context.Background())
 	if err != nil {
-		t.Fatalf("isUnderPressure returned error: %v", err)
+		t.Fatalf("isIdleWindow returned error: %v", err)
 	}
-	if underPressure {
-		t.Fatalf("stale heartbeat should be ignored, expected underPressure=false")
+	if !idle {
+		t.Fatalf("stale heartbeat should be ignored, expected idle=true")
+	}
+}
+
+func TestPolicyScanner_IdleStableRounds_ResetOnBusySample(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	store := &policyScannerStubStore{
+		heartbeats: []meta.NodeHeartbeatSnapshot{
+			{
+				NodeID:        "n1",
+				Status:        "UP",
+				LastSeenAt:    now,
+				IOQueueDepth:  1,
+				CPULoad:       0.10,
+				MemoryUsedPct: 30,
+				DiskIOWaitPct: 1,
+			},
+		},
+	}
+	scanner := NewPolicyScanner(store, PolicyScannerConfig{
+		TriggerMode:       config.TieringTriggerThreshold,
+		PolicyVariant:     config.TieringPolicyA1,
+		AgeThresholdSec:   1,
+		MaxObjects:        100,
+		ThresholdCooldown: time.Millisecond,
+		IdleStableRounds:  2,
+		IdleCPUPercent:    70,
+		IdleMemoryPercent: 80,
+		IdleIOWaitPercent: 20,
+		IdleQueueDepth:    16,
+		HeartbeatStaleSec: 30,
+	})
+
+	// first idle sample: counter=1, not triggered
+	scanner.runThresholdPass(context.Background(), "test")
+	if store.a1Calls != 0 {
+		t.Fatalf("expected no trigger on first idle sample, got=%d", store.a1Calls)
+	}
+
+	// make one busy sample -> counter reset
+	store.mu.Lock()
+	store.heartbeats[0].MemoryUsedPct = 95
+	store.mu.Unlock()
+	scanner.runThresholdPass(context.Background(), "test")
+	if store.a1Calls != 0 {
+		t.Fatalf("expected no trigger on busy sample, got=%d", store.a1Calls)
+	}
+
+	// back to idle, first idle after reset: counter=1
+	store.mu.Lock()
+	store.heartbeats[0].MemoryUsedPct = 30
+	store.mu.Unlock()
+	scanner.runThresholdPass(context.Background(), "test")
+	if store.a1Calls != 0 {
+		t.Fatalf("expected no trigger on first idle sample after reset, got=%d", store.a1Calls)
+	}
+
+	// second consecutive idle sample -> trigger
+	scanner.lastThresholdTrigger = time.Time{}
+	scanner.runThresholdPass(context.Background(), "test")
+	if store.a1Calls != 1 {
+		t.Fatalf("expected trigger after 2 consecutive idle samples, got=%d", store.a1Calls)
 	}
 }

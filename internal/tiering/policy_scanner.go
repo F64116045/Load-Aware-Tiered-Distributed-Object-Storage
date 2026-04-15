@@ -14,6 +14,7 @@ type PolicyScannerConfig struct {
 	PeriodicInterval       time.Duration
 	ThresholdCheckInterval time.Duration
 	ThresholdCooldown      time.Duration
+	IdleStableRounds       int
 
 	TriggerMode   config.TieringTriggerMode
 	PolicyVariant config.TieringPolicyVariant
@@ -26,6 +27,10 @@ type PolicyScannerConfig struct {
 	HotPressureDiskPct    int
 	HotPressureQueueDepth int
 	HeartbeatStaleSec     int
+	IdleCPUPercent        float64
+	IdleMemoryPercent     float64
+	IdleIOWaitPercent     float64
+	IdleQueueDepth        int
 
 	RepairEnabled    bool
 	RepairMaxObjects int
@@ -51,6 +56,7 @@ type PolicyScanner struct {
 	cfg   PolicyScannerConfig
 
 	lastThresholdTrigger time.Time
+	idleStableCount      int
 }
 
 func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicyScanner {
@@ -62,6 +68,9 @@ func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicySca
 	}
 	if cfg.ThresholdCooldown <= 0 {
 		cfg.ThresholdCooldown = 60 * time.Second
+	}
+	if cfg.IdleStableRounds <= 0 {
+		cfg.IdleStableRounds = 3
 	}
 	if cfg.MaxObjects <= 0 {
 		cfg.MaxObjects = 200
@@ -77,6 +86,18 @@ func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicySca
 	}
 	if cfg.HeartbeatStaleSec <= 0 {
 		cfg.HeartbeatStaleSec = 15
+	}
+	if cfg.IdleCPUPercent <= 0 {
+		cfg.IdleCPUPercent = 70
+	}
+	if cfg.IdleMemoryPercent <= 0 {
+		cfg.IdleMemoryPercent = 80
+	}
+	if cfg.IdleIOWaitPercent <= 0 {
+		cfg.IdleIOWaitPercent = 20
+	}
+	if cfg.IdleQueueDepth <= 0 {
+		cfg.IdleQueueDepth = 16
 	}
 	if cfg.PolicyVariant == "" {
 		cfg.PolicyVariant = config.TieringPolicyA1
@@ -131,12 +152,17 @@ func (s *PolicyScanner) Run(ctx context.Context) error {
 }
 
 func (s *PolicyScanner) runThresholdPass(ctx context.Context, source string) {
-	underPressure, reason, err := s.isUnderPressure(ctx)
+	idle, reason, err := s.isIdleWindow(ctx)
 	if err != nil {
-		log.Printf("[TieringPolicy] %s pressure check failed: %v", source, err)
+		log.Printf("[TieringPolicy] %s idle-window check failed: %v", source, err)
 		return
 	}
-	if !underPressure {
+	if !idle {
+		s.idleStableCount = 0
+		return
+	}
+	s.idleStableCount++
+	if s.idleStableCount < s.cfg.IdleStableRounds {
 		return
 	}
 
@@ -146,7 +172,7 @@ func (s *PolicyScanner) runThresholdPass(ctx context.Context, source string) {
 	}
 	s.lastThresholdTrigger = now
 
-	s.runPolicyAndRepair(ctx, fmt.Sprintf("%s:%s", source, reason))
+	s.runPolicyAndRepair(ctx, fmt.Sprintf("%s:%s stable=%d", source, reason, s.idleStableCount))
 }
 
 func (s *PolicyScanner) runPolicyAndRepair(ctx context.Context, source string) {
@@ -214,7 +240,7 @@ func (s *PolicyScanner) enqueueTieringPolicy(ctx context.Context) (int, error) {
 	}
 }
 
-func (s *PolicyScanner) isUnderPressure(ctx context.Context) (bool, string, error) {
+func (s *PolicyScanner) isIdleWindow(ctx context.Context) (bool, string, error) {
 	nodes, err := s.store.ListNodeHeartbeats(ctx, 1000)
 	if err != nil {
 		return false, "", err
@@ -236,24 +262,23 @@ func (s *PolicyScanner) isUnderPressure(ctx context.Context) (bool, string, erro
 		}
 		liveCount++
 
-		if s.cfg.HotPressureQueueDepth > 0 && n.IOQueueDepth >= s.cfg.HotPressureQueueDepth {
-			return true, fmt.Sprintf("queue_depth node=%s depth=%d threshold=%d", n.NodeID, n.IOQueueDepth, s.cfg.HotPressureQueueDepth), nil
+		cpuPercent := n.CPULoad * 100
+		if s.cfg.IdleCPUPercent > 0 && cpuPercent >= s.cfg.IdleCPUPercent {
+			return false, fmt.Sprintf("cpu_busy node=%s cpu_pct=%.2f threshold=%.2f", n.NodeID, cpuPercent, s.cfg.IdleCPUPercent), nil
 		}
-
-		if s.cfg.HotPressureDiskPct > 0 && n.TotalBytes > 0 {
-			usedBytes := n.TotalBytes - n.FreeBytes
-			if usedBytes < 0 {
-				usedBytes = 0
-			}
-			usedPct := int((float64(usedBytes) / float64(n.TotalBytes)) * 100)
-			if usedPct >= s.cfg.HotPressureDiskPct {
-				return true, fmt.Sprintf("disk_pct node=%s used_pct=%d threshold=%d", n.NodeID, usedPct, s.cfg.HotPressureDiskPct), nil
-			}
+		if s.cfg.IdleQueueDepth > 0 && n.IOQueueDepth >= s.cfg.IdleQueueDepth {
+			return false, fmt.Sprintf("queue_busy node=%s depth=%d threshold=%d", n.NodeID, n.IOQueueDepth, s.cfg.IdleQueueDepth), nil
+		}
+		if s.cfg.IdleIOWaitPercent > 0 && n.DiskIOWaitPct >= s.cfg.IdleIOWaitPercent {
+			return false, fmt.Sprintf("iowait_busy node=%s iowait_pct=%.2f threshold=%.2f", n.NodeID, n.DiskIOWaitPct, s.cfg.IdleIOWaitPercent), nil
+		}
+		if s.cfg.IdleMemoryPercent > 0 && n.MemoryUsedPct >= s.cfg.IdleMemoryPercent {
+			return false, fmt.Sprintf("memory_busy node=%s mem_pct=%.2f threshold=%.2f", n.NodeID, n.MemoryUsedPct, s.cfg.IdleMemoryPercent), nil
 		}
 	}
 
 	if liveCount == 0 {
 		return false, "no_live_nodes", nil
 	}
-	return false, "below_threshold", nil
+	return true, "idle_window", nil
 }

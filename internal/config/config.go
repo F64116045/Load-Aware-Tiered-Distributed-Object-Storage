@@ -89,6 +89,16 @@ var (
 	TieringThresholdCheckSec = getEnvInt("TIERING_THRESHOLD_CHECK_SEC", 10)
 	// TieringThresholdCooldownSec prevents threshold-trigger storms.
 	TieringThresholdCooldownSec = getEnvInt("TIERING_THRESHOLD_COOLDOWN_SEC", getEnvInt("THRESHOLD_COOLDOWN_SEC", 60))
+	// TieringIdleStableRounds requires N consecutive idle samples before threshold-trigger enqueue.
+	TieringIdleStableRounds = getEnvInt("TIERING_IDLE_STABLE_ROUNDS", 3)
+	// TieringIdleCPUPct is max CPU load percentage considered idle.
+	TieringIdleCPUPct = getEnvFloat64("TIERING_IDLE_CPU_PCT", 70)
+	// TieringIdleMemoryPct is max memory used percentage considered idle.
+	TieringIdleMemoryPct = getEnvFloat64("TIERING_IDLE_MEMORY_PCT", 80)
+	// TieringIdleIOWaitPct is max disk iowait percentage considered idle.
+	TieringIdleIOWaitPct = getEnvFloat64("TIERING_IDLE_IOWAIT_PCT", 20)
+	// TieringIdleQueueDepth is max queue depth considered idle.
+	TieringIdleQueueDepth = getEnvInt("TIERING_IDLE_QUEUE_DEPTH", 16)
 	// HotPressureDiskPct is the per-node used-disk trigger threshold.
 	HotPressureDiskPct = getEnvInt("HOT_PRESSURE_DISK_PCT", 80)
 	// HotPressureQueueDepth is the per-node IO queue-depth trigger threshold.
@@ -153,6 +163,18 @@ func getEnvInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	parsed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getEnvFloat64(key string, fallback float64) float64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(v, 64)
 	if err != nil {
 		return fallback
 	}

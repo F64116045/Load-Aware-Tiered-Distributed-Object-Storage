@@ -4,13 +4,15 @@ import "time"
 
 // NodeHeartbeatSnapshot is an admin-facing view of node liveness/load.
 type NodeHeartbeatSnapshot struct {
-	NodeID       string
-	LastSeenAt   time.Time
-	FreeBytes    int64
-	TotalBytes   int64
-	IOQueueDepth int
-	CPULoad      float64
-	Status       string
+	NodeID        string
+	LastSeenAt    time.Time
+	FreeBytes     int64
+	TotalBytes    int64
+	IOQueueDepth  int
+	CPULoad       float64
+	MemoryUsedPct float64
+	DiskIOWaitPct float64
+	Status        string
 }
 
 // TieringLeaderState is the admin-visible scanner leadership snapshot.
