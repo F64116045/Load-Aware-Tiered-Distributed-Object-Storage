@@ -324,7 +324,11 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 		var dataBytes []byte
 		switch config.StorageStrategy(strategyStr) {
 		case config.StrategyReplication:
-			dataBytes, err = deps.readReplication(c.Request.Context(), replicaNodes, objectID)
+			hotKey := objectID
+			if hk, ok := metadata["hot_key"].(string); ok && strings.TrimSpace(hk) != "" {
+				hotKey = strings.TrimSpace(hk)
+			}
+			dataBytes, err = deps.readReplication(c.Request.Context(), replicaNodes, hotKey)
 		case config.StrategyEC:
 			dataBytes, err = deps.readEC(c.Request.Context(), ecNodes, metadata)
 		default:
@@ -383,7 +387,11 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 
 		switch config.StorageStrategy(strategyStr) {
 		case config.StrategyReplication:
-			deleted, delErr := deps.deleteReplication(c.Request.Context(), replicaNodes, objectID)
+			hotKey := objectID
+			if hk, ok := metadata["hot_key"].(string); ok && strings.TrimSpace(hk) != "" {
+				hotKey = strings.TrimSpace(hk)
+			}
+			deleted, delErr := deps.deleteReplication(c.Request.Context(), replicaNodes, hotKey)
 			if delErr != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": delErr.Error()})
 				return

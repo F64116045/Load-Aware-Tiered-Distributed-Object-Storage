@@ -41,7 +41,7 @@ func (p *ReplicationGCProcessor) ProcessReplicationGC(ctx context.Context, task 
 		return nil
 	}
 	if snapshot.CurrentVersion != task.Version {
-		// Storage-node key is object_id (not versioned path); skip old-version GC for safety.
+		// GC only applies to current version rows to avoid deleting blobs for newer writes.
 		log.Printf("[TieringWorker][GC] task=%s object=%s stale version=%d current=%d skip", task.TaskID, task.ObjectID, task.Version, snapshot.CurrentVersion)
 		return nil
 	}

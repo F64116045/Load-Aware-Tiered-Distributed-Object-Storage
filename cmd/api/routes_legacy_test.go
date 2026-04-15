@@ -112,3 +112,50 @@ func TestLegacyReadAndDelete_UnknownStrategyRejected(t *testing.T) {
 		}
 	})
 }
+
+func TestLegacyReadDelete_UseHotKeyFromMetadata(t *testing.T) {
+	deps := baseLegacyDeps()
+	const hotKey = "hot/k1/00000000000000000099"
+	var gotReadKey string
+	var gotDeleteKey string
+
+	deps.loadMetadata = func(ctx context.Context, key string) (map[string]interface{}, string, error) {
+		return map[string]interface{}{
+			"strategy": string("replication"),
+			"hot_key":  hotKey,
+		}, "normalized_metadata", nil
+	}
+	deps.readReplication = func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+		gotReadKey = key
+		return []byte(`{"ok":1}`), nil
+	}
+	deps.deserialize = func(data []byte) (map[string]interface{}, error) {
+		return map[string]interface{}{"ok": 1}, nil
+	}
+	deps.deleteReplication = func(ctx context.Context, replicaNodes []string, key string) (int, error) {
+		gotDeleteKey = key
+		return 1, nil
+	}
+
+	router := newLegacyTestRouter(deps)
+
+	readReq := httptest.NewRequest(http.MethodGet, "/read/k1", nil)
+	readRec := httptest.NewRecorder()
+	router.ServeHTTP(readRec, readReq)
+	if readRec.Code != http.StatusOK {
+		t.Fatalf("expected %d got %d body=%s", http.StatusOK, readRec.Code, readRec.Body.String())
+	}
+	if gotReadKey != hotKey {
+		t.Fatalf("expected read hot_key %q got %q", hotKey, gotReadKey)
+	}
+
+	delReq := httptest.NewRequest(http.MethodDelete, "/delete/k1", nil)
+	delRec := httptest.NewRecorder()
+	router.ServeHTTP(delRec, delReq)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("expected %d got %d body=%s", http.StatusOK, delRec.Code, delRec.Body.String())
+	}
+	if gotDeleteKey != hotKey {
+		t.Fatalf("expected delete hot_key %q got %q", hotKey, gotDeleteKey)
+	}
+}

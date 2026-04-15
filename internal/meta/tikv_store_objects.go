@@ -81,6 +81,13 @@ func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID strin
 	}
 
 	if tier == "HOT" {
+		hotPath := toString(metadata["hot_key"], "")
+		if hotPath == "" {
+			hotPath = BuildHotReplicaPath(objectID, version)
+		}
+		if hotPath == "" {
+			hotPath = objectID
+		}
 		replicaNodes := toStringSlice(metadata["replica_nodes"])
 		for _, nodeID := range replicaNodes {
 			if nodeID == "" {
@@ -90,7 +97,7 @@ func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID strin
 				ObjectID: objectID,
 				Version:  version,
 				NodeID:   nodeID,
-				Path:     objectID,
+				Path:     hotPath,
 				Status:   "ACTIVE",
 			}
 			if err := s.batchPutJSON(b, tiKVReplicaKey(objectID, version, nodeID), &rec); err != nil {
@@ -121,12 +128,27 @@ func (s *TiKVStore) GetNormalizedMetadata(ctx context.Context, objectID string) 
 	if err != nil || !found {
 		return nil, err
 	}
+	hotPath := BuildHotReplicaPath(objectID, obj.CurrentVersion)
+	replicas, err := s.listReplicaRecords(objectID, obj.CurrentVersion, "ACTIVE")
+	if err != nil {
+		return nil, err
+	}
+	for _, replica := range replicas {
+		if replica.Path == "" {
+			continue
+		}
+		hotPath = replica.Path
+		break
+	}
+	if hotPath == "" {
+		hotPath = objectID
+	}
 
 	meta := map[string]interface{}{
 		"key_name":     objectID,
 		"strategy":     strategyFromTier(ver.Tier),
 		"cold_hash":    ver.ChecksumSHA256,
-		"hot_key":      fmt.Sprintf("%s_hot", objectID),
+		"hot_key":      hotPath,
 		"cold_prefix":  fmt.Sprintf("%s_cold_chunk_", objectID),
 		"chunk_prefix": fmt.Sprintf("%s_cold_chunk_", objectID),
 	}

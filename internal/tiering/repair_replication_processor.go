@@ -110,12 +110,12 @@ func (p *ReplicationRepairProcessor) processHOTRepair(ctx context.Context, task 
 		return fmt.Errorf("no candidate nodes to place repaired replicas")
 	}
 
-	payload, err := p.fetchFromActiveReplicas(ctx, task.ObjectID, replicas)
+	payload, err := p.fetchFromActiveReplicas(ctx, task.ObjectID, task.Version, replicas)
 	if err != nil {
 		return err
 	}
 
-	repairedNodeIDs := p.writeReplicas(ctx, task.ObjectID, payload, targetNodes)
+	repairedNodeIDs := p.writeReplicas(ctx, task.ObjectID, task.Version, payload, targetNodes)
 	if len(repairedNodeIDs) == 0 {
 		return fmt.Errorf("repair write failed for all candidate nodes")
 	}
@@ -269,9 +269,12 @@ func (p *ReplicationRepairProcessor) processECRepair(ctx context.Context, task *
 	return nil
 }
 
-func (p *ReplicationRepairProcessor) fetchFromActiveReplicas(ctx context.Context, objectID string, replicas []meta.ReplicaLocation) ([]byte, error) {
+func (p *ReplicationRepairProcessor) fetchFromActiveReplicas(ctx context.Context, objectID string, version int64, replicas []meta.ReplicaLocation) ([]byte, error) {
 	for _, r := range replicas {
 		key := r.Path
+		if key == "" {
+			key = meta.BuildHotReplicaPath(objectID, version)
+		}
 		if key == "" {
 			key = objectID
 		}
@@ -291,6 +294,22 @@ func (p *ReplicationRepairProcessor) fetchFromActiveReplicas(ctx context.Context
 		}
 		if resp.StatusCode == http.StatusOK {
 			return data, nil
+		}
+		// Backward compatibility for old replica keys.
+		if key != objectID {
+			req, err = http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/retrieve/%s", r.NodeID, url.PathEscape(objectID)), nil)
+			if err != nil {
+				continue
+			}
+			resp, err = p.http.Do(req)
+			if err != nil {
+				continue
+			}
+			data, readErr = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr == nil && resp.StatusCode == http.StatusOK {
+				return data, nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("failed to fetch source bytes from active replicas")
@@ -316,10 +335,14 @@ func (p *ReplicationRepairProcessor) fetchSingleBlob(ctx context.Context, nodeID
 	return data, nil
 }
 
-func (p *ReplicationRepairProcessor) writeReplicas(ctx context.Context, objectID string, payload []byte, targets []string) []string {
+func (p *ReplicationRepairProcessor) writeReplicas(ctx context.Context, objectID string, version int64, payload []byte, targets []string) []string {
 	out := make([]string, 0, len(targets))
+	replicaPath := meta.BuildHotReplicaPath(objectID, version)
+	if replicaPath == "" {
+		replicaPath = objectID
+	}
 	for _, nodeID := range targets {
-		if err := p.writeSingleBlob(ctx, nodeID, objectID, payload); err != nil {
+		if err := p.writeSingleBlob(ctx, nodeID, replicaPath, payload); err != nil {
 			continue
 		}
 		out = append(out, nodeID)

@@ -129,7 +129,11 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			var dataBytes []byte
 			var errRead error
 			if config.StorageStrategy(strategyStr) == config.StrategyReplication {
-				dataBytes, errRead = deps.readReplication(c.Request.Context(), replicaNodes, key)
+				hotKey := key
+				if hk, ok := metadata["hot_key"].(string); ok && strings.TrimSpace(hk) != "" {
+					hotKey = strings.TrimSpace(hk)
+				}
+				dataBytes, errRead = deps.readReplication(c.Request.Context(), replicaNodes, hotKey)
 			} else {
 				dataBytes, errRead = deps.readEC(c.Request.Context(), ecNodes, metadata)
 			}
@@ -188,7 +192,11 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			var delErr error
 			switch config.StorageStrategy(strategyStr) {
 			case config.StrategyReplication:
-				hotCount, delErr = deps.deleteReplication(c.Request.Context(), replicaNodes, key)
+				hotKey := key
+				if hk, ok := metadata["hot_key"].(string); ok && strings.TrimSpace(hk) != "" {
+					hotKey = strings.TrimSpace(hk)
+				}
+				hotCount, delErr = deps.deleteReplication(c.Request.Context(), replicaNodes, hotKey)
 				result["nodes_deleted"] = hotCount
 			case config.StrategyEC:
 				coldCount, delErr = deps.deleteEC(c.Request.Context(), ecNodes, metadata)

@@ -72,7 +72,11 @@ func (p *ReplicationToECProcessor) ProcessReplicationToEC(ctx context.Context, t
 		return fmt.Errorf("insufficient healthy nodes for migration: have=%d need_at_least=%d", len(nodes), config.K)
 	}
 
-	sourceBytes, err := p.fetchFromAnyReplica(ctx, nodes, task.ObjectID)
+	replicas, err := p.store.ListActiveReplicaLocations(ctx, task.ObjectID, task.Version)
+	if err != nil {
+		return err
+	}
+	sourceBytes, err := p.fetchFromAnyReplica(ctx, replicas, nodes, task.ObjectID, task.Version)
 	if err != nil {
 		return err
 	}
@@ -122,27 +126,68 @@ func (p *ReplicationToECProcessor) enqueueReplicationGCTask(ctx context.Context,
 	)
 }
 
-func (p *ReplicationToECProcessor) fetchFromAnyReplica(ctx context.Context, nodes []string, objectID string) ([]byte, error) {
-	escaped := url.PathEscape(objectID)
-	for _, n := range nodes {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/retrieve/%s", n, escaped), nil)
+func (p *ReplicationToECProcessor) fetchFromAnyReplica(
+	ctx context.Context,
+	replicas []meta.ReplicaLocation,
+	healthyNodes []string,
+	objectID string,
+	version int64,
+) ([]byte, error) {
+	tryFetch := func(nodeID, key string) ([]byte, bool) {
+		if nodeID == "" || key == "" {
+			return nil, false
+		}
+		req, err := http.NewRequestWithContext(
+			ctx,
+			http.MethodGet,
+			fmt.Sprintf("%s/retrieve/%s", nodeID, url.PathEscape(key)),
+			nil,
+		)
 		if err != nil {
-			continue
+			return nil, false
 		}
 		resp, err := p.http.Do(req)
 		if err != nil {
-			continue
+			return nil, false
 		}
 		data, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if readErr != nil {
-			continue
+		if readErr != nil || resp.StatusCode != http.StatusOK {
+			return nil, false
 		}
-		if resp.StatusCode == http.StatusOK {
+		return data, true
+	}
+
+	for _, r := range replicas {
+		key := r.Path
+		if key == "" {
+			key = meta.BuildHotReplicaPath(objectID, version)
+		}
+		if key == "" {
+			key = objectID
+		}
+		if data, ok := tryFetch(r.NodeID, key); ok {
+			return data, nil
+		}
+		// Backward compatibility for pre-versioned writes.
+		if key != objectID {
+			if data, ok := tryFetch(r.NodeID, objectID); ok {
+				return data, nil
+			}
+		}
+	}
+
+	// Compatibility fallback when replica rows are missing or stale.
+	versionedKey := meta.BuildHotReplicaPath(objectID, version)
+	for _, n := range healthyNodes {
+		if data, ok := tryFetch(n, versionedKey); ok {
+			return data, nil
+		}
+		if data, ok := tryFetch(n, objectID); ok {
 			return data, nil
 		}
 	}
-	return nil, fmt.Errorf("failed to fetch source object from healthy replicas")
+	return nil, fmt.Errorf("failed to fetch source object from active replicas")
 }
 
 func (p *ReplicationToECProcessor) writeShards(

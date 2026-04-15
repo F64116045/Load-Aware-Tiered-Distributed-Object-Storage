@@ -157,6 +157,11 @@ func (s *TiKVStore) UpsertReplicaLocations(ctx context.Context, objectID string,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	replicaPath := BuildHotReplicaPath(objectID, version)
+	if replicaPath == "" {
+		replicaPath = objectID
+	}
+
 	for _, nodeID := range nodeIDs {
 		if nodeID == "" {
 			continue
@@ -165,7 +170,7 @@ func (s *TiKVStore) UpsertReplicaLocations(ctx context.Context, objectID string,
 			ObjectID: objectID,
 			Version:  version,
 			NodeID:   nodeID,
-			Path:     objectID,
+			Path:     replicaPath,
 			Status:   "ACTIVE",
 		}
 		if err := s.putJSON(tiKVReplicaKey(objectID, version, nodeID), &rec); err != nil {

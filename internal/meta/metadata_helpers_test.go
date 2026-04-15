@@ -104,3 +104,17 @@ func TestStrategyFromTier(t *testing.T) {
 		t.Fatalf("strategyFromTier default mismatch: got=%q", got)
 	}
 }
+
+func TestBuildHotReplicaPath(t *testing.T) {
+	t.Parallel()
+
+	if got := BuildHotReplicaPath("obj-a", 42); got != "hot/obj-a/00000000000000000042" {
+		t.Fatalf("unexpected hot replica path: %q", got)
+	}
+	if got := BuildHotReplicaPath("obj-a", 0); got != "obj-a" {
+		t.Fatalf("expected fallback object id path, got=%q", got)
+	}
+	if got := BuildHotReplicaPath("   ", 99); got != "" {
+		t.Fatalf("expected empty path for empty object id, got=%q", got)
+	}
+}

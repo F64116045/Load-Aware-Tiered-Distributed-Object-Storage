@@ -196,6 +196,12 @@ func (s *Service) writeReplication(
 		return nil, fmt.Errorf("replication failed: no replica nodes available")
 	}
 
+	version := time.Now().UnixNano()
+	hotReplicaPath := meta.BuildHotReplicaPath(key, version)
+	if hotReplicaPath == "" {
+		hotReplicaPath = key
+	}
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	success := 0
@@ -207,7 +213,7 @@ func (s *Service) writeReplication(
 		go func(n string) {
 			defer wg.Done()
 			req, _ := http.NewRequestWithContext(ctx, "POST",
-				fmt.Sprintf("%s/store?key=%s", n, neturl.QueryEscape(key)),
+				fmt.Sprintf("%s/store?key=%s", n, neturl.QueryEscape(hotReplicaPath)),
 				bytes.NewReader(value),
 			)
 			req.Header.Set("Content-Type", "application/octet-stream")
@@ -237,11 +243,12 @@ func (s *Service) writeReplication(
 		"strategy": string(config.StrategyReplication),
 		// Keep version fields as decimal strings to avoid int64 precision loss
 		// when metadata crosses JSON map[string]interface{} RPC boundaries.
-		"hot_version":     strconv.FormatInt(time.Now().UnixNano(), 10),
+		"hot_version":     strconv.FormatInt(version, 10),
 		"cold_version":    "0",
 		"cold_hash":       "",
 		"original_length": len(value),
 		"replica_nodes":   writtenNodes,
+		"hot_key":         hotReplicaPath,
 	}
 	for k, v := range extraMeta {
 		finalMeta[k] = v

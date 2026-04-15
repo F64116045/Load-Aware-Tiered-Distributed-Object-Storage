@@ -281,7 +281,7 @@ func TestWriteReplication_EscapesSpecialKey(t *testing.T) {
 	if len(rec.urls) != 1 {
 		t.Fatalf("expected exactly 1 outbound write request, got %d", len(rec.urls))
 	}
-	if !strings.Contains(rec.urls[0], "/store?key=a%26b") {
-		t.Fatalf("expected escaped key in request URL, got: %s", rec.urls[0])
+	if !strings.Contains(rec.urls[0], "/store?key=hot%2Fa%26b%2F") {
+		t.Fatalf("expected escaped versioned hot key in request URL, got: %s", rec.urls[0])
 	}
 }
