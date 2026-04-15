@@ -45,7 +45,7 @@ func TestReplicationToECProcessor_UsesVersionedReplicaPath(t *testing.T) {
 
 	ctx := context.Background()
 	for _, srv := range servers {
-		if err := store.UpsertNodeHeartbeat(ctx, srv.URL, 100, 1000, 0, 0, "UP"); err != nil {
+		if err := store.UpsertNodeHeartbeat(ctx, srv.URL, 100, 1000, 0, 0, 25, 0, "UP"); err != nil {
 			t.Fatalf("upsert node heartbeat failed: %v", err)
 		}
 	}

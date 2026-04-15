@@ -105,14 +105,16 @@ func (c *RPCClient) Close() error {
 	return nil
 }
 
-func (c *RPCClient) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, status string) error {
+func (c *RPCClient) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, memoryUsedPct float64, diskIOWaitPct float64, status string) error {
 	return c.call(ctx, rpcMethodUpsertNodeHeartbeat, rpcNodeHeartbeatArgs{
-		NodeID:       nodeID,
-		FreeBytes:    freeBytes,
-		TotalBytes:   totalBytes,
-		IOQueueDepth: ioQueueDepth,
-		CPULoad:      cpuLoad,
-		Status:       status,
+		NodeID:        nodeID,
+		FreeBytes:     freeBytes,
+		TotalBytes:    totalBytes,
+		IOQueueDepth:  ioQueueDepth,
+		CPULoad:       cpuLoad,
+		MemoryUsedPct: memoryUsedPct,
+		DiskIOWaitPct: diskIOWaitPct,
+		Status:        status,
 	}, nil)
 }
 

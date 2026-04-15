@@ -19,7 +19,7 @@ type Repository interface {
 	Ping(ctx context.Context) error
 	Close() error
 
-	UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, status string) error
+	UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, memoryUsedPct float64, diskIOWaitPct float64, status string) error
 	ListHealthyNodeIDs(ctx context.Context, staleSec int) ([]string, error)
 	ListNodeHeartbeats(ctx context.Context, limit int) ([]NodeHeartbeatSnapshot, error)
 
