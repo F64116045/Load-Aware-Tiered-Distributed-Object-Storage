@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"hybrid_distributed_store/internal/config"
@@ -22,14 +23,25 @@ type ReplicationToECProcessor struct {
 	store meta.Repository
 	http  *http.Client
 	ec    interfaces.IEcDriver
+
+	throttleBytesPerSec int64
+	throttleMu          sync.Mutex
+	nextIOAt            time.Time
 }
 
 // NewReplicationToECProcessor constructs a processor implementation.
 func NewReplicationToECProcessor(store meta.Repository, httpClient *http.Client, ecDriver interfaces.IEcDriver) *ReplicationToECProcessor {
+	limitMBps := config.WorkerBWLimitMBPS
+	throttleBytesPerSec := int64(0)
+	if limitMBps > 0 {
+		throttleBytesPerSec = limitMBps * 1024 * 1024
+	}
+
 	return &ReplicationToECProcessor{
-		store: store,
-		http:  httpClient,
-		ec:    ecDriver,
+		store:               store,
+		http:                httpClient,
+		ec:                  ecDriver,
+		throttleBytesPerSec: throttleBytesPerSec,
 	}
 }
 
@@ -80,6 +92,7 @@ func (p *ReplicationToECProcessor) ProcessReplicationToEC(ctx context.Context, t
 	if err != nil {
 		return err
 	}
+	p.throttle(ctx, int64(len(sourceBytes)))
 
 	shards, err := p.ec.Split(sourceBytes)
 	if err != nil {
@@ -213,6 +226,7 @@ func (p *ReplicationToECProcessor) writeShards(
 		if err != nil {
 			continue
 		}
+		p.throttle(ctx, int64(len(shards[i])))
 		req.Header.Set("Content-Type", "application/octet-stream")
 		resp, err := p.http.Do(req)
 		if err != nil {
@@ -234,4 +248,35 @@ func (p *ReplicationToECProcessor) writeShards(
 
 	log.Printf("[TieringWorker] object=%s version=%d ec_shards_written=%d/%d", objectID, version, success, len(shards))
 	return success, locations
+}
+
+func (p *ReplicationToECProcessor) throttle(ctx context.Context, bytes int64) {
+	if p == nil || p.throttleBytesPerSec <= 0 || bytes <= 0 {
+		return
+	}
+	delay := time.Duration((float64(bytes) / float64(p.throttleBytesPerSec)) * float64(time.Second))
+	if delay <= 0 {
+		return
+	}
+
+	p.throttleMu.Lock()
+	now := time.Now()
+	waitUntil := p.nextIOAt
+	if waitUntil.Before(now) {
+		waitUntil = now
+	}
+	p.nextIOAt = waitUntil.Add(delay)
+	p.throttleMu.Unlock()
+
+	wait := time.Until(waitUntil)
+	if wait <= 0 {
+		return
+	}
+
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 }

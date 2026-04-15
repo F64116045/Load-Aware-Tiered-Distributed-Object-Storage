@@ -123,6 +123,8 @@ var (
 	TieringPolicyLeaderLockKey = int64(getEnvInt("TIERING_POLICY_LEADER_LOCK_KEY", 42042))
 	// TieringLeaderStaleSec marks leader heartbeat stale threshold for admin observability.
 	TieringLeaderStaleSec = getEnvInt("TIERING_LEADER_STALE_SEC", 10)
+	// WorkerBWLimitMBPS limits REPL->EC migration I/O bandwidth per worker; <=0 disables.
+	WorkerBWLimitMBPS = getEnvInt64("WORKER_BW_LIMIT_MBPS", 0)
 )
 
 func init() {
