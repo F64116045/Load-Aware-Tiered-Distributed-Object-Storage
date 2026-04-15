@@ -1,11 +1,26 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+func keyFromPathParam(c *gin.Context, name string) (string, error) {
+	raw := strings.TrimPrefix(c.Param(name), "/")
+	if raw == "" {
+		return "", fmt.Errorf("missing key")
+	}
+	key, err := url.PathUnescape(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid key escape: %w", err)
+	}
+	return key, nil
+}
 
 func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 	router.GET("/health", func(c *gin.Context) {
@@ -53,7 +68,11 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 	})
 
 	retrieveHandler := func(c *gin.Context) {
-		key := c.Param("key")
+		key, err := keyFromPathParam(c, "key")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		data, err := storage.retrieve(key)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -69,11 +88,15 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 		}
 		c.Data(http.StatusOK, "application/octet-stream", data)
 	}
-	router.GET("/retrieve/:key", retrieveHandler)
-	router.HEAD("/retrieve/:key", retrieveHandler)
+	router.GET("/retrieve/*key", retrieveHandler)
+	router.HEAD("/retrieve/*key", retrieveHandler)
 
-	router.DELETE("/delete/:key", func(c *gin.Context) {
-		key := c.Param("key")
+	router.DELETE("/delete/*key", func(c *gin.Context) {
+		key, err := keyFromPathParam(c, "key")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		deleted, err := storage.delete(key)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

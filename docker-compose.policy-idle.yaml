@@ -1,0 +1,48 @@
+services:
+  api:
+    environment:
+      TIERING_ENQUEUE_ON_WRITE: "false"
+
+  meta_service_1:
+    environment:
+      AGE_THRESHOLD_SEC: "0"
+
+  meta_service_2:
+    environment:
+      AGE_THRESHOLD_SEC: "0"
+
+  meta_service_3:
+    environment:
+      AGE_THRESHOLD_SEC: "0"
+
+  tiering_worker:
+    environment:
+      META_ENABLED: "true"
+      META_ENDPOINT: "http://meta_service:8091"
+      META_REQUIRE_ENDPOINT: "true"
+      META_RPC_AUTH_TOKEN: "dev-meta-token"
+      META_DSN: "${META_DSN:-}"
+      TIERING_WORKER_POLL_SEC: "2"
+      TIERING_POLICY_PERIOD_SEC: "3600"
+      TIERING_POLICY_VARIANT: "A1"
+      TIERING_TRIGGER_MODE: "threshold"
+      TIERING_THRESHOLD_CHECK_SEC: "5"
+      TIERING_THRESHOLD_COOLDOWN_SEC: "1"
+      TIERING_IDLE_STABLE_ROUNDS: "3"
+      TIERING_IDLE_CPU_PCT: "100"
+      TIERING_IDLE_MEMORY_PCT: "100"
+      TIERING_IDLE_IOWAIT_PCT: "100"
+      TIERING_IDLE_QUEUE_DEPTH: "100000"
+      AGE_THRESHOLD_SEC: "0"
+      SIZE_THRESHOLD_BYTES: "1"
+      MAX_OBJECTS_PER_ROUND: "200"
+      MAX_BYTES_PER_ROUND: "1073741824"
+      HOT_PRESSURE_DISK_PCT: "80"
+      HOT_PRESSURE_QUEUE_DEPTH: "1000"
+      TIERING_POLICY_LEADER_RETRY_SEC: "2"
+      TIERING_POLICY_LEADER_LOCK_KEY: "42042"
+      TIERING_LEADER_STALE_SEC: "10"
+      TIERING_TASK_MAX_RETRY_COUNT: "8"
+      REPAIR_SCAN_ENABLED: "false"
+      OLD_VERSION_REAPER_ENABLED: "false"
+      TIERING_WORKER_TASK_TYPE: "REPAIR"

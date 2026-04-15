@@ -63,6 +63,9 @@ func (s *Service) finalizeMetadata(
 	if err := s.meta.UpsertNormalizedMetadata(ctx, mainKey, metadata); err != nil {
 		return fmt.Errorf("failed to commit normalized metadata: %v", err)
 	}
+	if !config.TieringEnqueueOnWrite {
+		return nil
+	}
 	if err := s.enqueueTieringTaskIfEligible(ctx, mainKey, metadata); err != nil {
 		// Tiering is best effort for now; foreground write must remain available.
 		log.Printf("[TieringEnqueue] skip key=%s: %v", mainKey, err)
