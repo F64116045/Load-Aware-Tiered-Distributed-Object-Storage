@@ -1,0 +1,152 @@
+services:
+  meta_service_1:
+    environment:
+      META_DSN: ${META_DSN:-pd:2379,pd2:2379,pd3:2379}
+    depends_on:
+      pd:
+        condition: service_started
+      pd2:
+        condition: service_started
+      pd3:
+        condition: service_started
+      tikv:
+        condition: service_started
+      tikv2:
+        condition: service_started
+      tikv3:
+        condition: service_started
+
+  meta_service_2:
+    environment:
+      META_DSN: ${META_DSN:-pd:2379,pd2:2379,pd3:2379}
+    depends_on:
+      pd:
+        condition: service_started
+      pd2:
+        condition: service_started
+      pd3:
+        condition: service_started
+      tikv:
+        condition: service_started
+      tikv2:
+        condition: service_started
+      tikv3:
+        condition: service_started
+
+  meta_service_3:
+    environment:
+      META_DSN: ${META_DSN:-pd:2379,pd2:2379,pd3:2379}
+    depends_on:
+      pd:
+        condition: service_started
+      pd2:
+        condition: service_started
+      pd3:
+        condition: service_started
+      tikv:
+        condition: service_started
+      tikv2:
+        condition: service_started
+      tikv3:
+        condition: service_started
+
+  pd:
+    command:
+      - --name=pd
+      - --data-dir=/var/lib/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://pd:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-peer-urls=http://pd:2380
+      - --initial-cluster=pd=http://pd:2380,pd2=http://pd2:2380,pd3=http://pd3:2380
+      - --initial-cluster-state=new
+      - --log-level=info
+
+  pd2:
+    image: pingcap/pd:v7.5.0
+    command:
+      - --name=pd2
+      - --data-dir=/var/lib/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://pd2:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-peer-urls=http://pd2:2380
+      - --initial-cluster=pd=http://pd:2380,pd2=http://pd2:2380,pd3=http://pd3:2380
+      - --initial-cluster-state=new
+      - --log-level=info
+    restart: on-failure
+    volumes:
+      - tikv_pd2_data:/var/lib/pd
+    networks:
+      - storage_net
+
+  pd3:
+    image: pingcap/pd:v7.5.0
+    command:
+      - --name=pd3
+      - --data-dir=/var/lib/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://pd3:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-peer-urls=http://pd3:2380
+      - --initial-cluster=pd=http://pd:2380,pd2=http://pd2:2380,pd3=http://pd3:2380
+      - --initial-cluster-state=new
+      - --log-level=info
+    restart: on-failure
+    volumes:
+      - tikv_pd3_data:/var/lib/pd
+    networks:
+      - storage_net
+
+  tikv:
+    command:
+      - --pd=pd:2379,pd2:2379,pd3:2379
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv:20160
+      - --status-addr=0.0.0.0:20180
+      - --data-dir=/var/lib/tikv
+      - --log-level=info
+
+  tikv2:
+    image: pingcap/tikv:v7.5.0
+    command:
+      - --pd=pd:2379,pd2:2379,pd3:2379
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv2:20160
+      - --status-addr=0.0.0.0:20180
+      - --data-dir=/var/lib/tikv
+      - --log-level=info
+    depends_on:
+      - pd
+      - pd2
+      - pd3
+    restart: on-failure
+    volumes:
+      - tikv_store2_data:/var/lib/tikv
+    networks:
+      - storage_net
+
+  tikv3:
+    image: pingcap/tikv:v7.5.0
+    command:
+      - --pd=pd:2379,pd2:2379,pd3:2379
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv3:20160
+      - --status-addr=0.0.0.0:20180
+      - --data-dir=/var/lib/tikv
+      - --log-level=info
+    depends_on:
+      - pd
+      - pd2
+      - pd3
+    restart: on-failure
+    volumes:
+      - tikv_store3_data:/var/lib/tikv
+    networks:
+      - storage_net
+
+volumes:
+  tikv_pd2_data:
+  tikv_pd3_data:
+  tikv_store2_data:
+  tikv_store3_data:
