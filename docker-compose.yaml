@@ -14,9 +14,9 @@ services:
       - storage_net
 
   # ---------------------------------------------------------------------------
-  # Metadata Service (single writer/reader owner for metadata backend)
+  # Metadata Service HA (3 replicas + internal LB)
   # ---------------------------------------------------------------------------
-  meta_service:
+  meta_service_1:
     build:
       context: .
       dockerfile: Dockerfile
@@ -38,6 +38,76 @@ services:
         condition: service_started
       tikv:
         condition: service_started
+    networks:
+      - storage_net
+
+  meta_service_2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/usr/local/bin/meta_service"]
+    restart: on-failure
+    environment:
+      - META_ENABLED=true
+      - META_REQUIRE_ENDPOINT=false
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_DSN=${META_DSN:-pd:2379}
+      - META_SERVICE_PORT=8091
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      pd:
+        condition: service_started
+      tikv:
+        condition: service_started
+    networks:
+      - storage_net
+
+  meta_service_3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/usr/local/bin/meta_service"]
+    restart: on-failure
+    environment:
+      - META_ENABLED=true
+      - META_REQUIRE_ENDPOINT=false
+      - META_RPC_AUTH_TOKEN=dev-meta-token
+      - META_DSN=${META_DSN:-pd:2379}
+      - META_SERVICE_PORT=8091
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      pd:
+        condition: service_started
+      tikv:
+        condition: service_started
+    networks:
+      - storage_net
+
+  meta_service:
+    image: nginx:1.25-alpine
+    restart: on-failure
+    volumes:
+      - ./deploy/meta_lb/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      meta_service_1:
+        condition: service_healthy
+      meta_service_2:
+        condition: service_healthy
+      meta_service_3:
+        condition: service_healthy
     networks:
       - storage_net
 
