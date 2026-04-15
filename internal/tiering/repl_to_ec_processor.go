@@ -27,6 +27,8 @@ type ReplicationToECProcessor struct {
 	throttleBytesPerSec int64
 	throttleMu          sync.Mutex
 	nextIOAt            time.Time
+	nowFn               func() time.Time
+	sleepFn             func(context.Context, time.Duration)
 }
 
 // NewReplicationToECProcessor constructs a processor implementation.
@@ -42,6 +44,8 @@ func NewReplicationToECProcessor(store meta.Repository, httpClient *http.Client,
 		http:                httpClient,
 		ec:                  ecDriver,
 		throttleBytesPerSec: throttleBytesPerSec,
+		nowFn:               time.Now,
+		sleepFn:             sleepWithContext,
 	}
 }
 
@@ -254,13 +258,21 @@ func (p *ReplicationToECProcessor) throttle(ctx context.Context, bytes int64) {
 	if p == nil || p.throttleBytesPerSec <= 0 || bytes <= 0 {
 		return
 	}
+	nowFn := p.nowFn
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	sleepFn := p.sleepFn
+	if sleepFn == nil {
+		sleepFn = sleepWithContext
+	}
 	delay := time.Duration((float64(bytes) / float64(p.throttleBytesPerSec)) * float64(time.Second))
 	if delay <= 0 {
 		return
 	}
 
 	p.throttleMu.Lock()
-	now := time.Now()
+	now := nowFn()
 	waitUntil := p.nextIOAt
 	if waitUntil.Before(now) {
 		waitUntil = now
@@ -268,12 +280,18 @@ func (p *ReplicationToECProcessor) throttle(ctx context.Context, bytes int64) {
 	p.nextIOAt = waitUntil.Add(delay)
 	p.throttleMu.Unlock()
 
-	wait := time.Until(waitUntil)
+	wait := waitUntil.Sub(now)
 	if wait <= 0 {
 		return
 	}
+	sleepFn(ctx, wait)
+}
 
-	timer := time.NewTimer(wait)
+func sleepWithContext(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():

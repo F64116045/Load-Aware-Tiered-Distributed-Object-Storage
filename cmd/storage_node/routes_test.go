@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -79,5 +80,35 @@ func TestRoutesStoreRetrieveDeleteRoundTrip(t *testing.T) {
 	router.ServeHTTP(getAfterRec, getAfterReq)
 	if getAfterRec.Code != http.StatusNotFound {
 		t.Fatalf("retrieve-after-delete status=%d want=%d body=%s", getAfterRec.Code, http.StatusNotFound, getAfterRec.Body.String())
+	}
+}
+
+func TestRoutesNestedKeyRoundTrip(t *testing.T) {
+	t.Parallel()
+	router, _ := newTestRouter(t)
+
+	key := "hot/object-a/01776241582224033415"
+	putReq := httptest.NewRequest(http.MethodPost, "/store?key="+url.QueryEscape(key), strings.NewReader("nested-bytes"))
+	putRec := httptest.NewRecorder()
+	router.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("store status=%d body=%s", putRec.Code, putRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/retrieve/"+url.PathEscape(key), nil)
+	getRec := httptest.NewRecorder()
+	router.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("retrieve status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	if got := getRec.Body.String(); got != "nested-bytes" {
+		t.Fatalf("retrieve payload mismatch: got=%q", got)
+	}
+
+	delReq := httptest.NewRequest(http.MethodDelete, "/delete/"+url.PathEscape(key), nil)
+	delRec := httptest.NewRecorder()
+	router.ServeHTTP(delRec, delReq)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", delRec.Code, delRec.Body.String())
 	}
 }

@@ -190,14 +190,17 @@ func TestWriteReplication_PartialEnqueuesRepairTask(t *testing.T) {
 	origMetaEnabled := config.MetaEnabled
 	origWriteQuorum := config.HotWriteQuorum
 	origAgeThresholdSec := config.AgeThresholdSec
+	origTieringEnqueueOnWrite := config.TieringEnqueueOnWrite
 	defer func() {
 		config.MetaEnabled = origMetaEnabled
 		config.HotWriteQuorum = origWriteQuorum
 		config.AgeThresholdSec = origAgeThresholdSec
+		config.TieringEnqueueOnWrite = origTieringEnqueueOnWrite
 	}()
 	config.MetaEnabled = true
 	config.HotWriteQuorum = 2
 	config.AgeThresholdSec = 3600
+	config.TieringEnqueueOnWrite = true
 
 	store, err := meta.NewTiKVStore(meta.Config{
 		Enabled: true,
@@ -254,6 +257,57 @@ func TestWriteReplication_PartialEnqueuesRepairTask(t *testing.T) {
 	}
 	if !foundRepair {
 		t.Fatalf("expected repair task %s", repairTaskID)
+	}
+}
+
+func TestWriteReplication_DisableEnqueueOnWrite(t *testing.T) {
+	origMetaEnabled := config.MetaEnabled
+	origWriteQuorum := config.HotWriteQuorum
+	origAgeThresholdSec := config.AgeThresholdSec
+	origTieringEnqueueOnWrite := config.TieringEnqueueOnWrite
+	defer func() {
+		config.MetaEnabled = origMetaEnabled
+		config.HotWriteQuorum = origWriteQuorum
+		config.AgeThresholdSec = origAgeThresholdSec
+		config.TieringEnqueueOnWrite = origTieringEnqueueOnWrite
+	}()
+	config.MetaEnabled = true
+	config.HotWriteQuorum = 2
+	config.AgeThresholdSec = 0
+	config.TieringEnqueueOnWrite = false
+
+	store, err := meta.NewTiKVStore(meta.Config{
+		Enabled: true,
+		DSN:     "memory://writeservice-no-enqueue",
+	})
+	if err != nil {
+		t.Fatalf("new tikv store failed: %v", err)
+	}
+	defer store.Close()
+
+	svc := NewService(&mockHTTPClient{
+		perHostStatus: map[string]int{
+			"node1": http.StatusOK,
+			"node2": http.StatusOK,
+			"node3": http.StatusOK,
+		},
+	}, &mockECDriver{}, &mockUtils{}, store)
+
+	if _, err := svc.WriteReplication(
+		context.Background(),
+		[]string{"http://node1", "http://node2", "http://node3"},
+		"obj-no-enqueue",
+		[]byte("payload"),
+	); err != nil {
+		t.Fatalf("write replication failed: %v", err)
+	}
+
+	tasks, err := store.ListTieringTasks(context.Background(), "", "obj-no-enqueue", 20)
+	if err != nil {
+		t.Fatalf("list tiering tasks failed: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected no tiering tasks when enqueue-on-write is disabled, got=%d", len(tasks))
 	}
 }
 

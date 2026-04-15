@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/ec"
@@ -94,4 +96,52 @@ func TestReplicationToECProcessor_UsesVersionedReplicaPath(t *testing.T) {
 	if len(tasks) == 0 {
 		t.Fatalf("expected pending GC task after promotion")
 	}
+}
+
+func TestReplicationToECProcessor_ThrottleReservesWindow(t *testing.T) {
+	t.Parallel()
+
+	base := time.Unix(1700000000, 0)
+	p := &ReplicationToECProcessor{
+		throttleBytesPerSec: 100, // bytes/sec
+		nowFn: func() time.Time {
+			return base
+		},
+	}
+	var (
+		mu     sync.Mutex
+		sleeps []time.Duration
+	)
+	p.sleepFn = func(ctx context.Context, d time.Duration) {
+		mu.Lock()
+		sleeps = append(sleeps, d)
+		mu.Unlock()
+	}
+
+	// first call consumes window but should not wait
+	p.throttle(context.Background(), 50)
+	// second call at same time should wait 500ms
+	p.throttle(context.Background(), 50)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sleeps) != 1 {
+		t.Fatalf("expected exactly one sleep, got=%d", len(sleeps))
+	}
+	if sleeps[0] != 500*time.Millisecond {
+		t.Fatalf("unexpected sleep duration: got=%s want=%s", sleeps[0], 500*time.Millisecond)
+	}
+}
+
+func TestReplicationToECProcessor_ThrottleDisabled(t *testing.T) {
+	t.Parallel()
+
+	p := &ReplicationToECProcessor{
+		throttleBytesPerSec: 0,
+		nowFn:               time.Now,
+		sleepFn: func(ctx context.Context, d time.Duration) {
+			t.Fatalf("sleep should not be called when throttle is disabled")
+		},
+	}
+	p.throttle(context.Background(), 1024)
 }

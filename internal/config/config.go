@@ -71,6 +71,8 @@ var (
 	HotReplicaCount = getEnvInt("HOT_REPLICA_COUNT", 3)
 	// HotWriteQuorum is the minimum number of successful replica writes for ACK.
 	HotWriteQuorum = getEnvInt("HOT_WRITE_QUORUM", 2)
+	// TieringEnqueueOnWrite controls whether write path directly enqueues REPL_TO_EC tasks.
+	TieringEnqueueOnWrite = getEnvBool("TIERING_ENQUEUE_ON_WRITE", true)
 	// AgeThresholdSec defines when HOT objects become eligible for tiering (A1 baseline).
 	AgeThresholdSec = getEnvInt("AGE_THRESHOLD_SEC", 3600)
 	// TieringPeriodSec defines periodic policy scan interval.
