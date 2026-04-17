@@ -126,3 +126,50 @@ func TestRPCClientServerAuthToken(t *testing.T) {
 		t.Fatalf("expected authorized rpc ping success, got: %v", err)
 	}
 }
+
+func TestLeaderLockTokenSurvivesReplicaSwitch(t *testing.T) {
+	store, err := NewTiKVStore(Config{
+		Enabled: true,
+		DSN:     "memory://rpc-lock-replica-switch",
+	})
+	if err != nil {
+		t.Fatalf("new tikv store failed: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	s1 := NewRPCServer(store, "token-secret")
+	s2 := NewRPCServer(store, "token-secret")
+	t.Cleanup(func() { _ = s1.Close() })
+	t.Cleanup(func() { _ = s2.Close() })
+
+	h1 := httptest.NewServer(s1.Handler())
+	h2 := httptest.NewServer(s2.Handler())
+	t.Cleanup(h1.Close)
+	t.Cleanup(h2.Close)
+
+	c1 := NewRPCClient(h1.URL, "token-secret")
+	c2 := NewRPCClient(h2.URL, "token-secret")
+	ctx := context.Background()
+
+	lock, acquired, err := c1.TryAcquireLeaderLock(ctx, 55001)
+	if err != nil {
+		t.Fatalf("try acquire leader lock failed: %v", err)
+	}
+	if !acquired || lock == nil {
+		t.Fatalf("expected acquired lock")
+	}
+
+	lock1, ok := lock.(*rpcLeaderLock)
+	if !ok || lock1.token == "" {
+		t.Fatalf("unexpected lock type/token: %#v", lock)
+	}
+
+	// Simulate LB switching to another meta_service replica on heartbeat path.
+	lock2 := &rpcLeaderLock{client: c2, token: lock1.token}
+	if err := lock2.Ping(ctx); err != nil {
+		t.Fatalf("ping via second replica failed: %v", err)
+	}
+	if err := lock2.Release(ctx); err != nil {
+		t.Fatalf("release via second replica failed: %v", err)
+	}
+}
