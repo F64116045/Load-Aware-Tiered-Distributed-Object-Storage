@@ -28,11 +28,17 @@ services:
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DSN=${META_DSN:-pd:2379}
       - META_SERVICE_PORT=8091
+      - META_STARTUP_PING_TIMEOUT_SEC=10
+      - META_STARTUP_MAX_WAIT_SEC=300
+      - META_STARTUP_RETRY_INTERVAL_SEC=2
+      - META_STARTUP_MAX_RETRY_INTERVAL_SEC=15
+      - META_HEALTH_PING_TIMEOUT_SEC=5
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     depends_on:
       pd:
         condition: service_started
@@ -53,11 +59,17 @@ services:
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DSN=${META_DSN:-pd:2379}
       - META_SERVICE_PORT=8091
+      - META_STARTUP_PING_TIMEOUT_SEC=10
+      - META_STARTUP_MAX_WAIT_SEC=300
+      - META_STARTUP_RETRY_INTERVAL_SEC=2
+      - META_STARTUP_MAX_RETRY_INTERVAL_SEC=15
+      - META_HEALTH_PING_TIMEOUT_SEC=5
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     depends_on:
       pd:
         condition: service_started
@@ -78,11 +90,17 @@ services:
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DSN=${META_DSN:-pd:2379}
       - META_SERVICE_PORT=8091
+      - META_STARTUP_PING_TIMEOUT_SEC=10
+      - META_STARTUP_MAX_WAIT_SEC=300
+      - META_STARTUP_RETRY_INTERVAL_SEC=2
+      - META_STARTUP_MAX_RETRY_INTERVAL_SEC=15
+      - META_HEALTH_PING_TIMEOUT_SEC=5
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     depends_on:
       pd:
         condition: service_started
@@ -98,16 +116,17 @@ services:
       - ./deploy/meta_lb/nginx.conf:/etc/nginx/nginx.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
     depends_on:
       meta_service_1:
-        condition: service_healthy
+        condition: service_started
       meta_service_2:
-        condition: service_healthy
+        condition: service_started
       meta_service_3:
-        condition: service_healthy
+        condition: service_started
     networks:
       - storage_net
 

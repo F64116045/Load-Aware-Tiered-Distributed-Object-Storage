@@ -33,41 +33,61 @@ Demo UI:
 ## System Architecture
 
 ```mermaid
-flowchart LR
-  subgraph Edge["Edge Layer"]
-    Client["Client / Benchmark / Demo UI"]
-    Nginx["nginx (:8000)"]
-    Client --> Nginx
+flowchart TB
+  classDef plane fill:#f8f9fa,stroke:#ced4da,stroke-width:2px,stroke-dasharray: 5 5;
+  classDef component fill:#e3f2fd,stroke:#1e88e5,stroke-width:2px;
+  classDef db fill:#e8f5e9,stroke:#43a047,stroke-width:2px;
+  classDef loop fill:#fff3e0,stroke:#fb8c00,stroke-width:2px;
+  classDef keyspace fill:#f3e5f5,stroke:#8e24aa,stroke-width:1px;
+
+  subgraph EDGE[Edge and Client]
+    C([Client and Benchmark]) --> N[Nginx 8000]:::component
   end
 
-  subgraph DataPlane["Data Plane"]
-    API["api (1..N)"]
-    SN["storage_node_[1..N]"]
-    TW["tiering_worker_[1..N]"]
-    Nginx --> API
-    API -->|PUT/GET/DELETE bytes| SN
-    TW -->|migration/repair/gc I/O| SN
+  subgraph DATA[Data Plane]
+    A[API Replicas]:::component
+    S[(Storage Pool HOT and EC)]:::db
+    SH((Heartbeat Loop)):::loop
+    AW((Node Watch Loop)):::loop
   end
 
-  subgraph ControlPlane["Metadata / Control Plane"]
-    MetaLB["meta_service LB (:8091)"]
-    MS1["meta_service_1"]
-    MS2["meta_service_2"]
-    MS3["meta_service_3"]
-    TiKV["TiKV cluster"]
-    PD["PD cluster"]
-    MetaLB --> MS1
-    MetaLB --> MS2
-    MetaLB --> MS3
-    MS1 --> TiKV
-    MS2 --> TiKV
-    MS3 --> TiKV
-    TiKV --> PD
+  subgraph META[Metadata Control Plane]
+    LB[Meta LB 8091]:::component
+    MS[Meta Service Replicas]:::component
+    TK[(TiKV Engine)]:::db
+    KOBJ[obj keyspace metadata]:::keyspace
+    KTASK[task keyspace queue]:::keyspace
+    KCTL[hb and lock keyspace]:::keyspace
+    TS[Task states PENDING RUNNING DONE RETRY_WAIT FAILED]:::keyspace
   end
 
-  API -->|metadata/task RPC| MetaLB
-  TW -->|claim/update task RPC| MetaLB
-  SN -->|heartbeat RPC| MetaLB
+  subgraph BG[Background Plane]
+    W[Tiering Workers]:::component
+    WL((Leader Lock Loop)):::loop
+    SC((Policy Scanner)):::loop
+    PR[Task Processors]:::component
+  end
+
+  N --> A
+  A ==>|Object IO| S
+  W ==>|Migration IO| S
+
+  A -.->|Metadata RPC| LB
+  W -.->|Task RPC| LB
+  SH -.->|Heartbeat RPC| LB
+  AW -.->|Healthy Node Query| LB
+
+  LB --> MS --> TK
+  TK --> KOBJ
+  TK --> KTASK
+  TK --> KCTL
+  KTASK -.->|state model| TS
+
+  W --> WL --> SC --> PR
+  PR -.->|claim and update tasks| KTASK
+  PR -.->|read and update object metadata| KOBJ
+
+  class EDGE,DATA,META,BG plane;
 ```
 
 Default deployment cardinality (from `docker-compose.yaml`):
@@ -216,6 +236,10 @@ curl -sS 'http://127.0.0.1:8000/v2/admin/metrics-snapshot'
 
 ### Start
 ```bash
+# Recommended (one-command staged startup with readiness waits)
+./scripts/up_stack.sh
+
+# Plain docker compose (works after startup-hardening changes)
 docker compose -f docker-compose.yaml up -d --build
 ```
 

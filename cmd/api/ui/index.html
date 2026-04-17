@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hybrid Object Storage Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/demo/assets/style.css" />
+    <script defer src="/demo/assets/app.js"></script>
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+
+    <main class="page">
+      <header class="hero reveal">
+        <p class="eyebrow">V2 DEMO CONSOLE</p>
+        <h1>Hybrid Object Storage Demo</h1>
+        <p class="subtitle">
+          Upload objects, read binary payloads, delete data, and inspect cluster admin endpoints from one page.
+        </p>
+      </header>
+
+      <section class="panel reveal" style="--delay: 0.05s">
+        <h2>Connection</h2>
+        <div class="row">
+          <label for="apiBase">API Base URL</label>
+          <input id="apiBase" type="text" />
+          <button id="useCurrentOriginBtn" class="ghost">Use Current Origin</button>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel reveal" style="--delay: 0.1s">
+          <h2>PUT Object</h2>
+          <div class="stack">
+            <label for="putObjectId">Object ID</label>
+            <input id="putObjectId" type="text" placeholder="demo-object-001" />
+          </div>
+          <div class="stack">
+            <label for="putContentType">Content Type</label>
+            <input id="putContentType" type="text" value="application/octet-stream" />
+          </div>
+          <div class="stack">
+            <label for="putTextPayload">Text Payload (optional)</label>
+            <textarea id="putTextPayload" rows="5" placeholder="Type payload text here, or upload a file below."></textarea>
+          </div>
+          <div class="stack">
+            <label for="putFilePayload">Binary File (optional)</label>
+            <input id="putFilePayload" type="file" />
+          </div>
+          <div class="actions">
+            <button id="putBtn">PUT /v2/objects/:id</button>
+          </div>
+        </article>
+
+        <article class="panel reveal" style="--delay: 0.15s">
+          <h2>GET Object</h2>
+          <div class="stack">
+            <label for="getObjectId">Object ID</label>
+            <input id="getObjectId" type="text" placeholder="demo-object-001" />
+          </div>
+          <div class="actions">
+            <button id="getBtn">GET /v2/objects/:id</button>
+            <button id="downloadBtn" class="ghost" disabled>Download Last Result</button>
+          </div>
+          <div class="result">
+            <p class="result-title">Preview</p>
+            <pre id="getPreview">No object fetched yet.</pre>
+          </div>
+        </article>
+
+        <article class="panel reveal" style="--delay: 0.2s">
+          <h2>DELETE Object</h2>
+          <div class="stack">
+            <label for="deleteObjectId">Object ID</label>
+            <input id="deleteObjectId" type="text" placeholder="demo-object-001" />
+          </div>
+          <div class="actions">
+            <button id="deleteBtn" class="danger">DELETE /v2/objects/:id</button>
+          </div>
+        </article>
+
+        <article class="panel reveal" style="--delay: 0.25s">
+          <h2>Admin Quick Actions</h2>
+          <div class="stack">
+            <label for="adminObjectId">Object ID (for object/task query)</label>
+            <input id="adminObjectId" type="text" placeholder="demo-object-001" />
+          </div>
+          <div class="actions wrap">
+            <button id="healthBtn" class="ghost">GET /health</button>
+            <button id="nodesBtn" class="ghost">GET /v2/admin/nodes</button>
+            <button id="tasksBtn" class="ghost">GET /v2/admin/tasks</button>
+            <button id="objectViewBtn" class="ghost">GET /v2/admin/objects/:id</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel reveal" style="--delay: 0.3s">
+        <div class="row between">
+          <h2>Response Log</h2>
+          <button id="clearLogBtn" class="ghost">Clear</button>
+        </div>
+        <pre id="logPanel">Ready.</pre>
+      </section>
+    </main>
+  </body>
+</html>
+

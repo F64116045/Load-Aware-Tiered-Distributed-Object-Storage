@@ -101,6 +101,8 @@ func buildRouter(rt *appRuntime) *gin.Engine {
 	router.Use(gin.Recovery())
 	router.Use(PanicRecoveryMiddleware)
 
+	registerDemoUIRoutes(router)
+
 	registerV2ObjectRoutes(router, v2ObjectRouteDeps{
 		getDynamicNodes: getDynamicNodes,
 		writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {

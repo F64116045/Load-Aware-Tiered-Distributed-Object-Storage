@@ -1,87 +1,42 @@
 package meta
 
 import (
+	"bytes"
 	"context"
-	"crypto/rand"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
-	"time"
 )
 
-type rpcLockEntry struct {
-	lock     LeaderLock
-	lastBeat time.Time
+type leaderLeaseRepo interface {
+	TryAcquireLeaderLease(ctx context.Context, key int64) ([]byte, bool, error)
+	RefreshLeaderLease(ctx context.Context, key int64, owner []byte) (bool, error)
+	ReleaseLeaderLease(ctx context.Context, key int64, owner []byte) error
 }
 
 type RPCServer struct {
 	repo Repository
 	// Optional shared secret checked against X-Meta-Token header.
 	authToken string
-
-	lockMu   sync.Mutex
-	lockPool map[string]rpcLockEntry
-	lockTTL  time.Duration
-	stopCh   chan struct{}
-	stopOnce sync.Once
 }
 
 func NewRPCServer(repo Repository, authToken string) *RPCServer {
-	s := &RPCServer{
+	return &RPCServer{
 		repo:      repo,
 		authToken: authToken,
-		lockPool:  make(map[string]rpcLockEntry),
-		lockTTL:   20 * time.Second,
-		stopCh:    make(chan struct{}),
 	}
-	go s.reapStaleLocks()
-	return s
 }
 
 func (s *RPCServer) Handler() http.Handler {
 	return http.HandlerFunc(s.handleRPC)
 }
 
-func (s *RPCServer) reapStaleLocks() {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			s.lockMu.Lock()
-			now := time.Now()
-			for token, entry := range s.lockPool {
-				if now.Sub(entry.lastBeat) <= s.lockTTL {
-					continue
-				}
-				_ = entry.lock.Release(context.Background())
-				delete(s.lockPool, token)
-			}
-			s.lockMu.Unlock()
-		case <-s.stopCh:
-			return
-		}
-	}
-}
-
 func (s *RPCServer) Close() error {
-	if s == nil {
-		return nil
-	}
-	s.stopOnce.Do(func() {
-		close(s.stopCh)
-	})
-
-	s.lockMu.Lock()
-	defer s.lockMu.Unlock()
-	for token, entry := range s.lockPool {
-		_ = entry.lock.Release(context.Background())
-		delete(s.lockPool, token)
-	}
 	return nil
 }
 
@@ -164,46 +119,57 @@ func (s *RPCServer) dispatch(ctx context.Context, req rpcRequest) (interface{}, 
 		if err := decodeRPCParams(req.Params, &a); err != nil {
 			return nil, err
 		}
-		lock, acquired, err := s.repo.TryAcquireLeaderLock(ctx, a.Key)
+		leaseRepo, ok := s.repo.(leaderLeaseRepo)
+		if !ok {
+			return nil, fmt.Errorf("leader lease backend not supported")
+		}
+		owner, acquired, err := leaseRepo.TryAcquireLeaderLease(ctx, a.Key)
 		if err != nil {
 			return nil, err
 		}
-		if !acquired || lock == nil {
+		if !acquired || len(owner) == 0 {
 			return rpcTryAcquireLeaderLockResult{Acquired: false}, nil
 		}
-		token, err := s.newLockToken()
+		token, err := s.encodeLeaderLockToken(a.Key, owner)
 		if err != nil {
-			_ = lock.Release(context.Background())
 			return nil, err
 		}
-		s.lockMu.Lock()
-		s.lockPool[token] = rpcLockEntry{lock: lock, lastBeat: time.Now()}
-		s.lockMu.Unlock()
 		return rpcTryAcquireLeaderLockResult{Acquired: true, Token: token}, nil
 	case rpcMethodLeaderLockPing:
 		var a rpcLeaderLockTokenArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {
 			return nil, err
 		}
-		entry, ok := s.getLockEntry(a.Token)
+		leaseRepo, ok := s.repo.(leaderLeaseRepo)
 		if !ok {
-			return nil, fmt.Errorf("leader lock token not found")
+			return nil, fmt.Errorf("leader lease backend not supported")
 		}
-		if err := entry.lock.Ping(ctx); err != nil {
+		lockKey, owner, err := s.decodeLeaderLockToken(a.Token)
+		if err != nil {
 			return nil, err
 		}
-		s.touchLockEntry(a.Token)
+		stillOwned, err := leaseRepo.RefreshLeaderLease(ctx, lockKey, owner)
+		if err != nil {
+			return nil, err
+		}
+		if !stillOwned {
+			return nil, fmt.Errorf("leader lock was lost")
+		}
 		return nil, nil
 	case rpcMethodLeaderLockRelease:
 		var a rpcLeaderLockTokenArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {
 			return nil, err
 		}
-		entry, ok := s.popLockEntry(a.Token)
+		leaseRepo, ok := s.repo.(leaderLeaseRepo)
 		if !ok {
-			return nil, nil
+			return nil, fmt.Errorf("leader lease backend not supported")
 		}
-		return nil, entry.lock.Release(ctx)
+		lockKey, owner, err := s.decodeLeaderLockToken(a.Token)
+		if err != nil {
+			return nil, err
+		}
+		return nil, leaseRepo.ReleaseLeaderLease(ctx, lockKey, owner)
 	case rpcMethodUpsertNormalizedMetadata:
 		var a rpcUpsertNormalizedMetadataArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {
@@ -407,39 +373,78 @@ func writeRPCError(w http.ResponseWriter, err error) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (s *RPCServer) newLockToken() (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("generate lock token failed: %w", err)
-	}
-	return hex.EncodeToString(buf), nil
+type rpcLeaderTokenPayload struct {
+	LockKey int64  `json:"lock_key"`
+	Owner   string `json:"owner"`
 }
 
-func (s *RPCServer) getLockEntry(token string) (rpcLockEntry, bool) {
-	s.lockMu.Lock()
-	defer s.lockMu.Unlock()
-	entry, ok := s.lockPool[token]
-	return entry, ok
+func (s *RPCServer) encodeLeaderLockToken(lockKey int64, owner []byte) (string, error) {
+	payload := rpcLeaderTokenPayload{
+		LockKey: lockKey,
+		Owner:   base64.RawURLEncoding.EncodeToString(owner),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal leader token payload failed: %w", err)
+	}
+	payloadB64 := base64.RawURLEncoding.EncodeToString(raw)
+	sig := s.signLeaderPayload(raw)
+	if len(sig) == 0 {
+		return "v1." + payloadB64, nil
+	}
+	return "v1." + payloadB64 + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
-func (s *RPCServer) touchLockEntry(token string) {
-	s.lockMu.Lock()
-	defer s.lockMu.Unlock()
-	entry, ok := s.lockPool[token]
-	if !ok {
-		return
+func (s *RPCServer) decodeLeaderLockToken(token string) (int64, []byte, error) {
+	parts := bytes.Split([]byte(token), []byte("."))
+	if len(parts) < 2 || string(parts[0]) != "v1" {
+		return 0, nil, fmt.Errorf("invalid leader lock token")
 	}
-	entry.lastBeat = time.Now()
-	s.lockPool[token] = entry
+	raw, err := base64.RawURLEncoding.DecodeString(string(parts[1]))
+	if err != nil {
+		return 0, nil, fmt.Errorf("decode leader lock payload failed: %w", err)
+	}
+
+	expectSig := s.signLeaderPayload(raw)
+	switch {
+	case len(expectSig) == 0:
+		if len(parts) != 2 {
+			return 0, nil, fmt.Errorf("unexpected leader lock token format")
+		}
+	case len(parts) != 3:
+		return 0, nil, fmt.Errorf("invalid signed leader lock token")
+	default:
+		gotSig, decErr := base64.RawURLEncoding.DecodeString(string(parts[2]))
+		if decErr != nil {
+			return 0, nil, fmt.Errorf("decode leader lock signature failed: %w", decErr)
+		}
+		if subtle.ConstantTimeCompare(expectSig, gotSig) != 1 {
+			return 0, nil, fmt.Errorf("invalid leader lock token signature")
+		}
+	}
+
+	var payload rpcLeaderTokenPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return 0, nil, fmt.Errorf("decode leader lock payload json failed: %w", err)
+	}
+	if payload.LockKey == 0 || payload.Owner == "" {
+		return 0, nil, fmt.Errorf("leader lock payload is incomplete")
+	}
+	owner, err := base64.RawURLEncoding.DecodeString(payload.Owner)
+	if err != nil {
+		return 0, nil, fmt.Errorf("decode leader lock owner failed: %w", err)
+	}
+	if len(owner) == 0 {
+		return 0, nil, fmt.Errorf("leader lock owner is empty")
+	}
+	return payload.LockKey, owner, nil
 }
 
-func (s *RPCServer) popLockEntry(token string) (rpcLockEntry, bool) {
-	s.lockMu.Lock()
-	defer s.lockMu.Unlock()
-	entry, ok := s.lockPool[token]
-	if !ok {
-		return rpcLockEntry{}, false
+func (s *RPCServer) signLeaderPayload(payload []byte) []byte {
+	if s.authToken == "" {
+		return nil
 	}
-	delete(s.lockPool, token)
-	return entry, true
+	mac := hmac.New(sha256.New, []byte(s.authToken))
+	_, _ = mac.Write(payload)
+	return mac.Sum(nil)
 }
