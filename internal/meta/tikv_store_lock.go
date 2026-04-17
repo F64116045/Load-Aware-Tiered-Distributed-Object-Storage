@@ -10,6 +10,7 @@ import (
 
 type tiKVLeaderLock struct {
 	store    *TiKVStore
+	lockID   int64
 	lockKey  []byte
 	owner    []byte
 	ttl      time.Duration
@@ -20,7 +21,7 @@ func (l *tiKVLeaderLock) Ping(ctx context.Context) error {
 	if l == nil || l.store == nil || l.released {
 		return fmt.Errorf("tikv leader lock is nil")
 	}
-	ok, err := l.store.kv.RefreshLock(ctx, l.lockKey, l.owner, l.ttl)
+	ok, err := l.store.RefreshLeaderLease(ctx, l.lockID, l.owner)
 	if err != nil {
 		return fmt.Errorf("tikv leader lock refresh failed: %w", err)
 	}
@@ -34,7 +35,7 @@ func (l *tiKVLeaderLock) Release(ctx context.Context) error {
 	if l == nil || l.store == nil || l.released {
 		return nil
 	}
-	if err := l.store.kv.ReleaseLock(ctx, l.lockKey, l.owner); err != nil {
+	if err := l.store.ReleaseLeaderLease(ctx, l.lockID, l.owner); err != nil {
 		return fmt.Errorf("tikv leader lock release failed: %w", err)
 	}
 	l.released = true

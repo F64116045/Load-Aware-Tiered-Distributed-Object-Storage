@@ -74,6 +74,27 @@ func (s *TiKVStore) TryAcquireLeaderLock(ctx context.Context, key int64) (Leader
 	if s == nil || s.kv == nil {
 		return nil, false, nil
 	}
+	owner, acquired, err := s.TryAcquireLeaderLease(ctx, key)
+	if err != nil {
+		return nil, false, err
+	}
+	if !acquired {
+		return nil, false, nil
+	}
+	return &tiKVLeaderLock{
+		store:   s,
+		lockID:  key,
+		lockKey: []byte(tiKVLeaderLockKey(key)),
+		owner:   owner,
+		ttl:     s.lockTTL,
+	}, true, nil
+}
+
+// TryAcquireLeaderLease acquires a distributed lease and returns owner token.
+func (s *TiKVStore) TryAcquireLeaderLease(ctx context.Context, key int64) ([]byte, bool, error) {
+	if s == nil || s.kv == nil {
+		return nil, false, nil
+	}
 	lockKey := []byte(tiKVLeaderLockKey(key))
 	owner := tiKVNewLockOwnerToken()
 	acquired, err := s.kv.TryAcquireLockWithTTL(ctx, lockKey, owner, s.lockTTL)
@@ -83,10 +104,23 @@ func (s *TiKVStore) TryAcquireLeaderLock(ctx context.Context, key int64) (Leader
 	if !acquired {
 		return nil, false, nil
 	}
-	return &tiKVLeaderLock{
-		store:   s,
-		lockKey: lockKey,
-		owner:   owner,
-		ttl:     s.lockTTL,
-	}, true, nil
+	return owner, true, nil
+}
+
+// RefreshLeaderLease extends lease TTL when owner still holds lock.
+func (s *TiKVStore) RefreshLeaderLease(ctx context.Context, key int64, owner []byte) (bool, error) {
+	if s == nil || s.kv == nil {
+		return false, nil
+	}
+	lockKey := []byte(tiKVLeaderLockKey(key))
+	return s.kv.RefreshLock(ctx, lockKey, owner, s.lockTTL)
+}
+
+// ReleaseLeaderLease releases lease if owner still matches.
+func (s *TiKVStore) ReleaseLeaderLease(ctx context.Context, key int64, owner []byte) error {
+	if s == nil || s.kv == nil {
+		return nil
+	}
+	lockKey := []byte(tiKVLeaderLockKey(key))
+	return s.kv.ReleaseLock(ctx, lockKey, owner)
 }
