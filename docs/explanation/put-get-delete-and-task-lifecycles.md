@@ -2,6 +2,10 @@
 
 This is the most important behavior document. It connects runtime paths to concrete code.
 
+For a deeper and strictly step-by-step tiering path from metadata insert to worker claim, see:
+
+1. [Tiering Task Path from PUT to Worker Claim](tiering-task-path-from-put-to-worker-claim.md)
+
 ## 1. PUT Lifecycle (`PUT /v2/objects/:id`)
 
 Primary code:

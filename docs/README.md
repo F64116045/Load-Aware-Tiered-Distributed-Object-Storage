@@ -49,9 +49,10 @@ Start here if you want complete ownership from scratch:
 
 1. [System Architecture and Responsibilities](explanation/system-architecture-and-responsibilities.md)
 2. [PUT, GET, DELETE and Task Lifecycles](explanation/put-get-delete-and-task-lifecycles.md)
-3. [Runtime Control Loops and Schedulers](explanation/runtime-control-loops-and-schedulers.md)
-4. [Consistency and Failure Model](explanation/consistency-and-failure-model.md)
-5. [Design Rationale and Tradeoffs](explanation/design-rationale-and-tradeoffs.md)
+3. [Tiering Task Path from PUT to Worker Claim](explanation/tiering-task-path-from-put-to-worker-claim.md)
+4. [Runtime Control Loops and Schedulers](explanation/runtime-control-loops-and-schedulers.md)
+5. [Consistency and Failure Model](explanation/consistency-and-failure-model.md)
+6. [Design Rationale and Tradeoffs](explanation/design-rationale-and-tradeoffs.md)
 
 ### 3.4 Reference
 

@@ -59,7 +59,7 @@ Source:
 Behavior:
 
 1. trigger by periodic and/or threshold/hybrid mode
-2. enqueue tiering candidates via A1/A2/A3 policy
+2. enqueue tiering candidates via A/B/C policy
 3. optionally enqueue repair candidates
 4. optionally enqueue old-version GC candidates
 

@@ -2,10 +2,10 @@
 
 ## A
 
-`A1` / `A2` / `A3`
+`A` / `B` / `C`
 
 1. Tiering candidate selection policy variants.
-2. A1 = age-based, A2 = age+size, A3 = budget-limited.
+2. A = age-based baseline, B = static budget throttling, C = idle-window admission + budget throttling.
 
 ## C
 
