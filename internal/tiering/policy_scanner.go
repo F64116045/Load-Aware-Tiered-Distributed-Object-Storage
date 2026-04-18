@@ -19,10 +19,9 @@ type PolicyScannerConfig struct {
 	TriggerMode   config.TieringTriggerMode
 	PolicyVariant config.TieringPolicyVariant
 
-	AgeThresholdSec    int
-	SizeThresholdBytes int64
-	MaxObjects         int
-	MaxBytes           int64
+	AgeThresholdSec int
+	MaxObjects      int
+	MaxBytes        int64
 
 	HotPressureDiskPct    int
 	HotPressureQueueDepth int
@@ -42,9 +41,9 @@ type PolicyScannerConfig struct {
 }
 
 type PolicyScanStore interface {
-	EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error)
-	EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error)
-	EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
+	EnqueueTieringCandidatesStrategyA(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error)
+	EnqueueTieringCandidatesStrategyB(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
+	EnqueueTieringCandidatesStrategyC(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
 	EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error)
 	EnqueueOldVersionGCCandidates(ctx context.Context, keepLatest int, minAgeSec int, maxTasks int) (int, error)
 	ListNodeHeartbeats(ctx context.Context, limit int) ([]meta.NodeHeartbeatSnapshot, error)
@@ -100,7 +99,7 @@ func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicySca
 		cfg.IdleQueueDepth = 16
 	}
 	if cfg.PolicyVariant == "" {
-		cfg.PolicyVariant = config.TieringPolicyA1
+		cfg.PolicyVariant = config.TieringPolicyA
 	}
 	if cfg.TriggerMode == "" {
 		cfg.TriggerMode = config.TieringTriggerPeriodic
@@ -152,6 +151,13 @@ func (s *PolicyScanner) Run(ctx context.Context) error {
 }
 
 func (s *PolicyScanner) runThresholdPass(ctx context.Context, source string) {
+	if s.cfg.PolicyVariant == config.TieringPolicyC {
+		// Strategy-C controls admission itself through idle window gating.
+		// Threshold loop in this case is only a wake-up tick source.
+		s.runPolicyAndRepair(ctx, source)
+		return
+	}
+
 	idle, reason, err := s.isIdleWindow(ctx)
 	if err != nil {
 		log.Printf("[TieringPolicy] %s idle-window check failed: %v", source, err)
@@ -176,6 +182,18 @@ func (s *PolicyScanner) runThresholdPass(ctx context.Context, source string) {
 }
 
 func (s *PolicyScanner) runPolicyAndRepair(ctx context.Context, source string) {
+	if s.cfg.PolicyVariant == config.TieringPolicyC {
+		ready, gateReason, err := s.strategyCGatePass(ctx)
+		if err != nil {
+			log.Printf("[TieringPolicy] %s strategy=C gate check failed: %v", source, err)
+			return
+		}
+		if !ready {
+			return
+		}
+		source = fmt.Sprintf("%s:%s", source, gateReason)
+	}
+
 	count, err := s.enqueueTieringPolicy(ctx)
 	if err != nil {
 		log.Printf("[TieringPolicy] %s %s scan failed: %v", source, s.cfg.PolicyVariant, err)
@@ -215,29 +233,52 @@ func (s *PolicyScanner) runPolicyAndRepair(ctx context.Context, source string) {
 
 func (s *PolicyScanner) enqueueTieringPolicy(ctx context.Context) (int, error) {
 	switch s.cfg.PolicyVariant {
-	case config.TieringPolicyA2:
-		return s.store.EnqueueTieringCandidatesA2(
-			ctx,
-			s.cfg.AgeThresholdSec,
-			s.cfg.SizeThresholdBytes,
-			s.cfg.MaxObjects,
-		)
-	case config.TieringPolicyA3:
-		return s.store.EnqueueTieringCandidatesA3(
+	case config.TieringPolicyB:
+		return s.store.EnqueueTieringCandidatesStrategyB(
 			ctx,
 			s.cfg.AgeThresholdSec,
 			s.cfg.MaxObjects,
 			s.cfg.MaxBytes,
 		)
-	case config.TieringPolicyA1:
+	case config.TieringPolicyC:
+		return s.store.EnqueueTieringCandidatesStrategyC(
+			ctx,
+			s.cfg.AgeThresholdSec,
+			s.cfg.MaxObjects,
+			s.cfg.MaxBytes,
+		)
+	case config.TieringPolicyA:
 		fallthrough
 	default:
-		return s.store.EnqueueTieringCandidatesA1(
+		return s.store.EnqueueTieringCandidatesStrategyA(
 			ctx,
 			s.cfg.AgeThresholdSec,
 			s.cfg.MaxObjects,
 		)
 	}
+}
+
+func (s *PolicyScanner) strategyCGatePass(ctx context.Context) (bool, string, error) {
+	idle, reason, err := s.isIdleWindow(ctx)
+	if err != nil {
+		return false, "", err
+	}
+	if !idle {
+		s.idleStableCount = 0
+		return false, reason, nil
+	}
+
+	s.idleStableCount++
+	if s.idleStableCount < s.cfg.IdleStableRounds {
+		return false, fmt.Sprintf("%s stable=%d/%d", reason, s.idleStableCount, s.cfg.IdleStableRounds), nil
+	}
+
+	now := time.Now()
+	if !s.lastThresholdTrigger.IsZero() && now.Sub(s.lastThresholdTrigger) < s.cfg.ThresholdCooldown {
+		return false, fmt.Sprintf("cooldown remain=%s", s.cfg.ThresholdCooldown-now.Sub(s.lastThresholdTrigger)), nil
+	}
+	s.lastThresholdTrigger = now
+	return true, fmt.Sprintf("%s stable=%d", reason, s.idleStableCount), nil
 }
 
 func (s *PolicyScanner) isIdleWindow(ctx context.Context) (bool, string, error) {
