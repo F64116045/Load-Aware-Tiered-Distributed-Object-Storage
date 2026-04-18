@@ -13,20 +13,20 @@ import (
 type policyScannerStubStore struct {
 	mu sync.Mutex
 
-	a1Calls int
-	a2Calls int
-	a3Calls int
+	aCalls int
+	bCalls int
+	cCalls int
 
-	lastA1 struct {
+	lastA struct {
 		age int
 		max int
 	}
-	lastA2 struct {
-		age  int
-		size int64
-		max  int
+	lastB struct {
+		age      int
+		max      int
+		maxBytes int64
 	}
-	lastA3 struct {
+	lastC struct {
 		age      int
 		max      int
 		maxBytes int64
@@ -45,32 +45,32 @@ type policyScannerStubStore struct {
 	heartbeats []meta.NodeHeartbeatSnapshot
 }
 
-func (s *policyScannerStubStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
+func (s *policyScannerStubStore) EnqueueTieringCandidatesStrategyA(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.a1Calls++
-	s.lastA1.age = ageThresholdSec
-	s.lastA1.max = maxObjects
+	s.aCalls++
+	s.lastA.age = ageThresholdSec
+	s.lastA.max = maxObjects
 	return 1, nil
 }
 
-func (s *policyScannerStubStore) EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error) {
+func (s *policyScannerStubStore) EnqueueTieringCandidatesStrategyB(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.a2Calls++
-	s.lastA2.age = ageThresholdSec
-	s.lastA2.size = sizeThresholdBytes
-	s.lastA2.max = maxObjects
+	s.bCalls++
+	s.lastB.age = ageThresholdSec
+	s.lastB.max = maxObjects
+	s.lastB.maxBytes = maxBytes
 	return 1, nil
 }
 
-func (s *policyScannerStubStore) EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+func (s *policyScannerStubStore) EnqueueTieringCandidatesStrategyC(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.a3Calls++
-	s.lastA3.age = ageThresholdSec
-	s.lastA3.max = maxObjects
-	s.lastA3.maxBytes = maxBytes
+	s.cCalls++
+	s.lastC.age = ageThresholdSec
+	s.lastC.max = maxObjects
+	s.lastC.maxBytes = maxBytes
 	return 1, nil
 }
 
@@ -103,10 +103,10 @@ func (s *policyScannerStubStore) ListNodeHeartbeats(ctx context.Context, limit i
 func TestPolicyScanner_EnqueuePolicyDispatch(t *testing.T) {
 	t.Parallel()
 
-	t.Run("A1", func(t *testing.T) {
+	t.Run("A", func(t *testing.T) {
 		store := &policyScannerStubStore{}
 		scanner := NewPolicyScanner(store, PolicyScannerConfig{
-			PolicyVariant:           config.TieringPolicyA1,
+			PolicyVariant:           config.TieringPolicyA,
 			AgeThresholdSec:         10,
 			MaxObjects:              20,
 			RepairEnabled:           true,
@@ -119,11 +119,11 @@ func TestPolicyScanner_EnqueuePolicyDispatch(t *testing.T) {
 
 		scanner.runPolicyAndRepair(context.Background(), "test")
 
-		if store.a1Calls != 1 || store.a2Calls != 0 || store.a3Calls != 0 {
-			t.Fatalf("unexpected dispatch counts: a1=%d a2=%d a3=%d", store.a1Calls, store.a2Calls, store.a3Calls)
+		if store.aCalls != 1 || store.bCalls != 0 || store.cCalls != 0 {
+			t.Fatalf("unexpected dispatch counts: a=%d b=%d c=%d", store.aCalls, store.bCalls, store.cCalls)
 		}
-		if store.lastA1.age != 10 || store.lastA1.max != 20 {
-			t.Fatalf("unexpected A1 args: %+v", store.lastA1)
+		if store.lastA.age != 10 || store.lastA.max != 20 {
+			t.Fatalf("unexpected strategy-A args: %+v", store.lastA)
 		}
 		if store.repairCalls != 1 || store.lastRepairMax != 7 {
 			t.Fatalf("unexpected repair calls=%d max=%d", store.repairCalls, store.lastRepairMax)
@@ -136,13 +136,13 @@ func TestPolicyScanner_EnqueuePolicyDispatch(t *testing.T) {
 		}
 	})
 
-	t.Run("A2", func(t *testing.T) {
+	t.Run("B", func(t *testing.T) {
 		store := &policyScannerStubStore{}
 		scanner := NewPolicyScanner(store, PolicyScannerConfig{
-			PolicyVariant:         config.TieringPolicyA2,
+			PolicyVariant:         config.TieringPolicyB,
 			AgeThresholdSec:       11,
-			SizeThresholdBytes:    2048,
 			MaxObjects:            21,
+			MaxBytes:              2048,
 			RepairEnabled:         false,
 			RepairMaxObjects:      99,
 			HotPressureDiskPct:    80,
@@ -151,34 +151,53 @@ func TestPolicyScanner_EnqueuePolicyDispatch(t *testing.T) {
 
 		scanner.runPolicyAndRepair(context.Background(), "test")
 
-		if store.a1Calls != 0 || store.a2Calls != 1 || store.a3Calls != 0 {
-			t.Fatalf("unexpected dispatch counts: a1=%d a2=%d a3=%d", store.a1Calls, store.a2Calls, store.a3Calls)
+		if store.aCalls != 0 || store.bCalls != 1 || store.cCalls != 0 {
+			t.Fatalf("unexpected dispatch counts: a=%d b=%d c=%d", store.aCalls, store.bCalls, store.cCalls)
 		}
-		if store.lastA2.age != 11 || store.lastA2.size != 2048 || store.lastA2.max != 21 {
-			t.Fatalf("unexpected A2 args: %+v", store.lastA2)
+		if store.lastB.age != 11 || store.lastB.max != 21 || store.lastB.maxBytes != 2048 {
+			t.Fatalf("unexpected strategy-B args: %+v", store.lastB)
 		}
 		if store.repairCalls != 0 {
 			t.Fatalf("repair should be disabled, got calls=%d", store.repairCalls)
 		}
 	})
 
-	t.Run("A3", func(t *testing.T) {
+	t.Run("C", func(t *testing.T) {
 		store := &policyScannerStubStore{}
+		store.heartbeats = []meta.NodeHeartbeatSnapshot{
+			{
+				NodeID:        "n1",
+				Status:        "UP",
+				LastSeenAt:    time.Now(),
+				IOQueueDepth:  1,
+				CPULoad:       0.10,
+				MemoryUsedPct: 30,
+				DiskIOWaitPct: 1,
+				TotalBytes:    100,
+				FreeBytes:     90,
+			},
+		}
 		scanner := NewPolicyScanner(store, PolicyScannerConfig{
-			PolicyVariant:   config.TieringPolicyA3,
-			AgeThresholdSec: 12,
-			MaxObjects:      22,
-			MaxBytes:        4096,
-			RepairEnabled:   false,
+			PolicyVariant:     config.TieringPolicyC,
+			AgeThresholdSec:   12,
+			MaxObjects:        22,
+			MaxBytes:          4096,
+			RepairEnabled:     false,
+			IdleStableRounds:  1,
+			IdleCPUPercent:    70,
+			IdleMemoryPercent: 80,
+			IdleIOWaitPercent: 20,
+			IdleQueueDepth:    16,
+			HeartbeatStaleSec: 30,
 		})
 
 		scanner.runPolicyAndRepair(context.Background(), "test")
 
-		if store.a1Calls != 0 || store.a2Calls != 0 || store.a3Calls != 1 {
-			t.Fatalf("unexpected dispatch counts: a1=%d a2=%d a3=%d", store.a1Calls, store.a2Calls, store.a3Calls)
+		if store.aCalls != 0 || store.bCalls != 0 || store.cCalls != 1 {
+			t.Fatalf("unexpected dispatch counts: a=%d b=%d c=%d", store.aCalls, store.bCalls, store.cCalls)
 		}
-		if store.lastA3.age != 12 || store.lastA3.max != 22 || store.lastA3.maxBytes != 4096 {
-			t.Fatalf("unexpected A3 args: %+v", store.lastA3)
+		if store.lastC.age != 12 || store.lastC.max != 22 || store.lastC.maxBytes != 4096 {
+			t.Fatalf("unexpected strategy-C args: %+v", store.lastC)
 		}
 	})
 }
@@ -202,7 +221,7 @@ func TestPolicyScanner_ThresholdCooldown(t *testing.T) {
 		},
 	}
 	scanner := NewPolicyScanner(store, PolicyScannerConfig{
-		PolicyVariant:     config.TieringPolicyA1,
+		PolicyVariant:     config.TieringPolicyA,
 		AgeThresholdSec:   1,
 		MaxObjects:        100,
 		TriggerMode:       config.TieringTriggerThreshold,
@@ -217,19 +236,19 @@ func TestPolicyScanner_ThresholdCooldown(t *testing.T) {
 	})
 
 	scanner.runThresholdPass(context.Background(), "test")
-	if store.a1Calls != 1 {
-		t.Fatalf("first threshold pass should trigger, calls=%d", store.a1Calls)
+	if store.aCalls != 1 {
+		t.Fatalf("first threshold pass should trigger, calls=%d", store.aCalls)
 	}
 
 	scanner.runThresholdPass(context.Background(), "test")
-	if store.a1Calls != 1 {
-		t.Fatalf("second threshold pass should be blocked by cooldown, calls=%d", store.a1Calls)
+	if store.aCalls != 1 {
+		t.Fatalf("second threshold pass should be blocked by cooldown, calls=%d", store.aCalls)
 	}
 
 	scanner.lastThresholdTrigger = time.Now().Add(-3 * time.Second)
 	scanner.runThresholdPass(context.Background(), "test")
-	if store.a1Calls != 2 {
-		t.Fatalf("third threshold pass should trigger after cooldown, calls=%d", store.a1Calls)
+	if store.aCalls != 2 {
+		t.Fatalf("third threshold pass should trigger after cooldown, calls=%d", store.aCalls)
 	}
 }
 
@@ -299,7 +318,7 @@ func TestPolicyScanner_IdleStableRounds_ResetOnBusySample(t *testing.T) {
 	}
 	scanner := NewPolicyScanner(store, PolicyScannerConfig{
 		TriggerMode:       config.TieringTriggerThreshold,
-		PolicyVariant:     config.TieringPolicyA1,
+		PolicyVariant:     config.TieringPolicyA,
 		AgeThresholdSec:   1,
 		MaxObjects:        100,
 		ThresholdCooldown: time.Millisecond,
@@ -313,8 +332,8 @@ func TestPolicyScanner_IdleStableRounds_ResetOnBusySample(t *testing.T) {
 
 	// first idle sample: counter=1, not triggered
 	scanner.runThresholdPass(context.Background(), "test")
-	if store.a1Calls != 0 {
-		t.Fatalf("expected no trigger on first idle sample, got=%d", store.a1Calls)
+	if store.aCalls != 0 {
+		t.Fatalf("expected no trigger on first idle sample, got=%d", store.aCalls)
 	}
 
 	// make one busy sample -> counter reset
@@ -322,8 +341,8 @@ func TestPolicyScanner_IdleStableRounds_ResetOnBusySample(t *testing.T) {
 	store.heartbeats[0].MemoryUsedPct = 95
 	store.mu.Unlock()
 	scanner.runThresholdPass(context.Background(), "test")
-	if store.a1Calls != 0 {
-		t.Fatalf("expected no trigger on busy sample, got=%d", store.a1Calls)
+	if store.aCalls != 0 {
+		t.Fatalf("expected no trigger on busy sample, got=%d", store.aCalls)
 	}
 
 	// back to idle, first idle after reset: counter=1
@@ -331,14 +350,14 @@ func TestPolicyScanner_IdleStableRounds_ResetOnBusySample(t *testing.T) {
 	store.heartbeats[0].MemoryUsedPct = 30
 	store.mu.Unlock()
 	scanner.runThresholdPass(context.Background(), "test")
-	if store.a1Calls != 0 {
-		t.Fatalf("expected no trigger on first idle sample after reset, got=%d", store.a1Calls)
+	if store.aCalls != 0 {
+		t.Fatalf("expected no trigger on first idle sample after reset, got=%d", store.aCalls)
 	}
 
 	// second consecutive idle sample -> trigger
 	scanner.lastThresholdTrigger = time.Time{}
 	scanner.runThresholdPass(context.Background(), "test")
-	if store.a1Calls != 1 {
-		t.Fatalf("expected trigger after 2 consecutive idle samples, got=%d", store.a1Calls)
+	if store.aCalls != 1 {
+		t.Fatalf("expected trigger after 2 consecutive idle samples, got=%d", store.aCalls)
 	}
 }

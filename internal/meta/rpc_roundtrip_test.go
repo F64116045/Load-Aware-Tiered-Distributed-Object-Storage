@@ -52,15 +52,15 @@ func TestRPCClientServerRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert metadata failed: %v", err)
 	}
-	a2Count, err := client.EnqueueTieringCandidatesA2(ctx, 0, 1, 10)
+	a2Count, err := client.EnqueueTieringCandidatesStrategyB(ctx, 0, 10, 1)
 	if err != nil {
-		t.Fatalf("enqueue A2 candidates failed: %v", err)
+		t.Fatalf("enqueue strategy-B candidates failed: %v", err)
 	}
 	if a2Count != 0 {
-		t.Fatalf("expected A2 enqueued=0 before due time, got=%d", a2Count)
+		t.Fatalf("expected strategy-B enqueued=0 before due time, got=%d", a2Count)
 	}
-	if _, err := client.EnqueueTieringCandidatesA3(ctx, 0, 10, 1024); err != nil {
-		t.Fatalf("enqueue A3 candidates failed: %v", err)
+	if _, err := client.EnqueueTieringCandidatesStrategyC(ctx, 0, 10, 1024); err != nil {
+		t.Fatalf("enqueue strategy-C candidates failed: %v", err)
 	}
 
 	taskID := "repl2ec:obj-rpc:303"

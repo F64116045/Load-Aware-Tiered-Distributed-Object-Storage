@@ -68,9 +68,9 @@ Envelope:
 | `mark_tiering_task_done` | `MarkTieringTaskDone` | worker success path |
 | `mark_tiering_task_retry` | `MarkTieringTaskRetry` | worker retry path |
 | `mark_tiering_task_failed` | `MarkTieringTaskFailed` | worker terminal failure |
-| `enqueue_tiering_candidates_a1` | `EnqueueTieringCandidatesA1` | scanner |
-| `enqueue_tiering_candidates_a2` | `EnqueueTieringCandidatesA2` | scanner |
-| `enqueue_tiering_candidates_a3` | `EnqueueTieringCandidatesA3` | scanner |
+| `enqueue_tiering_candidates_strategy_a` | `EnqueueTieringCandidatesStrategyA` | scanner |
+| `enqueue_tiering_candidates_strategy_b` | `EnqueueTieringCandidatesStrategyB` | scanner |
+| `enqueue_tiering_candidates_strategy_c` | `EnqueueTieringCandidatesStrategyC` | scanner |
 | `enqueue_repair_candidates` | `EnqueueRepairCandidates` | scanner |
 | `enqueue_old_version_gc_candidates` | `EnqueueOldVersionGCCandidates` | scanner |
 

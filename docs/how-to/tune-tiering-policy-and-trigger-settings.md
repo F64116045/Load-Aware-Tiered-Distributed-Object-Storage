@@ -1,4 +1,4 @@
-# How-to: Tune Tiering Policies (A1/A2/A3 + Trigger Modes)
+# How-to: Tune Tiering Policies (A/B/C + Trigger Modes)
 
 Use this when you want reproducible policy experiments.
 
@@ -6,9 +6,9 @@ Use this when you want reproducible policy experiments.
 
 Set one:
 
-1. `TIERING_POLICY_VARIANT=A1` age-only baseline
-2. `TIERING_POLICY_VARIANT=A2` age + size threshold
-3. `TIERING_POLICY_VARIANT=A3` budget-limited selection
+1. `TIERING_POLICY_VARIANT=A` time-based baseline (age eligibility only)
+2. `TIERING_POLICY_VARIANT=B` static throttling (age + object/byte budget)
+3. `TIERING_POLICY_VARIANT=C` idle-window admission + static throttling
 
 ## 2. Trigger Mode Selection
 
@@ -21,12 +21,11 @@ Set one:
 ## 3. Core Knobs
 
 1. `AGE_THRESHOLD_SEC`
-2. `SIZE_THRESHOLD_BYTES`
-3. `MAX_OBJECTS_PER_ROUND`
-4. `MAX_BYTES_PER_ROUND`
-5. `TIERING_PERIOD_SEC`
-6. `TIERING_THRESHOLD_CHECK_SEC`
-7. `TIERING_THRESHOLD_COOLDOWN_SEC`
+2. `MAX_OBJECTS_PER_ROUND`
+3. `MAX_BYTES_PER_ROUND`
+4. `TIERING_PERIOD_SEC`
+5. `TIERING_THRESHOLD_CHECK_SEC`
+6. `TIERING_THRESHOLD_COOLDOWN_SEC`
 
 ## 4. Idle Window (Strategy C style)
 
@@ -51,8 +50,7 @@ Interpretation:
 ## 6. Suggested Experiment Template
 
 1. fix object size/concurrency distribution
-2. run A1 periodic baseline
-3. run A2 with size threshold
-4. run A3 with strict budget cap
-5. run threshold/hybrid with idle window enabled
-6. collect latency + queue-depth + completion metrics
+2. run strategy A periodic baseline
+3. run strategy B with strict byte budget
+4. run strategy C with idle window gating
+5. collect latency + queue-depth + completion metrics

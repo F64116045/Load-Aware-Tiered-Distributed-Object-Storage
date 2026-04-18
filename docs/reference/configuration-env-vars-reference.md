@@ -29,13 +29,12 @@ Source of truth:
 | --- | --- | --- |
 | `HOT_REPLICA_COUNT` | `3` | number of target HOT replicas |
 | `HOT_WRITE_QUORUM` | `2` | minimum successful writes before ACK |
-| `TIERING_ENQUEUE_ON_WRITE` | `true` | enqueue tiering/repair tasks during write finalize |
 
 ## 4. Policy Variant and Trigger Mode
 
 | Variable | Default | Allowed |
 | --- | --- | --- |
-| `TIERING_POLICY_VARIANT` | `A1` | `A1`, `A2`, `A3` |
+| `TIERING_POLICY_VARIANT` | `A` | `A`, `B`, `C` |
 | `TIERING_TRIGGER_MODE` | `periodic` | `periodic`, `threshold`, `hybrid` |
 | `TIERING_PERIOD_SEC` | `300` | periodic scan interval |
 | `TIERING_THRESHOLD_CHECK_SEC` | `10` | threshold sampling interval |
@@ -57,10 +56,9 @@ Source of truth:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `AGE_THRESHOLD_SEC` | `3600` | minimum age for A1/A2/A3 |
-| `SIZE_THRESHOLD_BYTES` | `1048576` | A2 size threshold |
+| `AGE_THRESHOLD_SEC` | `3600` | minimum HOT age before migration candidate is eligible |
 | `MAX_OBJECTS_PER_ROUND` | `200` | max selected objects per round |
-| `MAX_BYTES_PER_ROUND` | `1073741824` | A3 bytes cap |
+| `MAX_BYTES_PER_ROUND` | `1073741824` | per-round byte cap used by strategy B/C |
 | `TIERING_DUE_INDEX_MAX_SCAN` | `2000` | due-index scan cap |
 
 ## 7. Worker and Retry Controls

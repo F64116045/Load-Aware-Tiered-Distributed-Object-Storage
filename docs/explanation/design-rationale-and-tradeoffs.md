@@ -10,11 +10,11 @@
 1. storage efficiency can be improved without blocking foreground traffic
 2. migration can be rate-limited and scheduled by policy
 
-## 3. Why A1/A2/A3 Policy Variants
+## 3. Why A/B/C Policy Variants
 
-1. A1 gives simple age-only baseline
-2. A2 adds size threshold for cost-aware migration
-3. A3 adds explicit budget cap for controlled background load
+1. A gives simple age-only baseline
+2. B adds explicit budget cap for controlled background load
+3. C gates migration by stable idle windows to reduce foreground contention
 
 ## 4. Why Threshold/Idle-Window Triggering
 

@@ -4,7 +4,7 @@ Distributed object storage in Go focused on one core question:
 how to move objects from replication to erasure coding with minimal foreground impact under resource constraints.
 
 This repository is not only a storage implementation; it is also an experimental platform for comparing tiering policies:
-- `Strategy A` (time-based baseline): periodic migration with A1/A2/A3 variants
+- `Strategy A` (time-based baseline): periodic migration by age eligibility
 - `Strategy B` (static throttling): fixed migration budgets/concurrency caps
 - `Strategy C` (idle-window gating): migrate only when cluster load remains below safety thresholds for N consecutive checks
 
@@ -114,7 +114,7 @@ flowchart TD
 
   L1["tiering_worker leader loop"] --> L2["TryAcquireLeaderLock + RefreshLock"]
   L2 --> L3["single active scanner"]
-  L3 --> L4["policy pass (A1/A2/A3, threshold/hybrid)"]
+  L3 --> L4["policy pass (A/B/C, threshold/hybrid)"]
   L4 --> L5["enqueue REPL_TO_EC / REPAIR / GC tasks"]
 
   W1["worker processors"] --> W2["ClaimNextTieringTask"]
@@ -155,7 +155,7 @@ Component responsibilities:
 3. API writes object bytes to storage nodes.
 4. API requires quorum (`HOT_WRITE_QUORUM`).
 5. API commits metadata and object version via `meta_service`.
-6. Tiering task is enqueued now or selected by scanner (config-dependent).
+6. Tiering candidates are indexed and injected by scanner loops (foreground write does not enqueue tasks directly).
 
 ### GET Flow
 1. Client requests `GET /v2/objects/:id`.
@@ -178,9 +178,8 @@ Tiering is the main research axis of this project: we keep data-plane logic fixe
 Policy family:
 
 1. `Strategy A` (time-based baseline)
-- `A1`: age-only (`AGE_THRESHOLD_SEC`)
-- `A2`: age + size (`AGE_THRESHOLD_SEC` + `SIZE_THRESHOLD_BYTES`)
-- `A3`: age + budget cap (`MAX_OBJECTS_PER_ROUND`, `MAX_BYTES_PER_ROUND`)
+- age eligibility based on `AGE_THRESHOLD_SEC`
+- periodic scanner enqueues candidates up to `MAX_OBJECTS_PER_ROUND`
 
 2. `Strategy B` (static throttling)
 - fixed execution budgets and worker limits (`MAX_OBJECTS_PER_ROUND`, `MAX_BYTES_PER_ROUND`, `WORKER_MAX_CONCURRENCY`, `WORKER_BW_LIMIT_MBPS`)

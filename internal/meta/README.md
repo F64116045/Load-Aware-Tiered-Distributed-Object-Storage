@@ -26,7 +26,7 @@ This package is the metadata/control-plane backend used by API, tiering worker, 
 - `tikv_store_tasks.go`
   - task queue lifecycle (`Enqueue`, `Claim`, `Done/Retry/Failed`, admin task APIs)
 - `tikv_store_policy.go`
-  - periodic policy scanners (A1/A2/A3)
+  - periodic policy scanners (A/B/C)
   - repair candidate scan/enqueue logic
 - `tikv_store_migration.go`
   - migration state transitions and EC promotion commit
@@ -51,7 +51,7 @@ flowchart TD
     C[tikv_store_cluster.go\nleader state + heartbeats]
     O[tikv_store_objects.go\nobject metadata CRUD]
     T[tikv_store_tasks.go\ntask lifecycle]
-    P[tikv_store_policy.go\nA1/A2/A3 + repair scan]
+    P[tikv_store_policy.go\nA/B/C + repair scan]
     M[tikv_store_migration.go\nmigration/promote/replica]
     KV[kvstore/*\nTiKV client abstraction]
 
@@ -75,7 +75,7 @@ flowchart TD
 ## Data flow (high level)
 
 1. API `PUT` writes payload to storage nodes, then calls `UpsertNormalizedMetadata`.
-2. Policy scanner (`EnqueueTieringCandidatesA1/A2/A3`) creates `REPL_TO_EC` tasks.
+2. Policy scanner (`EnqueueTieringCandidatesStrategyA/B/C`) creates `REPL_TO_EC` tasks.
 3. Worker claims task (`ClaimNextTieringTask`), marks object migrating, writes shards.
 4. Worker commits EC promotion with `PromoteObjectVersionToEC`.
 5. Repair scanner (`EnqueueRepairCandidates`) creates `REPAIR` tasks when replicas/shards are below target.

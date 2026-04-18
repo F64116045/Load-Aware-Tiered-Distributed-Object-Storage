@@ -198,7 +198,6 @@ func main() {
 			TriggerMode:             config.TieringTriggerModeSetting,
 			PolicyVariant:           config.TieringPolicyVariantSetting,
 			AgeThresholdSec:         config.AgeThresholdSec,
-			SizeThresholdBytes:      config.SizeThresholdBytes,
 			MaxObjects:              config.MaxObjectsPerRound,
 			MaxBytes:                config.MaxBytesPerRound,
 			IdleStableRounds:        config.TieringIdleStableRounds,

@@ -9,19 +9,22 @@ import (
 	"hybrid_distributed_store/internal/config"
 )
 
-func (s *TiKVStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
-	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, 0, false)
+// EnqueueTieringCandidatesStrategyA implements the time-based baseline:
+// candidates are selected only by age eligibility and capped by maxObjects.
+func (s *TiKVStore) EnqueueTieringCandidatesStrategyA(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, false)
 }
 
-func (s *TiKVStore) EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error) {
-	if sizeThresholdBytes < 0 {
-		sizeThresholdBytes = 0
-	}
-	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, sizeThresholdBytes, 0, false)
+// EnqueueTieringCandidatesStrategyB implements static throttling:
+// age-eligible candidates are selected under per-round object/byte budgets.
+func (s *TiKVStore) EnqueueTieringCandidatesStrategyB(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, maxBytes, true)
 }
 
-func (s *TiKVStore) EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
-	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, maxBytes, true)
+// EnqueueTieringCandidatesStrategyC shares the same selection/budget logic as B.
+// Strategy-C admission gating (idle window) is enforced by the policy scanner.
+func (s *TiKVStore) EnqueueTieringCandidatesStrategyC(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, maxBytes, true)
 }
 
 type tiKVTieringCandidate struct {
@@ -36,7 +39,6 @@ func (s *TiKVStore) enqueueTieringCandidates(
 	ctx context.Context,
 	ageThresholdSec int,
 	maxObjects int,
-	minSizeBytes int64,
 	maxBytes int64,
 	applyByteBudget bool,
 ) (int, error) {
@@ -91,9 +93,6 @@ func (s *TiKVStore) enqueueTieringCandidates(
 		}
 		if !found || ver.Tier != "HOT" {
 			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
-			continue
-		}
-		if minSizeBytes > 0 && ver.SizeBytes < minSizeBytes {
 			continue
 		}
 		candidates = append(candidates, tiKVTieringCandidate{
