@@ -1,0 +1,19 @@
+services:
+  meta_service_1:
+    environment:
+      AGE_THRESHOLD_SEC: "0"
+
+  meta_service_2:
+    environment:
+      AGE_THRESHOLD_SEC: "0"
+
+  meta_service_3:
+    environment:
+      AGE_THRESHOLD_SEC: "0"
+
+  tiering_worker:
+    environment:
+      AGE_THRESHOLD_SEC: "0"
+      TIERING_POLICY_PERIOD_SEC: "5"
+      TIERING_POLICY_VARIANT: "A"
+      TIERING_TRIGGER_MODE: "periodic"
