@@ -36,7 +36,7 @@ What happens internally:
 1. API selects HOT replica nodes.
 2. API writes bytes to storage node `/store` endpoints.
 3. Metadata is committed with new `hot_version`.
-4. Tiering task is enqueued for background migration.
+4. Due-index is written; scanner enqueues tiering task in a later pass.
 
 ## 4. GET Object
 
@@ -55,7 +55,7 @@ curl -sS 'http://127.0.0.1:8000/v2/admin/tasks?object_id=hello-1&limit=20'
 Checkpoints:
 
 1. object has `current_version`.
-2. task list contains at least one `REPL_TO_EC` task.
+2. task list eventually contains at least one `REPL_TO_EC` task after scanner pass.
 
 ## 6. Wait for Promotion (Optional)
 

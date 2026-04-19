@@ -9,7 +9,7 @@ This is the authoritative endpoint catalog for current runtime behavior.
 Purpose:
 
 1. write object as HOT replication.
-2. commit metadata and enqueue tiering candidate.
+2. commit metadata and due-index records (tiering/repair tasks are scanner-enqueued later).
 
 Request:
 

@@ -18,7 +18,8 @@ Use this when you need to locate behavior in under one minute.
 3. write service call: `WriteReplicationWithMetadata` in `internal/writeservice/writeservice.go`
 4. storage writes: storage-node `/store` calls inside write service
 5. metadata commit: `UpsertNormalizedMetadata` in `internal/meta/tikv_store_objects.go`
-6. task enqueue: `EnqueueTieringTask` in `internal/meta/tikv_store_tasks.go`
+6. due-index write during metadata commit: `upsertTieringDueIndex` in `internal/meta/tikv_store_due_index.go`
+7. scanner-driven task enqueue later: `EnqueueTieringCandidatesStrategy*` in `internal/meta/tikv_store_policy.go`
 
 ## 3. End-to-End GET Map
 

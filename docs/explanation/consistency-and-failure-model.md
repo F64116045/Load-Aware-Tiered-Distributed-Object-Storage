@@ -13,7 +13,7 @@ For replication writes:
 1. storage writes are attempted in parallel
 2. request is ACKed only when write quorum is met
 3. metadata commit happens after quorum success
-4. partial replica success is marked (`is_dirty=true`) and repair task is queued
+4. partial replica success is marked (`is_dirty=true`) and repair is scanner-enqueued from metadata state
 
 ## 3. Version Semantics
 

@@ -33,7 +33,8 @@ sequenceDiagram
   S-->>A: per-node write result (durable fsync before ACK)
   A->>M: upsert normalized metadata
   M->>T: write object head/version/replica records + due index
-  A->>M: enqueue REPL_TO_EC task (and REPAIR if partial)
+  Note over A,M: foreground write path does not enqueue tasks directly
+  Note over M,T: scanner later enqueues REPL_TO_EC / REPAIR from metadata + due-index
   A-->>N: 201 Created
   N-->>C: response
 ```
@@ -43,7 +44,7 @@ sequenceDiagram
 1. API ACK requires write quorum success (`HOT_WRITE_QUORUM`).
 2. Metadata commit occurs after quorum success.
 3. Each write creates a new version id (`hot_version`).
-4. Partial replica success is marked and repair is queued.
+4. Partial replica success is marked (`is_dirty=true`), and repair is scanner-enqueued later.
 
 ### 1.3 Why this shape
 
