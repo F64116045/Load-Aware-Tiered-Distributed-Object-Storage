@@ -63,6 +63,10 @@ Behavior:
 3. optionally enqueue repair candidates
 4. optionally enqueue old-version GC candidates
 
+See detailed strategy and trigger interaction:
+
+1. [Tiering Policy Strategies and Trigger Modes](tiering-policy-strategies-and-trigger-modes.md)
+
 ## 5. Worker Poll Loop
 
 Source:
