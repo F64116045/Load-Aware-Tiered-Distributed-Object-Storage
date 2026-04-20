@@ -16,12 +16,26 @@ Endpoint:
 
 Auth:
 
-1. optional `X-Meta-Token` (when `META_RPC_AUTH_TOKEN` is configured)
+1. `X-Meta-Token` is required when `META_RPC_AUTH_TOKEN` is configured on `meta_service`.
+2. The header is a single transport-level shared secret, reused by all RPC methods.
+3. When `META_RPC_AUTH_TOKEN` is empty, RPC transport auth is disabled.
 
 Envelope:
 
 1. request: `{ "method": "...", "params": { ... } }`
 2. response: `{ "ok": true|false, "result": ..., "error": "..." }`
+
+### 1.1 Token Semantics (`X-Meta-Token` vs Leader Lock Token)
+
+1. `X-Meta-Token`:
+   1. HTTP header checked before RPC dispatch.
+   2. Same value for all callers/components in one environment.
+   3. Used for caller authentication only.
+2. Leader lock token:
+   1. Returned by `try_acquire_leader_lock`.
+   2. Passed in RPC `params.token` for `leader_lock_ping` and `leader_lock_release`.
+   3. Encodes lock ownership payload and is HMAC-signed when auth token is configured.
+3. These two tokens are different layers and are both valid at the same time.
 
 ## 2. Method Groups
 
@@ -59,7 +73,7 @@ Envelope:
 
 | RPC method | Repository call | Main callers |
 | --- | --- | --- |
-| `enqueue_tiering_task` | `EnqueueTieringTask` | write service, processors |
+| `enqueue_tiering_task` | `EnqueueTieringTask` | processors (for follow-up tasks such as GC) |
 | `list_tiering_tasks` | `ListTieringTasks` | admin tasks endpoint |
 | `list_tiering_task_state_counts` | `ListTieringTaskStateCounts` | admin metrics/tasks |
 | `requeue_tiering_task_now` | `RequeueTieringTaskNow` | admin retry-now |

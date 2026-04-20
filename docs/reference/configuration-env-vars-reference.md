@@ -37,8 +37,10 @@ Source of truth:
 | `TIERING_POLICY_VARIANT` | `A` | `A`, `B`, `C` |
 | `TIERING_TRIGGER_MODE` | `periodic` | `periodic`, `threshold`, `hybrid` |
 | `TIERING_PERIOD_SEC` | `300` | periodic scan interval |
+| `TIERING_POLICY_PERIOD_SEC` | fallback to `TIERING_PERIOD_SEC` | worker runtime override for scanner periodic interval |
 | `TIERING_THRESHOLD_CHECK_SEC` | `10` | threshold sampling interval |
 | `TIERING_THRESHOLD_COOLDOWN_SEC` | `60` | cooldown after threshold trigger |
+| `THRESHOLD_COOLDOWN_SEC` | fallback alias | compatibility alias used when `TIERING_THRESHOLD_COOLDOWN_SEC` is unset |
 
 ## 5. Idle Window and Pressure Thresholds
 
@@ -66,6 +68,7 @@ Source of truth:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `TIERING_WORKER_POLL_SEC` | `2` | task polling interval |
+| `TIERING_WORKER_ID` | hostname | worker identity used in leader-state records |
 | `TIERING_WORKER_TASK_TYPE` | empty/ALL | optional task type filter |
 | `TIERING_TASK_MAX_RETRY_COUNT` | `8` | retry cap before FAILED |
 | `WORKER_BW_LIMIT_MBPS` | `0` | optional migration bandwidth cap |
@@ -93,8 +96,17 @@ Source of truth:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `META_SERVICE_PORT` | `8091` | bind port for `meta_service` process |
 | `META_STARTUP_PING_TIMEOUT_SEC` | `5` | single ping timeout |
 | `META_STARTUP_MAX_WAIT_SEC` | `300` | total wait budget |
 | `META_STARTUP_RETRY_INTERVAL_SEC` | `2` | initial retry interval |
 | `META_STARTUP_MAX_RETRY_INTERVAL_SEC` | `15` | retry interval cap |
 | `META_HEALTH_PING_TIMEOUT_SEC` | `5` | readiness probe ping timeout |
+
+## 11. Storage Node Process Variables
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `NODE_PORT` | none (required) | storage node listen port |
+| `NODE_NAME` | none (required) | storage node id and internal address host |
+| `STORAGE_DIR` | none (required) | local blob root directory |
