@@ -19,10 +19,9 @@ Start here if you want complete ownership from scratch:
 
 ### 2.1 Quick Re-entry (I forgot everything)
 
-1. [System Implementation Status and Feature Completeness](reference/implementation-status-and-feature-completeness.md)
-2. [First Day Setup, Smoke, and First Commit](operations/first-day-setup-smoke-and-first-commit.md) sections 1-6
-3. [System Architecture and Responsibilities](explanation/system-architecture-and-responsibilities.md) sections 1-3
-4. [API Endpoints Reference](reference/api-endpoints-reference.md) section 1 and 2
+1. [First Day Setup, Smoke, and First Commit](operations/first-day-setup-smoke-and-first-commit.md) sections 1-6
+2. [System Architecture and Responsibilities](explanation/system-architecture-and-responsibilities.md) sections 1-3
+3. [API Endpoints Reference](reference/api-endpoints-reference.md) section 1 and 2
 
 ### 2.2 Debug Re-entry (I need to debug today)
 
@@ -69,7 +68,6 @@ Start here if you want complete ownership from scratch:
 8. [System Dependencies and Runtime Topology Reference](reference/system-dependencies-and-runtime-topology-reference.md)
 9. [Code Map from Runtime Flow to Files](reference/code-map-from-runtime-flow-to-files.md)
 10. [System Glossary](reference/system-glossary.md)
-11. [System Implementation Status and Feature Completeness](reference/implementation-status-and-feature-completeness.md)
 
 ### 3.5 Operations
 

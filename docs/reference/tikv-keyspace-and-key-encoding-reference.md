@@ -14,6 +14,8 @@ Source:
 | `repl/` | replica placements |
 | `ec/` | EC shard placements |
 | `task/` | task queue records |
+| `task_ready/` | runnable task index (priority/schedule ordered) |
+| `task_wait/` | not-yet-runnable task index (scheduled-time ordered) |
 | `hb/` | node heartbeat records |
 | `leader/` | leader observability record |
 | `leader_lock/` | leader lock lease value |
@@ -27,11 +29,13 @@ Source:
 3. `repl/<object_id>/<version_20d>/<node_id>`
 4. `ec/<object_id>/<version_20d>/<shard_10d>`
 5. `task/<task_id>`
-6. `hb/<node_id>`
-7. `leader/<lock_key>`
-8. `leader_lock/<lock_key>`
-9. `tdue/<eligible_at_unixnano_20d>/<object_id>/<version_20d>`
-10. `tdue_ref/<object_id>/<version_20d>`
+6. `task_ready/<priority_desc_10d>/<scheduled_at_unixnano_20d>/<task_type>/<task_id>`
+7. `task_wait/<scheduled_at_unixnano_20d>/<task_type>/<task_id>`
+8. `hb/<node_id>`
+9. `leader/<lock_key>`
+10. `leader_lock/<lock_key>`
+11. `tdue/<eligible_at_unixnano_20d>/<object_id>/<version_20d>`
+12. `tdue_ref/<object_id>/<version_20d>`
 
 ## 3. Numeric Encoding Rules
 
