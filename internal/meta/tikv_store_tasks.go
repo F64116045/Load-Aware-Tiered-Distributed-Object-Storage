@@ -39,7 +39,7 @@ func (s *TiKVStore) EnqueueTieringTask(ctx context.Context, taskID, objectID str
 		RetryCount:  0,
 		ScheduledAt: scheduledAt,
 	}
-	return s.putJSON(key, rec)
+	return s.writeTaskRecordWithRunnableIndexLocked(nil, rec, time.Now())
 }
 
 func (s *TiKVStore) ListTieringTasks(ctx context.Context, taskState, taskType string, limit int) ([]TieringTask, error) {
@@ -129,12 +129,14 @@ func (s *TiKVStore) RequeueTieringTaskNow(ctx context.Context, taskID string) (b
 	default:
 		return false, nil
 	}
+	now := time.Now()
+	prev := copyTaskRecord(rec)
 	rec.TaskState = "PENDING"
-	rec.ScheduledAt = time.Now()
+	rec.ScheduledAt = now
 	rec.StartedAt = nil
 	rec.FinishedAt = nil
 	rec.LastError = nil
-	if err := s.putJSON(key, rec); err != nil {
+	if err := s.writeTaskRecordWithRunnableIndexLocked(prev, rec, now); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -164,10 +166,11 @@ func (s *TiKVStore) CancelTieringTask(ctx context.Context, taskID, reason string
 		return false, nil
 	}
 	now := time.Now()
+	prev := copyTaskRecord(rec)
 	rec.TaskState = "FAILED"
 	rec.LastError = &reason
 	rec.FinishedAt = &now
-	if err := s.putJSON(key, rec); err != nil {
+	if err := s.writeTaskRecordWithRunnableIndexLocked(prev, rec, now); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -181,14 +184,28 @@ func (s *TiKVStore) ClaimNextTieringTask(ctx context.Context, taskType string) (
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now()
+	if _, err := s.promoteDueWaitingTasksLocked(now, 256); err != nil {
+		return nil, err
+	}
+	if task, claimed, err := s.claimNextTieringTaskFromReadyIndexLocked(now, taskType); err != nil {
+		return nil, err
+	} else if claimed {
+		return task, nil
+	}
+
+	// Backward-compatible fallback for pre-index tasks.
+	return s.claimNextTieringTaskByScanLocked(now, taskType)
+}
+
+func (s *TiKVStore) claimNextTieringTaskByScanLocked(now time.Time, taskType string) (*TieringTask, error) {
 	recs, err := s.listTaskRecords()
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
 	candidates := make([]tiKVTaskRecord, 0, len(recs))
 	for _, r := range recs {
-		if r.TaskState != "PENDING" && r.TaskState != "RETRY_WAIT" {
+		if !isTaskRunnableState(r.TaskState) {
 			continue
 		}
 		if r.ScheduledAt.After(now) {
@@ -209,11 +226,13 @@ func (s *TiKVStore) ClaimNextTieringTask(ctx context.Context, taskType string) (
 		return candidates[i].ScheduledAt.Before(candidates[j].ScheduledAt)
 	})
 	selected := candidates[0]
+	prev := copyTaskRecord(&selected)
 	selected.TaskState = "RUNNING"
-	start := time.Now()
+	start := now
 	selected.StartedAt = &start
 	selected.LastError = nil
-	if err := s.putJSON(tiKVTaskKey(selected.TaskID), &selected); err != nil {
+	selected.FinishedAt = nil
+	if err := s.writeTaskRecordWithRunnableIndexLocked(prev, &selected, now); err != nil {
 		return nil, err
 	}
 	t := toTieringTaskFromTiKV(selected)
@@ -231,10 +250,11 @@ func (s *TiKVStore) MarkTieringTaskDone(ctx context.Context, taskID string) erro
 	if err != nil || !found {
 		return err
 	}
+	prev := copyTaskRecord(rec)
 	now := time.Now()
 	rec.TaskState = "DONE"
 	rec.FinishedAt = &now
-	return s.putJSON(key, rec)
+	return s.writeTaskRecordWithRunnableIndexLocked(prev, rec, now)
 }
 
 func (s *TiKVStore) MarkTieringTaskRetry(ctx context.Context, taskID, lastErr string, nextRunAt time.Time) error {
@@ -251,12 +271,14 @@ func (s *TiKVStore) MarkTieringTaskRetry(ctx context.Context, taskID, lastErr st
 	if err != nil || !found {
 		return err
 	}
+	prev := copyTaskRecord(rec)
+	now := time.Now()
 	rec.TaskState = "RETRY_WAIT"
 	rec.RetryCount++
 	rec.LastError = &lastErr
 	rec.ScheduledAt = nextRunAt
 	rec.FinishedAt = nil
-	return s.putJSON(key, rec)
+	return s.writeTaskRecordWithRunnableIndexLocked(prev, rec, now)
 }
 
 func (s *TiKVStore) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr string) error {
@@ -273,9 +295,10 @@ func (s *TiKVStore) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr s
 	if err != nil || !found {
 		return err
 	}
+	prev := copyTaskRecord(rec)
 	now := time.Now()
 	rec.TaskState = "FAILED"
 	rec.LastError = &lastErr
 	rec.FinishedAt = &now
-	return s.putJSON(key, rec)
+	return s.writeTaskRecordWithRunnableIndexLocked(prev, rec, now)
 }

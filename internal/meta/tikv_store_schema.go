@@ -8,6 +8,8 @@ const (
 	tiKVPrefixReplica = "repl/"
 	tiKVPrefixECShard = "ec/"
 	tiKVPrefixTask    = "task/"
+	tiKVPrefixTaskRdy = "task_ready/"
+	tiKVPrefixTaskWtg = "task_wait/"
 	tiKVPrefixHB      = "hb/"
 	tiKVPrefixLeader  = "leader/"
 	tiKVPrefixLk      = "leader_lock/"
