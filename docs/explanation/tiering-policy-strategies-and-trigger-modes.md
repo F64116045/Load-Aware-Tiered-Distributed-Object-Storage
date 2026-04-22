@@ -198,7 +198,7 @@ Different:
 ## 8. Current Implementation Notes
 
 1. `HOT_PRESSURE_DISK_PCT` and `HOT_PRESSURE_QUEUE_DEPTH` are configuration inputs but not active trigger conditions in current scanner code path.
-2. Worker claim currently iterates task records under `task/*` and then filters/sorts in memory.
+2. Worker claim uses runnable task indexes (`task_ready/*` and `task_wait/*`) and only falls back to broad scan for legacy rows without index entries.
 3. due-index scanning avoids full object-table scan for tiering candidate discovery.
 
 ## 9. Exact Files to Read in Order

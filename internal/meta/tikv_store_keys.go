@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+const (
+	tiKVTaskPriorityBias int64 = 1000000000
+	tiKVTaskPriorityMax  int64 = 2000000000
+)
+
 func tiKVObjectKey(objectID string) string {
 	return tiKVPrefixObject + objectID
 }
@@ -45,6 +50,69 @@ func tiKVECShardVersionPrefix(objectID string, version int64) string {
 
 func tiKVTaskKey(taskID string) string {
 	return tiKVPrefixTask + taskID
+}
+
+func tiKVTaskReadyPrefix() string {
+	return tiKVPrefixTaskRdy
+}
+
+func tiKVTaskWaitPrefix() string {
+	return tiKVPrefixTaskWtg
+}
+
+func tiKVTaskReadyKey(taskType string, priority int, scheduledAt time.Time, taskID string) string {
+	return tiKVPrefixTaskRdy +
+		tiKVEncodePriorityDesc(priority) + "/" +
+		tiKVEncodeInt64(scheduledAt.UnixNano()) + "/" +
+		taskType + "/" +
+		taskID
+}
+
+func tiKVTaskWaitKey(taskType string, scheduledAt time.Time, taskID string) string {
+	return tiKVPrefixTaskWtg +
+		tiKVEncodeInt64(scheduledAt.UnixNano()) + "/" +
+		taskType + "/" +
+		taskID
+}
+
+func tiKVParseTaskReadyKey(key string) (scheduledAtUnixNano int64, taskType string, taskID string, ok bool) {
+	if !strings.HasPrefix(key, tiKVPrefixTaskRdy) {
+		return 0, "", "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(key, tiKVPrefixTaskRdy), "/")
+	if len(parts) < 4 {
+		return 0, "", "", false
+	}
+	scheduledAtUnixNano, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, "", "", false
+	}
+	taskType = parts[2]
+	taskID = strings.Join(parts[3:], "/")
+	if taskID == "" {
+		return 0, "", "", false
+	}
+	return scheduledAtUnixNano, taskType, taskID, true
+}
+
+func tiKVParseTaskWaitKey(key string) (scheduledAtUnixNano int64, taskType string, taskID string, ok bool) {
+	if !strings.HasPrefix(key, tiKVPrefixTaskWtg) {
+		return 0, "", "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(key, tiKVPrefixTaskWtg), "/")
+	if len(parts) < 3 {
+		return 0, "", "", false
+	}
+	scheduledAtUnixNano, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, "", "", false
+	}
+	taskType = parts[1]
+	taskID = strings.Join(parts[2:], "/")
+	if taskID == "" {
+		return 0, "", "", false
+	}
+	return scheduledAtUnixNano, taskType, taskID, true
 }
 
 func tiKVHeartbeatKey(nodeID string) string {
@@ -100,6 +168,18 @@ func tiKVEncodeInt64(v int64) string {
 
 func tiKVEncodeInt(v int) string {
 	return fmt.Sprintf("%010d", v)
+}
+
+func tiKVEncodePriorityDesc(priority int) string {
+	normalized := int64(priority) + tiKVTaskPriorityBias
+	if normalized < 0 {
+		normalized = 0
+	}
+	if normalized > tiKVTaskPriorityMax {
+		normalized = tiKVTaskPriorityMax
+	}
+	inverted := tiKVTaskPriorityMax - normalized
+	return fmt.Sprintf("%010d", inverted)
 }
 
 func tiKVPrefixUpperBound(prefix []byte) []byte {

@@ -150,7 +150,7 @@ func (s *TiKVStore) enqueueTieringCandidates(
 				RetryCount:  0,
 				ScheduledAt: now,
 			}
-			if err := s.putJSON(taskKey, task); err != nil {
+			if err := s.writeTaskRecordWithRunnableIndexLocked(nil, task, now); err != nil {
 				return enqueued, err
 			}
 			enqueued++
@@ -291,7 +291,7 @@ func (s *TiKVStore) enqueueRepairTask(taskID, objectID string, version int64) (b
 			RetryCount:  0,
 			ScheduledAt: now,
 		}
-		if err := s.putJSON(key, task); err != nil {
+		if err := s.writeTaskRecordWithRunnableIndexLocked(nil, task, now); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -299,6 +299,7 @@ func (s *TiKVStore) enqueueRepairTask(taskID, objectID string, version int64) (b
 
 	switch rec.TaskState {
 	case "DONE", "FAILED":
+		prev := copyTaskRecord(rec)
 		rec.TaskState = "PENDING"
 		rec.Priority = 200
 		rec.RetryCount = 0
@@ -306,7 +307,7 @@ func (s *TiKVStore) enqueueRepairTask(taskID, objectID string, version int64) (b
 		rec.ScheduledAt = now
 		rec.StartedAt = nil
 		rec.FinishedAt = nil
-		if err := s.putJSON(key, rec); err != nil {
+		if err := s.writeTaskRecordWithRunnableIndexLocked(prev, rec, now); err != nil {
 			return false, err
 		}
 		return true, nil

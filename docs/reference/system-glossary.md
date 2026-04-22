@@ -55,6 +55,11 @@
 
 1. Distributed lease used to ensure only one worker runs the policy scanner at a time.
 
+`Leader Lock Token`
+
+1. Token returned by lock acquisition RPC and used by lock ping/release RPC calls.
+2. Encodes lock owner payload and can be signature-verified by RPC server.
+
 ## M
 
 `MIGRATING`
@@ -64,6 +69,11 @@
 `MIGRATION_PENDING`
 
 1. Object state indicating migration task has been queued and awaits processing.
+
+`Meta RPC Token` (`X-Meta-Token`)
+
+1. Shared-secret HTTP header for metadata RPC transport authentication.
+2. Applied at transport layer across all RPC methods when enabled.
 
 ## P
 

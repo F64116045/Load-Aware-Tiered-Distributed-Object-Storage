@@ -101,8 +101,10 @@ The repository maps concrete records to admin/runtime structs in `internal/meta/
 
 Current enum-like strings are code-convention based (not centralized in one enum file):
 
-1. object tier: `HOT`, `EC`
-2. strategy: `replication`, `ec`
-3. task types: `REPL_TO_EC`, `REPAIR`, `GC`, `GC_OLD_VERSION`
-4. task states: `PENDING`, `RUNNING`, `DONE`, `RETRY_WAIT`, `FAILED`
-5. node status: `UP`, `DOWN`
+1. object state: `HOT_ACTIVE`, `MIGRATION_PENDING`, `MIGRATING`, `EC_ACTIVE`
+2. object tier: `HOT`, `EC`
+3. strategy: `replication`, `ec`
+4. task types: `REPL_TO_EC`, `REPAIR`, `GC`, `GC_OLD_VERSION`
+5. task states: `PENDING`, `RUNNING`, `DONE`, `RETRY_WAIT`, `FAILED`
+6. node status: `UP`, `DOWN`
+7. leader status: `LEADING`, `STOPPED`, `LOCK_LOST`

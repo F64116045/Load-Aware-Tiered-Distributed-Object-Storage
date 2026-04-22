@@ -190,7 +190,7 @@ Purpose:
 
 | Flow | Head | Version | Replica | EC shard | Task | Due index |
 | --- | --- | --- | --- | --- | --- | --- |
-| PUT replication | create/update | insert | upsert ACTIVE | - | enqueue REPL/REPAIR | upsert |
+| PUT replication | create/update | insert | upsert ACTIVE | - | scanner later enqueues REPL/REPAIR | upsert |
 | REPL->EC promote | update state | set tier=EC | keep (later GC) | insert ACTIVE | enqueue GC | remove/refreshed |
 | REPAIR HOT | - | - | upsert missing ACTIVE | - | update REPAIR | - |
 | REPAIR EC | - | maybe k/m/checksum refresh | - | upsert missing ACTIVE | update REPAIR | - |

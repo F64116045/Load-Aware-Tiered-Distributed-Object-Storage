@@ -128,9 +128,9 @@ Code:
 ## 5. Current Performance Characteristics
 
 1. Due-index scan is prefix-ordered and stops at first future eligibility or scan cap.
-2. Worker claim currently builds candidate set from task records by prefix iteration.
+2. Worker claim first uses runnable indexes (`task_ready/*`, `task_wait/*`) instead of broad `task/*` scan.
 3. Current optimization already avoids object-table full scan for tiering candidate selection.
-4. Next optimization target is a dedicated runnable-task index to avoid broad task scans.
+4. Waiting tasks are promoted from `task_wait/*` to `task_ready/*` when `scheduled_at <= now`.
 
 ## 6. Operational Implications
 

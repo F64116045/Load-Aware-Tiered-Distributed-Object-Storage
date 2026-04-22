@@ -1,6 +1,6 @@
 # Load-Aware Tiered Object Storage Documentation
 
-Last Updated: 2026-04-18
+Last Updated: 2026-04-22
 
 This documentation is organized as a practical entry map to architecture, runtime flow, operations, and code references.
 
