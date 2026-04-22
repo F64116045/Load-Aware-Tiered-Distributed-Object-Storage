@@ -157,7 +157,7 @@ Behavior:
 2. `tdue/*` entries remain for future passes.
 3. idle stable counter resets when busy sample appears.
 4. scanner retries on next trigger tick.
-5. in current implementation, repair enqueue and old-version-gc enqueue are also skipped in that pass because strategy-C gate returns before those stages.
+5. maintenance lane (repair enqueue, old-version-gc enqueue, task-history reaper) still runs in that pass.
 
 ## 6. Trigger Modes: periodic vs threshold vs hybrid
 
@@ -198,8 +198,10 @@ Different:
 ## 8. Current Implementation Notes
 
 1. `HOT_PRESSURE_DISK_PCT` and `HOT_PRESSURE_QUEUE_DEPTH` are configuration inputs but not active trigger conditions in current scanner code path.
-2. Worker claim uses runnable task indexes (`task_ready/*` and `task_wait/*`) and only falls back to broad scan for legacy rows without index entries.
-3. due-index scanning avoids full object-table scan for tiering candidate discovery.
+2. Worker claim uses runnable task indexes (`task_ready/*` and `task_wait/*`) and does not scan broad `task/*` in claim path.
+3. due-index scanning avoids full object-table scan for tiering candidate discovery, and now supports burst rounds with adaptive scan-window growth when backlog remains.
+4. wait-index promote in claim path also supports burst rounds with adaptive promote batch growth when backlog remains.
+5. Scanner also runs terminal task-history cleanup via `task_terminal/*` index when `TIERING_TASK_HISTORY_REAPER_ENABLED=true`.
 
 ## 9. Exact Files to Read in Order
 

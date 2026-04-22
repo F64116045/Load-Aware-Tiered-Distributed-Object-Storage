@@ -62,6 +62,8 @@ Source of truth:
 | `MAX_OBJECTS_PER_ROUND` | `200` | max selected objects per round |
 | `MAX_BYTES_PER_ROUND` | `1073741824` | per-round byte cap used by strategy B/C |
 | `TIERING_DUE_INDEX_MAX_SCAN` | `2000` | due-index scan cap |
+| `TIERING_DUE_INDEX_BURST_ROUNDS` | `4` | max due-index scan bursts per policy pass |
+| `TIERING_DUE_INDEX_ADAPTIVE_MAX_SCAN` | `20000` | adaptive upper bound for due-index scan window |
 
 ## 7. Worker and Retry Controls
 
@@ -71,6 +73,9 @@ Source of truth:
 | `TIERING_WORKER_ID` | hostname | worker identity used in leader-state records |
 | `TIERING_WORKER_TASK_TYPE` | empty/ALL | optional task type filter |
 | `TIERING_TASK_MAX_RETRY_COUNT` | `8` | retry cap before FAILED |
+| `TIERING_TASK_WAIT_PROMOTE_BASE` | `256` | wait-index promote batch size per claim |
+| `TIERING_TASK_WAIT_PROMOTE_BURST_ROUNDS` | `4` | max promote bursts per claim call |
+| `TIERING_TASK_WAIT_PROMOTE_ADAPTIVE_MAX` | `4096` | adaptive upper bound for promote batch size |
 | `WORKER_BW_LIMIT_MBPS` | `0` | optional migration bandwidth cap |
 
 ## 8. Leader Lock / Scanner Controls
@@ -91,6 +96,10 @@ Source of truth:
 | `OLD_VERSION_RETENTION_COUNT` | `2` | keep latest N versions |
 | `OLD_VERSION_RETENTION_AGE_SEC` | `86400` | keep versions newer than this age |
 | `OLD_VERSION_REAPER_MAX_TASKS_PER_ROUND` | `200` | old-version GC enqueue cap |
+| `TIERING_TASK_HISTORY_REAPER_ENABLED` | `true` | enable terminal task history cleanup |
+| `TIERING_TASK_HISTORY_RETENTION_SEC` | `604800` | retain terminal tasks newer than this age |
+| `TIERING_TASK_HISTORY_REAPER_MAX_TASKS_PER_ROUND` | `200` | max terminal tasks purged per reaper run |
+| `TIERING_TASK_HISTORY_REAPER_INTERVAL_SEC` | `900` | minimum interval between task-history reaper runs |
 
 ## 10. meta_service Startup Hardening
 

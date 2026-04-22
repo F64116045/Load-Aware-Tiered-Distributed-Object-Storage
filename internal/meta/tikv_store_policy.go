@@ -35,6 +35,28 @@ type tiKVTieringCandidate struct {
 	UpdatedAt time.Time
 }
 
+func resolveTieringDueScanPlan() (int, int, int) {
+	baseScan := config.TieringDueIndexMaxScan
+	if baseScan <= 0 {
+		baseScan = 2000
+	}
+	burstRounds := config.TieringDueIndexBurstRounds
+	if burstRounds <= 0 {
+		burstRounds = 1
+	}
+	if burstRounds > 16 {
+		burstRounds = 16
+	}
+	adaptiveMax := config.TieringDueIndexAdaptiveMaxScan
+	if adaptiveMax < baseScan {
+		adaptiveMax = baseScan
+	}
+	if adaptiveMax <= 0 {
+		adaptiveMax = baseScan
+	}
+	return baseScan, burstRounds, adaptiveMax
+}
+
 func (s *TiKVStore) enqueueTieringCandidates(
 	ctx context.Context,
 	ageThresholdSec int,
@@ -57,52 +79,81 @@ func (s *TiKVStore) enqueueTieringCandidates(
 
 	now := time.Now()
 	eligibleBefore := now.Add(-time.Duration(ageThresholdSec) * time.Second)
-	dueCandidates, err := s.listTieringDueCandidatesReady(now, config.TieringDueIndexMaxScan)
-	if err != nil {
-		return 0, err
-	}
-	candidates := make([]tiKVTieringCandidate, 0, len(dueCandidates))
-	for _, due := range dueCandidates {
-		rec := due.Record
-		if rec.ObjectID == "" || rec.Version <= 0 {
-			continue
+	baseScan, burstRounds, adaptiveMax := resolveTieringDueScanPlan()
+	scanLimit := baseScan
+	cursor := ""
+	candidates := make([]tiKVTieringCandidate, 0, maxObjects)
+
+	for round := 0; round < burstRounds; round++ {
+		dueCandidates, hasMoreReady, lastKey, err := s.listTieringDueCandidatesReadyWindow(now, scanLimit, cursor)
+		if err != nil {
+			return 0, err
+		}
+		if len(dueCandidates) == 0 {
+			break
 		}
 
-		obj, found, err := s.getObjectRecord(tiKVObjectKey(rec.ObjectID))
-		if err != nil {
-			return 0, err
+		for _, due := range dueCandidates {
+			rec := due.Record
+			if rec.ObjectID == "" || rec.Version <= 0 {
+				continue
+			}
+
+			obj, found, err := s.getObjectRecord(tiKVObjectKey(rec.ObjectID))
+			if err != nil {
+				return 0, err
+			}
+			if !found {
+				_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+				continue
+			}
+			if obj.CurrentVersion != rec.Version {
+				_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+				continue
+			}
+			if obj.State != "HOT_ACTIVE" && obj.State != "MIGRATION_PENDING" {
+				_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+				continue
+			}
+			if obj.UpdatedAt.After(eligibleBefore) {
+				continue
+			}
+			ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(rec.ObjectID, rec.Version))
+			if err != nil {
+				return 0, err
+			}
+			if !found || ver.Tier != "HOT" {
+				_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+				continue
+			}
+			candidates = append(candidates, tiKVTieringCandidate{
+				ObjectID:  rec.ObjectID,
+				Version:   rec.Version,
+				DueKey:    due.Key,
+				SizeBytes: ver.SizeBytes,
+				UpdatedAt: obj.UpdatedAt,
+			})
 		}
-		if !found {
-			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
-			continue
+
+		// For non-byte-budget strategy, no need to scan more once object budget is reached.
+		if !applyByteBudget && len(candidates) >= maxObjects {
+			break
 		}
-		if obj.CurrentVersion != rec.Version {
-			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
-			continue
+		if !hasMoreReady || lastKey == cursor {
+			break
 		}
-		if obj.State != "HOT_ACTIVE" && obj.State != "MIGRATION_PENDING" {
-			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
-			continue
+		cursor = lastKey
+		if scanLimit < adaptiveMax {
+			next := scanLimit * 2
+			if next > adaptiveMax {
+				next = adaptiveMax
+			}
+			if next > scanLimit {
+				scanLimit = next
+			}
 		}
-		if obj.UpdatedAt.After(eligibleBefore) {
-			continue
-		}
-		ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(rec.ObjectID, rec.Version))
-		if err != nil {
-			return 0, err
-		}
-		if !found || ver.Tier != "HOT" {
-			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
-			continue
-		}
-		candidates = append(candidates, tiKVTieringCandidate{
-			ObjectID:  rec.ObjectID,
-			Version:   rec.Version,
-			DueKey:    due.Key,
-			SizeBytes: ver.SizeBytes,
-			UpdatedAt: obj.UpdatedAt,
-		})
 	}
+
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].UpdatedAt.Equal(candidates[j].UpdatedAt) {
 			if candidates[i].SizeBytes != candidates[j].SizeBytes {
