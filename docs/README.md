@@ -1,6 +1,6 @@
 # Load-Aware Tiered Object Storage Documentation
 
-Last Updated: 2026-04-17
+Last Updated: 2026-04-18
 
 This documentation is organized as a practical entry map to architecture, runtime flow, operations, and code references.
 
@@ -11,8 +11,9 @@ Start here if you want complete ownership from scratch:
 1. [From Clone to System Control Learning Path](operations/from-clone-to-system-control-learning-path.md) (main learning track)
 2. [First Day Setup, Smoke, and First Commit](operations/first-day-setup-smoke-and-first-commit.md) (day-1 runnable path)
 3. [PUT, GET, DELETE and Task Lifecycles](explanation/put-get-delete-and-task-lifecycles.md) (all runtime flows)
-4. [Code Map: Runtime Flow to Files](reference/code-map-from-runtime-flow-to-files.md) (where every flow lives in code)
-5. [Incident Triage, Restart, and Recovery Runbook](operations/incident-triage-restart-and-recovery-runbook.md) (production response muscle)
+4. [Tiering Policy Strategies and Trigger Modes](explanation/tiering-policy-strategies-and-trigger-modes.md) (A/B/C, periodic/threshold/hybrid, gate behavior)
+5. [Code Map: Runtime Flow to Files](reference/code-map-from-runtime-flow-to-files.md) (where every flow lives in code)
+6. [Incident Triage, Restart, and Recovery Runbook](operations/incident-triage-restart-and-recovery-runbook.md) (production response muscle)
 
 ## 2. Fast Re-entry Paths
 
@@ -50,9 +51,10 @@ Start here if you want complete ownership from scratch:
 1. [System Architecture and Responsibilities](explanation/system-architecture-and-responsibilities.md)
 2. [PUT, GET, DELETE and Task Lifecycles](explanation/put-get-delete-and-task-lifecycles.md)
 3. [Tiering Task Path from PUT to Worker Claim](explanation/tiering-task-path-from-put-to-worker-claim.md)
-4. [Runtime Control Loops and Schedulers](explanation/runtime-control-loops-and-schedulers.md)
-5. [Consistency and Failure Model](explanation/consistency-and-failure-model.md)
-6. [Design Rationale and Tradeoffs](explanation/design-rationale-and-tradeoffs.md)
+4. [Tiering Policy Strategies and Trigger Modes](explanation/tiering-policy-strategies-and-trigger-modes.md)
+5. [Runtime Control Loops and Schedulers](explanation/runtime-control-loops-and-schedulers.md)
+6. [Consistency and Failure Model](explanation/consistency-and-failure-model.md)
+7. [Design Rationale and Tradeoffs](explanation/design-rationale-and-tradeoffs.md)
 
 ### 3.4 Reference
 

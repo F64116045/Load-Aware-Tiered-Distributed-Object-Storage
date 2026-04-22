@@ -18,6 +18,12 @@ Set one:
 2. `TIERING_TRIGGER_MODE=threshold`
 3. `TIERING_TRIGGER_MODE=hybrid`
 
+Current behavior summary:
+
+1. `periodic` runs scanner every `TIERING_PERIOD_SEC`.
+2. `threshold` runs threshold ticks and uses idle-window checks before policy enqueue.
+3. `hybrid` enables both tick sources.
+
 ## 3. Core Knobs
 
 1. `AGE_THRESHOLD_SEC`
@@ -41,11 +47,16 @@ Interpretation:
 
 1. scanner runs migration only when metrics remain below thresholds for N rounds
 2. one metric breach resets stable counter
+3. if gate is false, no tiering enqueue happens in that pass and due-index stays for later passes
 
 ## 5. Pressure Trigger Inputs
 
 1. `HOT_PRESSURE_DISK_PCT`
 2. `HOT_PRESSURE_QUEUE_DEPTH`
+
+Note:
+
+1. these pressure inputs are currently configuration-level inputs; scanner threshold path today is idle-window based.
 
 ## 6. Suggested Experiment Template
 
@@ -54,3 +65,7 @@ Interpretation:
 3. run strategy B with strict byte budget
 4. run strategy C with idle window gating
 5. collect latency + queue-depth + completion metrics
+
+For full chain and code-level differences:
+
+1. [Tiering Policy Strategies and Trigger Modes](../explanation/tiering-policy-strategies-and-trigger-modes.md)

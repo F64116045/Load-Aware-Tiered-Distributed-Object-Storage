@@ -4,7 +4,7 @@ This document explains one end-to-end path in detail:
 
 1. object `PUT` succeeds
 2. metadata and due-index are written
-3. tiering task is inserted (directly or by scanner)
+3. tiering task is inserted by scanner from due-index
 4. worker claims and executes the task
 
 ## 1. Components in This Path
@@ -17,7 +17,7 @@ This document explains one end-to-end path in detail:
 
 ## 2. Data Structures and Their Roles
 
-1. Object metadata (`obj/*`, `objv/*`, `repl/*`, `ecs/*`)
+1. Object metadata (`obj/*`, `objv/*`, `repl/*`, `ec/*`)
 2. Due-index:
    1. `tdue/*`: main time-ordered candidate records
    2. `tdue_ref/*`: reverse pointers from `(object_id, version)` to `tdue` key
@@ -43,24 +43,9 @@ Code:
 2. `internal/meta/tikv_store_objects.go`
 3. `internal/meta/tikv_store_due_index.go`
 
-### 3.2 Direct enqueue on write (best effort)
+### 3.2 Scanner enqueue path (policy-driven)
 
-1. After metadata commit, write service tries to enqueue `REPL_TO_EC` task.
-2. If partial replica write happened, it also tries enqueue `REPAIR`.
-3. If enqueue fails, API still returns success for foreground write.
-
-This is intentional:
-
-1. foreground write availability is prioritized
-2. scanner + due-index provides later compensation
-
-Code:
-
-1. `internal/writeservice/writeservice.go` (`finalizeMetadata`, `enqueueTieringTaskIfEligible`)
-
-### 3.3 Scanner compensation path (policy-driven enqueue)
-
-If direct enqueue failed or was disabled, scanner can still enqueue:
+Scanner is the task insertion path:
 
 1. scanner runs in policy loop (periodic / threshold / hybrid)
 2. scanner loads due candidates from `tdue/*`
@@ -80,7 +65,7 @@ Code:
 2. `internal/meta/tikv_store_policy.go`
 3. `internal/meta/tikv_store_due_index.go`
 
-### 3.4 Worker claim path
+### 3.3 Worker claim path
 
 Worker loop:
 
@@ -99,7 +84,7 @@ Code:
 1. `internal/meta/tikv_store_tasks.go` (`ClaimNextTieringTask`)
 2. `internal/tiering/worker.go`
 
-### 3.5 REPL_TO_EC execution and state transitions
+### 3.4 REPL_TO_EC execution and state transitions
 
 Processor steps:
 
@@ -149,10 +134,9 @@ Code:
 
 ## 6. Operational Implications
 
-1. If direct enqueue fails but metadata commit succeeds, task can still appear later through scanner.
-2. If scanner is down, HOT objects can accumulate because compensation path is paused.
-3. If worker is down, tasks accumulate in `PENDING/RETRY_WAIT`.
-4. Admin endpoints should be checked together:
+1. If scanner is down, HOT objects can accumulate because enqueue path is paused.
+2. If worker is down, tasks accumulate in `PENDING/RETRY_WAIT`.
+3. Admin endpoints should be checked together:
    1. due-index stats
    2. task state counts
    3. leader status
