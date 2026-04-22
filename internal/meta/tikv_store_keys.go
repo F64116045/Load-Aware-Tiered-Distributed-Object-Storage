@@ -60,6 +60,10 @@ func tiKVTaskWaitPrefix() string {
 	return tiKVPrefixTaskWtg
 }
 
+func tiKVTaskTerminalPrefix() string {
+	return tiKVPrefixTaskTer
+}
+
 func tiKVTaskReadyKey(taskType string, priority int, scheduledAt time.Time, taskID string) string {
 	return tiKVPrefixTaskRdy +
 		tiKVEncodePriorityDesc(priority) + "/" +
@@ -72,6 +76,12 @@ func tiKVTaskWaitKey(taskType string, scheduledAt time.Time, taskID string) stri
 	return tiKVPrefixTaskWtg +
 		tiKVEncodeInt64(scheduledAt.UnixNano()) + "/" +
 		taskType + "/" +
+		taskID
+}
+
+func tiKVTaskTerminalKey(finishedAt time.Time, taskID string) string {
+	return tiKVPrefixTaskTer +
+		tiKVEncodeInt64(finishedAt.UnixNano()) + "/" +
 		taskID
 }
 
@@ -113,6 +123,25 @@ func tiKVParseTaskWaitKey(key string) (scheduledAtUnixNano int64, taskType strin
 		return 0, "", "", false
 	}
 	return scheduledAtUnixNano, taskType, taskID, true
+}
+
+func tiKVParseTaskTerminalKey(key string) (finishedAtUnixNano int64, taskID string, ok bool) {
+	if !strings.HasPrefix(key, tiKVPrefixTaskTer) {
+		return 0, "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(key, tiKVPrefixTaskTer), "/")
+	if len(parts) < 2 {
+		return 0, "", false
+	}
+	finishedAtUnixNano, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, "", false
+	}
+	taskID = strings.Join(parts[1:], "/")
+	if taskID == "" {
+		return 0, "", false
+	}
+	return finishedAtUnixNano, taskID, true
 }
 
 func tiKVHeartbeatKey(nodeID string) string {

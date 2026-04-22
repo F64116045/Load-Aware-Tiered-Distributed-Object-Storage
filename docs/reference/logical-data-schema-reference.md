@@ -123,6 +123,12 @@ Task state enum:
 4. `RETRY_WAIT`
 5. `FAILED`
 
+Task index keys:
+
+1. `task_ready/<priority_desc>/<scheduled_at>/<task_type>/<task_id>` for runnable claim order
+2. `task_wait/<scheduled_at>/<task_type>/<task_id>` for future-scheduled runnable tasks
+3. `task_terminal/<finished_at>/<task_id>` for terminal-history retention and purge
+
 ## 6. Node Heartbeat Entity
 
 Logical role:

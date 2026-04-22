@@ -44,6 +44,7 @@ type Repository interface {
 	MarkTieringTaskDone(ctx context.Context, taskID string) error
 	MarkTieringTaskRetry(ctx context.Context, taskID, lastErr string, nextRunAt time.Time) error
 	MarkTieringTaskFailed(ctx context.Context, taskID, lastErr string) error
+	PurgeTerminalTieringTasks(ctx context.Context, olderThan time.Time, limit int) (int, error)
 
 	EnqueueTieringCandidatesStrategyA(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error)
 	EnqueueTieringCandidatesStrategyB(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)

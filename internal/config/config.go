@@ -113,6 +113,24 @@ var (
 	OldVersionRetentionAgeSec = getEnvInt("OLD_VERSION_RETENTION_AGE_SEC", 86400)
 	// OldVersionReaperMaxTasksPerRound caps old-version GC task enqueue count per round.
 	OldVersionReaperMaxTasksPerRound = getEnvInt("OLD_VERSION_REAPER_MAX_TASKS_PER_ROUND", 200)
+	// TieringDueIndexBurstRounds controls max due-index scan bursts per policy pass.
+	TieringDueIndexBurstRounds = getEnvInt("TIERING_DUE_INDEX_BURST_ROUNDS", 4)
+	// TieringDueIndexAdaptiveMaxScan caps adaptive due-index scan window per burst.
+	TieringDueIndexAdaptiveMaxScan = getEnvInt("TIERING_DUE_INDEX_ADAPTIVE_MAX_SCAN", 20000)
+	// TieringTaskWaitPromoteBase controls wait->ready promotion batch size per claim.
+	TieringTaskWaitPromoteBase = getEnvInt("TIERING_TASK_WAIT_PROMOTE_BASE", 256)
+	// TieringTaskWaitPromoteBurstRounds controls max wait->ready promotion bursts per claim.
+	TieringTaskWaitPromoteBurstRounds = getEnvInt("TIERING_TASK_WAIT_PROMOTE_BURST_ROUNDS", 4)
+	// TieringTaskWaitPromoteAdaptiveMax caps adaptive wait->ready promotion batch size.
+	TieringTaskWaitPromoteAdaptiveMax = getEnvInt("TIERING_TASK_WAIT_PROMOTE_ADAPTIVE_MAX", 4096)
+	// TieringTaskHistoryReaperEnabled controls periodic terminal-task history cleanup.
+	TieringTaskHistoryReaperEnabled = getEnvBool("TIERING_TASK_HISTORY_REAPER_ENABLED", true)
+	// TieringTaskHistoryRetentionSec keeps terminal tasks newer than this age.
+	TieringTaskHistoryRetentionSec = getEnvInt("TIERING_TASK_HISTORY_RETENTION_SEC", 604800)
+	// TieringTaskHistoryReaperMaxTasksPerRound caps terminal-task purge count per run.
+	TieringTaskHistoryReaperMaxTasksPerRound = getEnvInt("TIERING_TASK_HISTORY_REAPER_MAX_TASKS_PER_ROUND", 200)
+	// TieringTaskHistoryReaperIntervalSec controls scanner interval between purge runs.
+	TieringTaskHistoryReaperIntervalSec = getEnvInt("TIERING_TASK_HISTORY_REAPER_INTERVAL_SEC", 900)
 	// TieringDueIndexMaxScan caps due-index candidates scanned per policy pass.
 	TieringDueIndexMaxScan = getEnvInt("TIERING_DUE_INDEX_MAX_SCAN", 2000)
 	// TieringTaskMaxRetryCount caps automatic retries before task becomes FAILED.

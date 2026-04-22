@@ -16,6 +16,15 @@ func isTaskRunnableState(state string) bool {
 	}
 }
 
+func isTaskTerminalState(state string) bool {
+	switch state {
+	case "DONE", "FAILED":
+		return true
+	default:
+		return false
+	}
+}
+
 func copyTaskRecord(rec *tiKVTaskRecord) *tiKVTaskRecord {
 	if rec == nil {
 		return nil
@@ -38,6 +47,13 @@ func (s *TiKVStore) taskWaitIndexKey(rec *tiKVTaskRecord) string {
 	return tiKVTaskWaitKey(rec.TaskType, rec.ScheduledAt, rec.TaskID)
 }
 
+func (s *TiKVStore) taskTerminalIndexKey(rec *tiKVTaskRecord) string {
+	if rec == nil || rec.FinishedAt == nil {
+		return ""
+	}
+	return tiKVTaskTerminalKey(*rec.FinishedAt, rec.TaskID)
+}
+
 func (s *TiKVStore) deleteTaskRunnableIndexInBatch(b *kvstore.Batch, rec *tiKVTaskRecord) error {
 	if b == nil || rec == nil || rec.TaskID == "" {
 		return nil
@@ -53,6 +69,20 @@ func (s *TiKVStore) deleteTaskRunnableIndexInBatch(b *kvstore.Batch, rec *tiKVTa
 		if err := b.Delete([]byte(waitKey), kvstore.NoSync); err != nil {
 			return fmt.Errorf("delete task-wait index failed: %w", err)
 		}
+	}
+	return nil
+}
+
+func (s *TiKVStore) deleteTaskTerminalIndexInBatch(b *kvstore.Batch, rec *tiKVTaskRecord) error {
+	if b == nil || rec == nil || rec.TaskID == "" {
+		return nil
+	}
+	terminalKey := s.taskTerminalIndexKey(rec)
+	if terminalKey == "" {
+		return nil
+	}
+	if err := b.Delete([]byte(terminalKey), kvstore.NoSync); err != nil {
+		return fmt.Errorf("delete task-terminal index failed: %w", err)
 	}
 	return nil
 }
@@ -80,6 +110,23 @@ func (s *TiKVStore) putTaskRunnableIndexInBatch(b *kvstore.Batch, rec *tiKVTaskR
 	return nil
 }
 
+func (s *TiKVStore) putTaskTerminalIndexInBatch(b *kvstore.Batch, rec *tiKVTaskRecord) error {
+	if b == nil || rec == nil || rec.TaskID == "" {
+		return nil
+	}
+	if !isTaskTerminalState(rec.TaskState) || rec.FinishedAt == nil {
+		return nil
+	}
+	indexKey := s.taskTerminalIndexKey(rec)
+	if indexKey == "" {
+		return nil
+	}
+	if err := b.Set([]byte(indexKey), []byte{1}, kvstore.NoSync); err != nil {
+		return fmt.Errorf("put task-terminal index failed: %w", err)
+	}
+	return nil
+}
+
 func (s *TiKVStore) rewriteTaskRunnableIndexLocked(rec *tiKVTaskRecord, now time.Time) error {
 	if s == nil || s.kv == nil || rec == nil {
 		return nil
@@ -90,7 +137,13 @@ func (s *TiKVStore) rewriteTaskRunnableIndexLocked(rec *tiKVTaskRecord, now time
 	if err := s.deleteTaskRunnableIndexInBatch(b, rec); err != nil {
 		return err
 	}
+	if err := s.deleteTaskTerminalIndexInBatch(b, rec); err != nil {
+		return err
+	}
 	if err := s.putTaskRunnableIndexInBatch(b, rec, now); err != nil {
+		return err
+	}
+	if err := s.putTaskTerminalIndexInBatch(b, rec); err != nil {
 		return err
 	}
 	if err := b.Commit(kvstore.Sync); err != nil {
@@ -114,10 +167,16 @@ func (s *TiKVStore) writeTaskRecordWithRunnableIndexLocked(prev *tiKVTaskRecord,
 	if err := s.deleteTaskRunnableIndexInBatch(b, prev); err != nil {
 		return err
 	}
+	if err := s.deleteTaskTerminalIndexInBatch(b, prev); err != nil {
+		return err
+	}
 	if err := s.batchPutJSON(b, tiKVTaskKey(next.TaskID), next); err != nil {
 		return err
 	}
 	if err := s.putTaskRunnableIndexInBatch(b, next, now); err != nil {
+		return err
+	}
+	if err := s.putTaskTerminalIndexInBatch(b, next); err != nil {
 		return err
 	}
 	if err := b.Commit(kvstore.Sync); err != nil {

@@ -82,6 +82,7 @@ Envelope:
 | `mark_tiering_task_done` | `MarkTieringTaskDone` | worker success path |
 | `mark_tiering_task_retry` | `MarkTieringTaskRetry` | worker retry path |
 | `mark_tiering_task_failed` | `MarkTieringTaskFailed` | worker terminal failure |
+| `purge_terminal_tiering_tasks` | `PurgeTerminalTieringTasks` | scanner task-history reaper |
 | `enqueue_tiering_candidates_strategy_a` | `EnqueueTieringCandidatesStrategyA` | scanner |
 | `enqueue_tiering_candidates_strategy_b` | `EnqueueTieringCandidatesStrategyB` | scanner |
 | `enqueue_tiering_candidates_strategy_c` | `EnqueueTieringCandidatesStrategyC` | scanner |
