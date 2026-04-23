@@ -29,9 +29,10 @@ const (
 	rpcMethodMarkTieringTaskDone         = "mark_tiering_task_done"
 	rpcMethodMarkTieringTaskRetry        = "mark_tiering_task_retry"
 	rpcMethodMarkTieringTaskFailed       = "mark_tiering_task_failed"
-	rpcMethodEnqueueTieringCandidatesA1  = "enqueue_tiering_candidates_a1"
-	rpcMethodEnqueueTieringCandidatesA2  = "enqueue_tiering_candidates_a2"
-	rpcMethodEnqueueTieringCandidatesA3  = "enqueue_tiering_candidates_a3"
+	rpcMethodPurgeTerminalTieringTasks   = "purge_terminal_tiering_tasks"
+	rpcMethodEnqueueTieringCandidatesA   = "enqueue_tiering_candidates_strategy_a"
+	rpcMethodEnqueueTieringCandidatesB   = "enqueue_tiering_candidates_strategy_b"
+	rpcMethodEnqueueTieringCandidatesC   = "enqueue_tiering_candidates_strategy_c"
 	rpcMethodEnqueueRepairCandidates     = "enqueue_repair_candidates"
 	rpcMethodEnqueueOldVersionGCCands    = "enqueue_old_version_gc_candidates"
 	rpcMethodGetObjectVersionSnapshot    = "get_object_version_snapshot"
@@ -150,18 +151,23 @@ type rpcMarkTieringTaskFailedArgs struct {
 	LastError string `json:"last_error"`
 }
 
-type rpcEnqueueTieringCandidatesA1Args struct {
+type rpcPurgeTerminalTieringTasksArgs struct {
+	OlderThan time.Time `json:"older_than"`
+	Limit     int       `json:"limit"`
+}
+
+type rpcEnqueueTieringCandidatesAArgs struct {
 	AgeThresholdSec int `json:"age_threshold_sec"`
 	MaxObjects      int `json:"max_objects"`
 }
 
-type rpcEnqueueTieringCandidatesA2Args struct {
-	AgeThresholdSec    int   `json:"age_threshold_sec"`
-	SizeThresholdBytes int64 `json:"size_threshold_bytes"`
-	MaxObjects         int   `json:"max_objects"`
+type rpcEnqueueTieringCandidatesBArgs struct {
+	AgeThresholdSec int   `json:"age_threshold_sec"`
+	MaxObjects      int   `json:"max_objects"`
+	MaxBytes        int64 `json:"max_bytes"`
 }
 
-type rpcEnqueueTieringCandidatesA3Args struct {
+type rpcEnqueueTieringCandidatesCArgs struct {
 	AgeThresholdSec int   `json:"age_threshold_sec"`
 	MaxObjects      int   `json:"max_objects"`
 	MaxBytes        int64 `json:"max_bytes"`

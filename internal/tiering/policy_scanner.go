@@ -19,10 +19,9 @@ type PolicyScannerConfig struct {
 	TriggerMode   config.TieringTriggerMode
 	PolicyVariant config.TieringPolicyVariant
 
-	AgeThresholdSec    int
-	SizeThresholdBytes int64
-	MaxObjects         int
-	MaxBytes           int64
+	AgeThresholdSec int
+	MaxObjects      int
+	MaxBytes        int64
 
 	HotPressureDiskPct    int
 	HotPressureQueueDepth int
@@ -39,14 +38,20 @@ type PolicyScannerConfig struct {
 	OldVersionRetentionN    int
 	OldVersionRetentionAge  int
 	OldVersionMaxTasks      int
+
+	TaskHistoryReaperEnabled  bool
+	TaskHistoryRetentionSec   int
+	TaskHistoryReaperMaxTasks int
+	TaskHistoryReaperInterval time.Duration
 }
 
 type PolicyScanStore interface {
-	EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error)
-	EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error)
-	EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
+	EnqueueTieringCandidatesStrategyA(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error)
+	EnqueueTieringCandidatesStrategyB(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
+	EnqueueTieringCandidatesStrategyC(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
 	EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error)
 	EnqueueOldVersionGCCandidates(ctx context.Context, keepLatest int, minAgeSec int, maxTasks int) (int, error)
+	PurgeTerminalTieringTasks(ctx context.Context, olderThan time.Time, limit int) (int, error)
 	ListNodeHeartbeats(ctx context.Context, limit int) ([]meta.NodeHeartbeatSnapshot, error)
 }
 
@@ -56,6 +61,7 @@ type PolicyScanner struct {
 	cfg   PolicyScannerConfig
 
 	lastThresholdTrigger time.Time
+	lastHistoryReaperRun time.Time
 	idleStableCount      int
 }
 
@@ -84,6 +90,15 @@ func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicySca
 	if cfg.OldVersionMaxTasks <= 0 {
 		cfg.OldVersionMaxTasks = 200
 	}
+	if cfg.TaskHistoryRetentionSec <= 0 {
+		cfg.TaskHistoryRetentionSec = 7 * 24 * 3600
+	}
+	if cfg.TaskHistoryReaperMaxTasks <= 0 {
+		cfg.TaskHistoryReaperMaxTasks = 200
+	}
+	if cfg.TaskHistoryReaperInterval <= 0 {
+		cfg.TaskHistoryReaperInterval = 15 * time.Minute
+	}
 	if cfg.HeartbeatStaleSec <= 0 {
 		cfg.HeartbeatStaleSec = 15
 	}
@@ -100,7 +115,7 @@ func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicySca
 		cfg.IdleQueueDepth = 16
 	}
 	if cfg.PolicyVariant == "" {
-		cfg.PolicyVariant = config.TieringPolicyA1
+		cfg.PolicyVariant = config.TieringPolicyA
 	}
 	if cfg.TriggerMode == "" {
 		cfg.TriggerMode = config.TieringTriggerPeriodic
@@ -152,6 +167,13 @@ func (s *PolicyScanner) Run(ctx context.Context) error {
 }
 
 func (s *PolicyScanner) runThresholdPass(ctx context.Context, source string) {
+	if s.cfg.PolicyVariant == config.TieringPolicyC {
+		// Strategy-C controls admission itself through idle window gating.
+		// Threshold loop in this case is only a wake-up tick source.
+		s.runPolicyAndRepair(ctx, source)
+		return
+	}
+
 	idle, reason, err := s.isIdleWindow(ctx)
 	if err != nil {
 		log.Printf("[TieringPolicy] %s idle-window check failed: %v", source, err)
@@ -176,68 +198,129 @@ func (s *PolicyScanner) runThresholdPass(ctx context.Context, source string) {
 }
 
 func (s *PolicyScanner) runPolicyAndRepair(ctx context.Context, source string) {
-	count, err := s.enqueueTieringPolicy(ctx)
-	if err != nil {
-		log.Printf("[TieringPolicy] %s %s scan failed: %v", source, s.cfg.PolicyVariant, err)
-	} else if count > 0 {
-		log.Printf("[TieringPolicy] %s %s enqueued %d tasks", source, s.cfg.PolicyVariant, count)
+	tieringAllowed := true
+	tieringSource := source
+	if s.cfg.PolicyVariant == config.TieringPolicyC {
+		ready, gateReason, err := s.strategyCGatePass(ctx)
+		if err != nil {
+			log.Printf("[TieringPolicy] %s strategy=C gate check failed: %v", source, err)
+			tieringAllowed = false
+		} else if !ready {
+			tieringAllowed = false
+		} else {
+			tieringSource = fmt.Sprintf("%s:%s", source, gateReason)
+		}
 	}
 
-	if !s.cfg.RepairEnabled {
-		return
-	}
-	repairCount, repairErr := s.store.EnqueueRepairCandidates(ctx, s.cfg.RepairMaxObjects)
-	if repairErr != nil {
-		log.Printf("[TieringPolicy] %s repair scan failed: %v", source, repairErr)
-		return
-	}
-	if repairCount > 0 {
-		log.Printf("[TieringPolicy] %s repair enqueued %d tasks", source, repairCount)
+	if tieringAllowed {
+		count, err := s.enqueueTieringPolicy(ctx)
+		if err != nil {
+			log.Printf("[TieringPolicy] %s %s scan failed: %v", tieringSource, s.cfg.PolicyVariant, err)
+		} else if count > 0 {
+			log.Printf("[TieringPolicy] %s %s enqueued %d tasks", tieringSource, s.cfg.PolicyVariant, count)
+		}
 	}
 
-	if !s.cfg.OldVersionReaperEnabled {
-		return
+	if s.cfg.RepairEnabled {
+		repairCount, repairErr := s.store.EnqueueRepairCandidates(ctx, s.cfg.RepairMaxObjects)
+		if repairErr != nil {
+			log.Printf("[TieringPolicy] %s repair scan failed: %v", source, repairErr)
+		} else if repairCount > 0 {
+			log.Printf("[TieringPolicy] %s repair enqueued %d tasks", source, repairCount)
+		}
 	}
-	gcCount, gcErr := s.store.EnqueueOldVersionGCCandidates(
-		ctx,
-		s.cfg.OldVersionRetentionN,
-		s.cfg.OldVersionRetentionAge,
-		s.cfg.OldVersionMaxTasks,
-	)
-	if gcErr != nil {
-		log.Printf("[TieringPolicy] %s old-version-gc scan failed: %v", source, gcErr)
-		return
+
+	if s.cfg.OldVersionReaperEnabled {
+		gcCount, gcErr := s.store.EnqueueOldVersionGCCandidates(
+			ctx,
+			s.cfg.OldVersionRetentionN,
+			s.cfg.OldVersionRetentionAge,
+			s.cfg.OldVersionMaxTasks,
+		)
+		if gcErr != nil {
+			log.Printf("[TieringPolicy] %s old-version-gc scan failed: %v", source, gcErr)
+		} else if gcCount > 0 {
+			log.Printf("[TieringPolicy] %s old-version-gc enqueued %d tasks", source, gcCount)
+		}
 	}
-	if gcCount > 0 {
-		log.Printf("[TieringPolicy] %s old-version-gc enqueued %d tasks", source, gcCount)
-	}
+
+	s.runTaskHistoryReaper(ctx, source)
 }
 
 func (s *PolicyScanner) enqueueTieringPolicy(ctx context.Context) (int, error) {
 	switch s.cfg.PolicyVariant {
-	case config.TieringPolicyA2:
-		return s.store.EnqueueTieringCandidatesA2(
-			ctx,
-			s.cfg.AgeThresholdSec,
-			s.cfg.SizeThresholdBytes,
-			s.cfg.MaxObjects,
-		)
-	case config.TieringPolicyA3:
-		return s.store.EnqueueTieringCandidatesA3(
+	case config.TieringPolicyB:
+		return s.store.EnqueueTieringCandidatesStrategyB(
 			ctx,
 			s.cfg.AgeThresholdSec,
 			s.cfg.MaxObjects,
 			s.cfg.MaxBytes,
 		)
-	case config.TieringPolicyA1:
+	case config.TieringPolicyC:
+		return s.store.EnqueueTieringCandidatesStrategyC(
+			ctx,
+			s.cfg.AgeThresholdSec,
+			s.cfg.MaxObjects,
+			s.cfg.MaxBytes,
+		)
+	case config.TieringPolicyA:
 		fallthrough
 	default:
-		return s.store.EnqueueTieringCandidatesA1(
+		return s.store.EnqueueTieringCandidatesStrategyA(
 			ctx,
 			s.cfg.AgeThresholdSec,
 			s.cfg.MaxObjects,
 		)
 	}
+}
+
+func (s *PolicyScanner) runTaskHistoryReaper(ctx context.Context, source string) {
+	if !s.cfg.TaskHistoryReaperEnabled || s.cfg.TaskHistoryRetentionSec <= 0 || s.cfg.TaskHistoryReaperMaxTasks <= 0 {
+		return
+	}
+	now := time.Now()
+	if !s.lastHistoryReaperRun.IsZero() && now.Sub(s.lastHistoryReaperRun) < s.cfg.TaskHistoryReaperInterval {
+		return
+	}
+	s.lastHistoryReaperRun = now
+
+	olderThan := now.Add(-time.Duration(s.cfg.TaskHistoryRetentionSec) * time.Second)
+	purged, err := s.store.PurgeTerminalTieringTasks(ctx, olderThan, s.cfg.TaskHistoryReaperMaxTasks)
+	if err != nil {
+		log.Printf("[TieringPolicy] %s task-history reaper failed: %v", source, err)
+		return
+	}
+	if purged > 0 {
+		log.Printf(
+			"[TieringPolicy] %s task-history reaper purged %d terminal tasks older_than=%s",
+			source,
+			purged,
+			olderThan.UTC().Format(time.RFC3339),
+		)
+	}
+}
+
+func (s *PolicyScanner) strategyCGatePass(ctx context.Context) (bool, string, error) {
+	idle, reason, err := s.isIdleWindow(ctx)
+	if err != nil {
+		return false, "", err
+	}
+	if !idle {
+		s.idleStableCount = 0
+		return false, reason, nil
+	}
+
+	s.idleStableCount++
+	if s.idleStableCount < s.cfg.IdleStableRounds {
+		return false, fmt.Sprintf("%s stable=%d/%d", reason, s.idleStableCount, s.cfg.IdleStableRounds), nil
+	}
+
+	now := time.Now()
+	if !s.lastThresholdTrigger.IsZero() && now.Sub(s.lastThresholdTrigger) < s.cfg.ThresholdCooldown {
+		return false, fmt.Sprintf("cooldown remain=%s", s.cfg.ThresholdCooldown-now.Sub(s.lastThresholdTrigger)), nil
+	}
+	s.lastThresholdTrigger = now
+	return true, fmt.Sprintf("%s stable=%d", reason, s.idleStableCount), nil
 }
 
 func (s *PolicyScanner) isIdleWindow(ctx context.Context) (bool, string, error) {

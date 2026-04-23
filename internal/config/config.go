@@ -36,9 +36,9 @@ const (
 type TieringPolicyVariant string
 
 const (
-	TieringPolicyA1 TieringPolicyVariant = "A1"
-	TieringPolicyA2 TieringPolicyVariant = "A2"
-	TieringPolicyA3 TieringPolicyVariant = "A3"
+	TieringPolicyA TieringPolicyVariant = "A"
+	TieringPolicyB TieringPolicyVariant = "B"
+	TieringPolicyC TieringPolicyVariant = "C"
 )
 
 type TieringTriggerMode string
@@ -71,20 +71,16 @@ var (
 	HotReplicaCount = getEnvInt("HOT_REPLICA_COUNT", 3)
 	// HotWriteQuorum is the minimum number of successful replica writes for ACK.
 	HotWriteQuorum = getEnvInt("HOT_WRITE_QUORUM", 2)
-	// TieringEnqueueOnWrite controls whether write path directly enqueues REPL_TO_EC tasks.
-	TieringEnqueueOnWrite = getEnvBool("TIERING_ENQUEUE_ON_WRITE", true)
-	// AgeThresholdSec defines when HOT objects become eligible for tiering (A1 baseline).
+	// AgeThresholdSec defines when HOT objects become eligible for tiering.
 	AgeThresholdSec = getEnvInt("AGE_THRESHOLD_SEC", 3600)
 	// TieringPeriodSec defines periodic policy scan interval.
 	TieringPeriodSec = getEnvInt("TIERING_PERIOD_SEC", 300)
-	// MaxObjectsPerRound caps A1 periodic enqueue count per round.
+	// MaxObjectsPerRound caps periodic enqueue count per round.
 	MaxObjectsPerRound = getEnvInt("MAX_OBJECTS_PER_ROUND", 200)
-	// MaxBytesPerRound caps total bytes selected in one A3 round (<=0 means unlimited).
+	// MaxBytesPerRound caps total bytes selected in one strategy-B/C round (<=0 means unlimited).
 	MaxBytesPerRound = getEnvInt64("MAX_BYTES_PER_ROUND", 1073741824)
-	// SizeThresholdBytes is used by A2 selection policy.
-	SizeThresholdBytes = getEnvInt64("SIZE_THRESHOLD_BYTES", 1048576)
-	// TieringPolicyVariantSetting selects candidate policy: A1, A2, A3.
-	TieringPolicyVariantSetting = normalizeTieringPolicyVariant(getEnv("TIERING_POLICY_VARIANT", string(TieringPolicyA1)))
+	// TieringPolicyVariantSetting selects candidate policy: A, B, C.
+	TieringPolicyVariantSetting = normalizeTieringPolicyVariant(getEnv("TIERING_POLICY_VARIANT", string(TieringPolicyA)))
 	// TieringTriggerModeSetting selects trigger mode: periodic, threshold, hybrid.
 	TieringTriggerModeSetting = normalizeTieringTriggerMode(getEnv("TIERING_TRIGGER_MODE", string(TieringTriggerPeriodic)))
 	// TieringThresholdCheckSec is threshold trigger sampling interval.
@@ -117,6 +113,24 @@ var (
 	OldVersionRetentionAgeSec = getEnvInt("OLD_VERSION_RETENTION_AGE_SEC", 86400)
 	// OldVersionReaperMaxTasksPerRound caps old-version GC task enqueue count per round.
 	OldVersionReaperMaxTasksPerRound = getEnvInt("OLD_VERSION_REAPER_MAX_TASKS_PER_ROUND", 200)
+	// TieringDueIndexBurstRounds controls max due-index scan bursts per policy pass.
+	TieringDueIndexBurstRounds = getEnvInt("TIERING_DUE_INDEX_BURST_ROUNDS", 4)
+	// TieringDueIndexAdaptiveMaxScan caps adaptive due-index scan window per burst.
+	TieringDueIndexAdaptiveMaxScan = getEnvInt("TIERING_DUE_INDEX_ADAPTIVE_MAX_SCAN", 20000)
+	// TieringTaskWaitPromoteBase controls wait->ready promotion batch size per claim.
+	TieringTaskWaitPromoteBase = getEnvInt("TIERING_TASK_WAIT_PROMOTE_BASE", 256)
+	// TieringTaskWaitPromoteBurstRounds controls max wait->ready promotion bursts per claim.
+	TieringTaskWaitPromoteBurstRounds = getEnvInt("TIERING_TASK_WAIT_PROMOTE_BURST_ROUNDS", 4)
+	// TieringTaskWaitPromoteAdaptiveMax caps adaptive wait->ready promotion batch size.
+	TieringTaskWaitPromoteAdaptiveMax = getEnvInt("TIERING_TASK_WAIT_PROMOTE_ADAPTIVE_MAX", 4096)
+	// TieringTaskHistoryReaperEnabled controls periodic terminal-task history cleanup.
+	TieringTaskHistoryReaperEnabled = getEnvBool("TIERING_TASK_HISTORY_REAPER_ENABLED", true)
+	// TieringTaskHistoryRetentionSec keeps terminal tasks newer than this age.
+	TieringTaskHistoryRetentionSec = getEnvInt("TIERING_TASK_HISTORY_RETENTION_SEC", 604800)
+	// TieringTaskHistoryReaperMaxTasksPerRound caps terminal-task purge count per run.
+	TieringTaskHistoryReaperMaxTasksPerRound = getEnvInt("TIERING_TASK_HISTORY_REAPER_MAX_TASKS_PER_ROUND", 200)
+	// TieringTaskHistoryReaperIntervalSec controls scanner interval between purge runs.
+	TieringTaskHistoryReaperIntervalSec = getEnvInt("TIERING_TASK_HISTORY_REAPER_INTERVAL_SEC", 900)
 	// TieringDueIndexMaxScan caps due-index candidates scanned per policy pass.
 	TieringDueIndexMaxScan = getEnvInt("TIERING_DUE_INDEX_MAX_SCAN", 2000)
 	// TieringTaskMaxRetryCount caps automatic retries before task becomes FAILED.
@@ -202,11 +216,15 @@ func getEnvBool(key string, fallback bool) bool {
 
 func normalizeTieringPolicyVariant(raw string) TieringPolicyVariant {
 	v := strings.ToUpper(strings.TrimSpace(raw))
-	switch TieringPolicyVariant(v) {
-	case TieringPolicyA1, TieringPolicyA2, TieringPolicyA3:
-		return TieringPolicyVariant(v)
+	switch v {
+	case string(TieringPolicyA), "A1":
+		return TieringPolicyA
+	case string(TieringPolicyB), "A2":
+		return TieringPolicyB
+	case string(TieringPolicyC), "A3":
+		return TieringPolicyC
 	default:
-		return TieringPolicyA1
+		return TieringPolicyA
 	}
 }
 
@@ -221,7 +239,7 @@ func normalizeTieringTriggerMode(raw string) TieringTriggerMode {
 }
 
 func TieringPolicyVariants() []TieringPolicyVariant {
-	out := []TieringPolicyVariant{TieringPolicyA1, TieringPolicyA2, TieringPolicyA3}
+	out := []TieringPolicyVariant{TieringPolicyA, TieringPolicyB, TieringPolicyC}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }

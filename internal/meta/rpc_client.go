@@ -280,28 +280,37 @@ func (c *RPCClient) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr s
 	}, nil)
 }
 
-func (c *RPCClient) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
+func (c *RPCClient) PurgeTerminalTieringTasks(ctx context.Context, olderThan time.Time, limit int) (int, error) {
 	var out rpcIntResult
-	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesA1, rpcEnqueueTieringCandidatesA1Args{
+	err := c.call(ctx, rpcMethodPurgeTerminalTieringTasks, rpcPurgeTerminalTieringTasksArgs{
+		OlderThan: olderThan,
+		Limit:     limit,
+	}, &out)
+	return out.Value, err
+}
+
+func (c *RPCClient) EnqueueTieringCandidatesStrategyA(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
+	var out rpcIntResult
+	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesA, rpcEnqueueTieringCandidatesAArgs{
 		AgeThresholdSec: ageThresholdSec,
 		MaxObjects:      maxObjects,
 	}, &out)
 	return out.Value, err
 }
 
-func (c *RPCClient) EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error) {
+func (c *RPCClient) EnqueueTieringCandidatesStrategyB(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
 	var out rpcIntResult
-	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesA2, rpcEnqueueTieringCandidatesA2Args{
-		AgeThresholdSec:    ageThresholdSec,
-		SizeThresholdBytes: sizeThresholdBytes,
-		MaxObjects:         maxObjects,
+	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesB, rpcEnqueueTieringCandidatesBArgs{
+		AgeThresholdSec: ageThresholdSec,
+		MaxObjects:      maxObjects,
+		MaxBytes:        maxBytes,
 	}, &out)
 	return out.Value, err
 }
 
-func (c *RPCClient) EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+func (c *RPCClient) EnqueueTieringCandidatesStrategyC(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
 	var out rpcIntResult
-	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesA3, rpcEnqueueTieringCandidatesA3Args{
+	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesC, rpcEnqueueTieringCandidatesCArgs{
 		AgeThresholdSec: ageThresholdSec,
 		MaxObjects:      maxObjects,
 		MaxBytes:        maxBytes,

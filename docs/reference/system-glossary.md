@@ -2,10 +2,10 @@
 
 ## A
 
-`A1` / `A2` / `A3`
+`A` / `B` / `C`
 
 1. Tiering candidate selection policy variants.
-2. A1 = age-based, A2 = age+size, A3 = budget-limited.
+2. A = age-based baseline, B = static budget throttling, C = idle-window admission + budget throttling.
 
 ## C
 
@@ -55,6 +55,11 @@
 
 1. Distributed lease used to ensure only one worker runs the policy scanner at a time.
 
+`Leader Lock Token`
+
+1. Token returned by lock acquisition RPC and used by lock ping/release RPC calls.
+2. Encodes lock owner payload and can be signature-verified by RPC server.
+
 ## M
 
 `MIGRATING`
@@ -64,6 +69,11 @@
 `MIGRATION_PENDING`
 
 1. Object state indicating migration task has been queued and awaits processing.
+
+`Meta RPC Token` (`X-Meta-Token`)
+
+1. Shared-secret HTTP header for metadata RPC transport authentication.
+2. Applied at transport layer across all RPC methods when enabled.
 
 ## P
 
@@ -107,3 +117,9 @@
 `Write Quorum`
 
 1. Minimum successful replica writes required before PUT ACK.
+
+## Related Documents
+
+1. [System Architecture and Responsibilities](../explanation/system-architecture-and-responsibilities.md)
+2. [Task State Machine Reference](task-state-machine-reference.md)
+3. [TiKV Keyspace and Key Encoding Reference](tikv-keyspace-and-key-encoding-reference.md)

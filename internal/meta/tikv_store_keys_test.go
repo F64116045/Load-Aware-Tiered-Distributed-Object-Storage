@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTiKVEncodeInt64_LexicographicOrderMatchesNumeric(t *testing.T) {
@@ -54,11 +55,54 @@ func TestTiKVKeyBuilders(t *testing.T) {
 	if got, want := tiKVTaskKey("t1"), "task/t1"; got != want {
 		t.Fatalf("tiKVTaskKey mismatch: got=%q want=%q", got, want)
 	}
+	ready := tiKVTaskReadyKey("REPAIR", 200, time.Unix(0, 12345), "repair:obj:7")
+	if got, want := ready, "task_ready/0999999800/00000000000000012345/REPAIR/repair:obj:7"; got != want {
+		t.Fatalf("tiKVTaskReadyKey mismatch: got=%q want=%q", got, want)
+	}
+	wait := tiKVTaskWaitKey("REPAIR", time.Unix(0, 12345), "repair:obj:7")
+	if got, want := wait, "task_wait/00000000000000012345/REPAIR/repair:obj:7"; got != want {
+		t.Fatalf("tiKVTaskWaitKey mismatch: got=%q want=%q", got, want)
+	}
 	if got, want := tiKVReplicaKey("o1", 7, "n1"), "repl/o1/00000000000000000007/n1"; got != want {
 		t.Fatalf("tiKVReplicaKey mismatch: got=%q want=%q", got, want)
 	}
 	if got, want := tiKVECShardKey("o1", 7, 3), "ec/o1/00000000000000000007/0000000003"; got != want {
 		t.Fatalf("tiKVECShardKey mismatch: got=%q want=%q", got, want)
+	}
+}
+
+func TestTiKVParseTaskIndexKeys(t *testing.T) {
+	t.Parallel()
+
+	readyKey := "task_ready/0999999800/00000000000000012345/REPAIR/repair:obj:7"
+	waitKey := "task_wait/00000000000000012345/REPAIR/repair:obj:7"
+
+	readySchedule, readyType, readyID, ok := tiKVParseTaskReadyKey(readyKey)
+	if !ok {
+		t.Fatalf("expected ready key parse success")
+	}
+	if readySchedule != 12345 {
+		t.Fatalf("ready schedule mismatch: got=%d", readySchedule)
+	}
+	if readyType != "REPAIR" {
+		t.Fatalf("ready type mismatch: got=%q", readyType)
+	}
+	if readyID != "repair:obj:7" {
+		t.Fatalf("ready task id mismatch: got=%q", readyID)
+	}
+
+	waitSchedule, waitType, waitID, ok := tiKVParseTaskWaitKey(waitKey)
+	if !ok {
+		t.Fatalf("expected wait key parse success")
+	}
+	if waitSchedule != 12345 {
+		t.Fatalf("wait schedule mismatch: got=%d", waitSchedule)
+	}
+	if waitType != "REPAIR" {
+		t.Fatalf("wait type mismatch: got=%q", waitType)
+	}
+	if waitID != "repair:obj:7" {
+		t.Fatalf("wait task id mismatch: got=%q", waitID)
 	}
 }
 

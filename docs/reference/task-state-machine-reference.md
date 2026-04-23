@@ -35,7 +35,51 @@ Implemented in worker loop:
 3. capped at 5 minutes
 4. `TIERING_TASK_MAX_RETRY_COUNT` decides terminal failure threshold
 
-## 4. Stale Version Protection
+When task enters `RETRY_WAIT`:
+
+1. `scheduled_at` is set to `now + backoff`
+2. runnable index moves from `task_ready/*` to `task_wait/*`
+3. claim path later promotes due entries back to `task_ready/*` when `scheduled_at <= now`
+
+## 4. Scheduling Gates
+
+There are two different time gates:
+
+1. due-index gate: `tdue.eligible_at` controls when scanner may enqueue a migration task
+2. task gate: `task.scheduled_at` controls when worker may claim a queued task
+
+Operationally:
+
+1. scanner-created `REPL_TO_EC` / `REPAIR` / `GC_OLD_VERSION` tasks currently use `scheduled_at=now`
+2. most `task_wait/*` entries come from retry backoff (`RETRY_WAIT`)
+3. external callers can still create future-scheduled tasks via `EnqueueTieringTask(..., scheduled_at)`
+
+## 5. Claim Semantics and Guarantees
+
+Current claim path:
+
+1. promote due waiting tasks (`task_wait/*`) into ready index
+2. scan `task_ready/*` in key order (priority-desc, then schedule)
+3. atomically write task row + runnable indexes for `RUNNING` transition
+
+Guarantee boundary:
+
+1. this is `at-least-once` processing, not strict `exactly-once`
+2. single meta instance has local serialization (`mu` lock)
+3. under multi `meta_service` replicas, duplicate execution is still possible in races
+4. processors must remain idempotent and stale-safe
+
+## 6. RUNNING Liveness (Current Behavior)
+
+Current implementation does not have automatic timeout reclaim for long-running/stuck `RUNNING` tasks.
+
+Implication:
+
+1. if worker crashes after claim, task may remain `RUNNING`
+2. task is not auto-moved back to `PENDING`/`RETRY_WAIT` by background timeout logic
+3. recovery is currently admin-driven: `retry-now` or `cancel`
+
+## 7. Stale Version Protection
 
 Processors compare:
 
@@ -44,7 +88,7 @@ Processors compare:
 
 If mismatch, task is treated stale and safely skipped to avoid mutating wrong version.
 
-## 5. Admin Actions
+## 8. Admin Actions
 
 1. `POST /v2/admin/tasks/:id/retry-now`
 2. `POST /v2/admin/tasks/:id/cancel`
@@ -53,3 +97,9 @@ Use cases:
 
 1. manual recovery after transient infrastructure fault
 2. aborting known-bad task sequence
+
+## 9. Related Documents
+
+1. [Tiering Task Path from PUT to Worker Claim](../explanation/tiering-task-path-from-put-to-worker-claim.md)
+2. [Consistency and Failure Model](../explanation/consistency-and-failure-model.md)
+3. [TiKV Keyspace and Key Encoding Reference](tikv-keyspace-and-key-encoding-reference.md)

@@ -100,13 +100,14 @@ func (s *TiKVStore) enqueueOrRequeueOldVersionGCTask(taskID, objectID string, ve
 			RetryCount:  0,
 			ScheduledAt: now,
 		}
-		if err := s.putJSON(key, task); err != nil {
+		if err := s.writeTaskRecordWithRunnableIndexLocked(nil, task, now); err != nil {
 			return false, err
 		}
 		return true, nil
 	}
 	switch rec.TaskState {
 	case "DONE", "FAILED":
+		prev := copyTaskRecord(rec)
 		rec.TaskState = "PENDING"
 		rec.Priority = 80
 		rec.RetryCount = 0
@@ -114,7 +115,7 @@ func (s *TiKVStore) enqueueOrRequeueOldVersionGCTask(taskID, objectID string, ve
 		rec.ScheduledAt = now
 		rec.StartedAt = nil
 		rec.FinishedAt = nil
-		if err := s.putJSON(key, rec); err != nil {
+		if err := s.writeTaskRecordWithRunnableIndexLocked(prev, rec, now); err != nil {
 			return false, err
 		}
 		return true, nil

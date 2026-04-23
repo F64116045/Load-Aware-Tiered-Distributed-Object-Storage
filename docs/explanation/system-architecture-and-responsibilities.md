@@ -107,7 +107,8 @@ flowchart TB
 2. Writes bytes to storage nodes.
 3. Requires write quorum.
 4. Persists normalized metadata.
-5. Enqueues background tasks.
+5. Persists due-index records for future background selection.
+6. Returns ACK without directly enqueuing tiering/repair tasks.
 
 ### 3.2 GET `/v2/objects/:id`
 
@@ -121,6 +122,12 @@ flowchart TB
 2. Deletes physical data.
 3. Cleans metadata records.
 
+### 3.4 Background Enqueue Boundary
+
+1. Foreground write path commits object/version/placement metadata and due-index only.
+2. Policy scanner later enqueues `REPL_TO_EC` and `REPAIR` from metadata state.
+3. Processors enqueue follow-up tasks (for example replication `GC`) after state transitions.
+
 ## 4. Metadata Ownership Model
 
 1. API, storage nodes, and workers never talk to TiKV directly in normal runtime profile.
@@ -132,5 +139,5 @@ flowchart TB
 
 1. API remains independent from backend metadata technology details.
 2. Lock and metadata semantics are centralized.
-3. Multi-component code can share one repository contract (`internal/meta/repository.go`).
+3. Multi-component code can share one repository contract ([`internal/meta/repository.go`](../../internal/meta/repository.go)).
 4. Failure handling is easier to reason about when state machine is centralized.

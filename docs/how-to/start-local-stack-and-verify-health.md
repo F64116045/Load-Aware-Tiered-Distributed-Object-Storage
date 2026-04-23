@@ -1,6 +1,6 @@
 # How-to: Run the Full Stack Locally
 
-Use this when you want a single command local environment for development.
+Scope: single-command local startup and baseline runtime verification.
 
 ## 1. Start
 
@@ -41,3 +41,9 @@ docker compose -f docker-compose.yaml down -v
 ```
 
 Use only when test data can be discarded.
+
+## 6. Related Documents
+
+1. [Local Setup and Smoke Validation](../operations/local-setup-and-smoke-validation.md)
+2. [Incident Triage, Restart, and Recovery Runbook](../operations/incident-triage-restart-and-recovery-runbook.md)
+3. [Recover from TiKV Startup Failure](recover-from-tikv-startup-failure.md)

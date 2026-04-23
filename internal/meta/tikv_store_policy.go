@@ -9,19 +9,22 @@ import (
 	"hybrid_distributed_store/internal/config"
 )
 
-func (s *TiKVStore) EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
-	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, 0, false)
+// EnqueueTieringCandidatesStrategyA implements the time-based baseline:
+// candidates are selected only by age eligibility and capped by maxObjects.
+func (s *TiKVStore) EnqueueTieringCandidatesStrategyA(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, false)
 }
 
-func (s *TiKVStore) EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error) {
-	if sizeThresholdBytes < 0 {
-		sizeThresholdBytes = 0
-	}
-	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, sizeThresholdBytes, 0, false)
+// EnqueueTieringCandidatesStrategyB implements static throttling:
+// age-eligible candidates are selected under per-round object/byte budgets.
+func (s *TiKVStore) EnqueueTieringCandidatesStrategyB(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, maxBytes, true)
 }
 
-func (s *TiKVStore) EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
-	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, 0, maxBytes, true)
+// EnqueueTieringCandidatesStrategyC shares the same selection/budget logic as B.
+// Strategy-C admission gating (idle window) is enforced by the policy scanner.
+func (s *TiKVStore) EnqueueTieringCandidatesStrategyC(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error) {
+	return s.enqueueTieringCandidates(ctx, ageThresholdSec, maxObjects, maxBytes, true)
 }
 
 type tiKVTieringCandidate struct {
@@ -32,11 +35,32 @@ type tiKVTieringCandidate struct {
 	UpdatedAt time.Time
 }
 
+func resolveTieringDueScanPlan() (int, int, int) {
+	baseScan := config.TieringDueIndexMaxScan
+	if baseScan <= 0 {
+		baseScan = 2000
+	}
+	burstRounds := config.TieringDueIndexBurstRounds
+	if burstRounds <= 0 {
+		burstRounds = 1
+	}
+	if burstRounds > 16 {
+		burstRounds = 16
+	}
+	adaptiveMax := config.TieringDueIndexAdaptiveMaxScan
+	if adaptiveMax < baseScan {
+		adaptiveMax = baseScan
+	}
+	if adaptiveMax <= 0 {
+		adaptiveMax = baseScan
+	}
+	return baseScan, burstRounds, adaptiveMax
+}
+
 func (s *TiKVStore) enqueueTieringCandidates(
 	ctx context.Context,
 	ageThresholdSec int,
 	maxObjects int,
-	minSizeBytes int64,
 	maxBytes int64,
 	applyByteBudget bool,
 ) (int, error) {
@@ -55,55 +79,81 @@ func (s *TiKVStore) enqueueTieringCandidates(
 
 	now := time.Now()
 	eligibleBefore := now.Add(-time.Duration(ageThresholdSec) * time.Second)
-	dueCandidates, err := s.listTieringDueCandidatesReady(now, config.TieringDueIndexMaxScan)
-	if err != nil {
-		return 0, err
-	}
-	candidates := make([]tiKVTieringCandidate, 0, len(dueCandidates))
-	for _, due := range dueCandidates {
-		rec := due.Record
-		if rec.ObjectID == "" || rec.Version <= 0 {
-			continue
+	baseScan, burstRounds, adaptiveMax := resolveTieringDueScanPlan()
+	scanLimit := baseScan
+	cursor := ""
+	candidates := make([]tiKVTieringCandidate, 0, maxObjects)
+
+	for round := 0; round < burstRounds; round++ {
+		dueCandidates, hasMoreReady, lastKey, err := s.listTieringDueCandidatesReadyWindow(now, scanLimit, cursor)
+		if err != nil {
+			return 0, err
+		}
+		if len(dueCandidates) == 0 {
+			break
 		}
 
-		obj, found, err := s.getObjectRecord(tiKVObjectKey(rec.ObjectID))
-		if err != nil {
-			return 0, err
+		for _, due := range dueCandidates {
+			rec := due.Record
+			if rec.ObjectID == "" || rec.Version <= 0 {
+				continue
+			}
+
+			obj, found, err := s.getObjectRecord(tiKVObjectKey(rec.ObjectID))
+			if err != nil {
+				return 0, err
+			}
+			if !found {
+				_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+				continue
+			}
+			if obj.CurrentVersion != rec.Version {
+				_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+				continue
+			}
+			if obj.State != "HOT_ACTIVE" && obj.State != "MIGRATION_PENDING" {
+				_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+				continue
+			}
+			if obj.UpdatedAt.After(eligibleBefore) {
+				continue
+			}
+			ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(rec.ObjectID, rec.Version))
+			if err != nil {
+				return 0, err
+			}
+			if !found || ver.Tier != "HOT" {
+				_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
+				continue
+			}
+			candidates = append(candidates, tiKVTieringCandidate{
+				ObjectID:  rec.ObjectID,
+				Version:   rec.Version,
+				DueKey:    due.Key,
+				SizeBytes: ver.SizeBytes,
+				UpdatedAt: obj.UpdatedAt,
+			})
 		}
-		if !found {
-			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
-			continue
+
+		// For non-byte-budget strategy, no need to scan more once object budget is reached.
+		if !applyByteBudget && len(candidates) >= maxObjects {
+			break
 		}
-		if obj.CurrentVersion != rec.Version {
-			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
-			continue
+		if !hasMoreReady || lastKey == cursor {
+			break
 		}
-		if obj.State != "HOT_ACTIVE" && obj.State != "MIGRATION_PENDING" {
-			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
-			continue
+		cursor = lastKey
+		if scanLimit < adaptiveMax {
+			next := scanLimit * 2
+			if next > adaptiveMax {
+				next = adaptiveMax
+			}
+			if next > scanLimit {
+				scanLimit = next
+			}
 		}
-		if obj.UpdatedAt.After(eligibleBefore) {
-			continue
-		}
-		ver, found, err := s.getObjectVersionRecord(tiKVObjectVersionKey(rec.ObjectID, rec.Version))
-		if err != nil {
-			return 0, err
-		}
-		if !found || ver.Tier != "HOT" {
-			_ = s.removeTieringDueIndexByVersion(rec.ObjectID, rec.Version)
-			continue
-		}
-		if minSizeBytes > 0 && ver.SizeBytes < minSizeBytes {
-			continue
-		}
-		candidates = append(candidates, tiKVTieringCandidate{
-			ObjectID:  rec.ObjectID,
-			Version:   rec.Version,
-			DueKey:    due.Key,
-			SizeBytes: ver.SizeBytes,
-			UpdatedAt: obj.UpdatedAt,
-		})
 	}
+
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].UpdatedAt.Equal(candidates[j].UpdatedAt) {
 			if candidates[i].SizeBytes != candidates[j].SizeBytes {
@@ -151,7 +201,7 @@ func (s *TiKVStore) enqueueTieringCandidates(
 				RetryCount:  0,
 				ScheduledAt: now,
 			}
-			if err := s.putJSON(taskKey, task); err != nil {
+			if err := s.writeTaskRecordWithRunnableIndexLocked(nil, task, now); err != nil {
 				return enqueued, err
 			}
 			enqueued++
@@ -292,7 +342,7 @@ func (s *TiKVStore) enqueueRepairTask(taskID, objectID string, version int64) (b
 			RetryCount:  0,
 			ScheduledAt: now,
 		}
-		if err := s.putJSON(key, task); err != nil {
+		if err := s.writeTaskRecordWithRunnableIndexLocked(nil, task, now); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -300,6 +350,7 @@ func (s *TiKVStore) enqueueRepairTask(taskID, objectID string, version int64) (b
 
 	switch rec.TaskState {
 	case "DONE", "FAILED":
+		prev := copyTaskRecord(rec)
 		rec.TaskState = "PENDING"
 		rec.Priority = 200
 		rec.RetryCount = 0
@@ -307,7 +358,7 @@ func (s *TiKVStore) enqueueRepairTask(taskID, objectID string, version int64) (b
 		rec.ScheduledAt = now
 		rec.StartedAt = nil
 		rec.FinishedAt = nil
-		if err := s.putJSON(key, rec); err != nil {
+		if err := s.writeTaskRecordWithRunnableIndexLocked(prev, rec, now); err != nil {
 			return false, err
 		}
 		return true, nil

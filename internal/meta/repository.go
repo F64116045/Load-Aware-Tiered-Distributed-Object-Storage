@@ -44,10 +44,11 @@ type Repository interface {
 	MarkTieringTaskDone(ctx context.Context, taskID string) error
 	MarkTieringTaskRetry(ctx context.Context, taskID, lastErr string, nextRunAt time.Time) error
 	MarkTieringTaskFailed(ctx context.Context, taskID, lastErr string) error
+	PurgeTerminalTieringTasks(ctx context.Context, olderThan time.Time, limit int) (int, error)
 
-	EnqueueTieringCandidatesA1(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error)
-	EnqueueTieringCandidatesA2(ctx context.Context, ageThresholdSec int, sizeThresholdBytes int64, maxObjects int) (int, error)
-	EnqueueTieringCandidatesA3(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
+	EnqueueTieringCandidatesStrategyA(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error)
+	EnqueueTieringCandidatesStrategyB(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
+	EnqueueTieringCandidatesStrategyC(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
 	EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error)
 	EnqueueOldVersionGCCandidates(ctx context.Context, keepLatest int, minAgeSec int, maxTasks int) (int, error)
 	GetObjectVersionSnapshot(ctx context.Context, objectID string, taskVersion int64) (*ObjectVersionSnapshot, error)

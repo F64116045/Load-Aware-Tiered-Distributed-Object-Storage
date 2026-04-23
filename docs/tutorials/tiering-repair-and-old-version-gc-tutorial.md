@@ -1,8 +1,8 @@
 # Tutorial 02: Observe Tiering, Repair, and Old-Version Cleanup
 
-Audience: contributors validating control-plane behavior.
+Scope: validate control-plane behavior across scanner, worker, and maintenance paths.
 
-Goal: watch background task lifecycle, leader behavior, and maintenance loops.
+Outcome: observe background task lifecycle, leader behavior, and maintenance loops.
 
 ## 1. Start Stack and Create Test Data
 
@@ -29,7 +29,7 @@ Key fields:
 curl -sS 'http://127.0.0.1:8000/v2/admin/tasks?limit=100'
 ```
 
-What you should see over time:
+Expected observations over time:
 
 1. `PENDING -> RUNNING -> DONE`
 2. transient failures become `RETRY_WAIT` then retry
@@ -80,3 +80,9 @@ Look for:
 
 1. old versions generating `GC_OLD_VERSION` tasks
 2. eventual metadata cleanup for non-retained versions
+
+## 7. Related Documents
+
+1. [Tiering Policy Strategies and Trigger Modes](../explanation/tiering-policy-strategies-and-trigger-modes.md)
+2. [Task State Machine Reference](../reference/task-state-machine-reference.md)
+3. [TiKV Keyspace and Key Encoding Reference](../reference/tikv-keyspace-and-key-encoding-reference.md)
