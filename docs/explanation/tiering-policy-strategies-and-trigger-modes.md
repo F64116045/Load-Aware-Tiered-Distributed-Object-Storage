@@ -18,10 +18,10 @@ This means `A/B/C` can each run under `periodic`, `threshold`, or `hybrid`.
 
 Code:
 
-1. `cmd/tiering_worker/main.go`
-2. `internal/tiering/policy_scanner.go`
-3. `internal/meta/tikv_store_policy.go`
-4. `internal/config/config.go`
+1. [`cmd/tiering_worker/main.go`](../../cmd/tiering_worker/main.go)
+2. [`internal/tiering/policy_scanner.go`](../../internal/tiering/policy_scanner.go)
+3. [`internal/meta/tikv_store_policy.go`](../../internal/meta/tikv_store_policy.go)
+4. [`internal/config/config.go`](../../internal/config/config.go)
 
 ## 2. Shared End-to-End Chain (PUT -> EC)
 
@@ -41,10 +41,10 @@ The following chain is shared by all strategies. Strategy differences happen at 
 
 Code:
 
-1. `cmd/api/main.go`
-2. `internal/writeservice/writeservice.go`
-3. `internal/meta/tikv_store_objects.go`
-4. `internal/meta/tikv_store_due_index.go`
+1. [`cmd/api/main.go`](../../cmd/api/main.go)
+2. [`internal/writeservice/writeservice.go`](../../internal/writeservice/writeservice.go)
+3. [`internal/meta/tikv_store_objects.go`](../../internal/meta/tikv_store_objects.go)
+4. [`internal/meta/tikv_store_due_index.go`](../../internal/meta/tikv_store_due_index.go)
 
 Important:
 
@@ -69,9 +69,9 @@ Important:
 
 Code:
 
-1. `internal/tiering/policy_scanner.go`
-2. `internal/meta/tikv_store_policy.go`
-3. `internal/meta/tikv_store_due_index.go`
+1. [`internal/tiering/policy_scanner.go`](../../internal/tiering/policy_scanner.go)
+2. [`internal/meta/tikv_store_policy.go`](../../internal/meta/tikv_store_policy.go)
+3. [`internal/meta/tikv_store_due_index.go`](../../internal/meta/tikv_store_due_index.go)
 
 ### 2.3 Worker claims task and promotes to EC
 
@@ -91,17 +91,17 @@ Code:
 
 Code:
 
-1. `internal/tiering/worker.go`
-2. `internal/meta/tikv_store_tasks.go`
-3. `internal/tiering/repl_to_ec_processor.go`
-4. `internal/meta/tikv_store_migration.go`
+1. [`internal/tiering/worker.go`](../../internal/tiering/worker.go)
+2. [`internal/meta/tikv_store_tasks.go`](../../internal/meta/tikv_store_tasks.go)
+3. [`internal/tiering/repl_to_ec_processor.go`](../../internal/tiering/repl_to_ec_processor.go)
+4. [`internal/meta/tikv_store_migration.go`](../../internal/meta/tikv_store_migration.go)
 
 ## 3. Strategy A: Age Baseline
 
 Entry point:
 
 1. `EnqueueTieringCandidatesStrategyA` -> `enqueueTieringCandidates(..., applyByteBudget=false)`
-2. Code: `internal/meta/tikv_store_policy.go`
+2. Code: [`internal/meta/tikv_store_policy.go`](../../internal/meta/tikv_store_policy.go)
 
 Behavior:
 
@@ -116,7 +116,7 @@ Behavior:
 Entry point:
 
 1. `EnqueueTieringCandidatesStrategyB` -> `enqueueTieringCandidates(..., applyByteBudget=true)`
-2. Code: `internal/meta/tikv_store_policy.go`
+2. Code: [`internal/meta/tikv_store_policy.go`](../../internal/meta/tikv_store_policy.go)
 
 Behavior:
 
@@ -134,8 +134,8 @@ Entry points:
 1. Gate: `strategyCGatePass` in scanner
 2. Enqueue: `EnqueueTieringCandidatesStrategyC` -> same byte-budgeted selector as B
 3. Code:
-   1. `internal/tiering/policy_scanner.go`
-   2. `internal/meta/tikv_store_policy.go`
+   1. [`internal/tiering/policy_scanner.go`](../../internal/tiering/policy_scanner.go)
+   2. [`internal/meta/tikv_store_policy.go`](../../internal/meta/tikv_store_policy.go)
 
 Behavior:
 
@@ -157,13 +157,13 @@ Behavior:
 2. `tdue/*` entries remain for future passes.
 3. idle stable counter resets when busy sample appears.
 4. scanner retries on next trigger tick.
-5. in current implementation, repair enqueue and old-version-gc enqueue are also skipped in that pass because strategy-C gate returns before those stages.
+5. maintenance lane (repair enqueue, old-version-gc enqueue, task-history reaper) still runs in that pass.
 
 ## 6. Trigger Modes: periodic vs threshold vs hybrid
 
 Entry:
 
-1. `PolicyScanner.Run` in `internal/tiering/policy_scanner.go`
+1. `PolicyScanner.Run` in [`internal/tiering/policy_scanner.go`](../../internal/tiering/policy_scanner.go)
 
 Modes:
 
@@ -198,15 +198,17 @@ Different:
 ## 8. Current Implementation Notes
 
 1. `HOT_PRESSURE_DISK_PCT` and `HOT_PRESSURE_QUEUE_DEPTH` are configuration inputs but not active trigger conditions in current scanner code path.
-2. Worker claim uses runnable task indexes (`task_ready/*` and `task_wait/*`) and only falls back to broad scan for legacy rows without index entries.
-3. due-index scanning avoids full object-table scan for tiering candidate discovery.
+2. Worker claim uses runnable task indexes (`task_ready/*` and `task_wait/*`) and does not scan broad `task/*` in claim path.
+3. due-index scanning avoids full object-table scan for tiering candidate discovery, and now supports burst rounds with adaptive scan-window growth when backlog remains.
+4. wait-index promote in claim path also supports burst rounds with adaptive promote batch growth when backlog remains.
+5. Scanner also runs terminal task-history cleanup via `task_terminal/*` index when `TIERING_TASK_HISTORY_REAPER_ENABLED=true`.
 
 ## 9. Exact Files to Read in Order
 
-1. `cmd/tiering_worker/main.go`
-2. `internal/tiering/policy_scanner.go`
-3. `internal/meta/tikv_store_policy.go`
-4. `internal/meta/tikv_store_due_index.go`
-5. `internal/meta/tikv_store_tasks.go`
-6. `internal/tiering/repl_to_ec_processor.go`
-7. `internal/meta/tikv_store_migration.go`
+1. [`cmd/tiering_worker/main.go`](../../cmd/tiering_worker/main.go)
+2. [`internal/tiering/policy_scanner.go`](../../internal/tiering/policy_scanner.go)
+3. [`internal/meta/tikv_store_policy.go`](../../internal/meta/tikv_store_policy.go)
+4. [`internal/meta/tikv_store_due_index.go`](../../internal/meta/tikv_store_due_index.go)
+5. [`internal/meta/tikv_store_tasks.go`](../../internal/meta/tikv_store_tasks.go)
+6. [`internal/tiering/repl_to_ec_processor.go`](../../internal/tiering/repl_to_ec_processor.go)
+7. [`internal/meta/tikv_store_migration.go`](../../internal/meta/tikv_store_migration.go)

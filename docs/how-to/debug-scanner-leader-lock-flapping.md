@@ -50,3 +50,9 @@ START_STACK=false ./scripts/smoke_leader_failover_tikv.sh
 Pass condition:
 
 1. lock failover occurs without scanner permanent outage
+
+## 7. Related Documents
+
+1. [Scanner Leader Lock Mechanism](../explanation/scanner-leader-lock-mechanism.md)
+2. [Runtime Control Loops and Schedulers](../explanation/runtime-control-loops-and-schedulers.md)
+3. [Incident Triage, Restart, and Recovery Runbook](../operations/incident-triage-restart-and-recovery-runbook.md)

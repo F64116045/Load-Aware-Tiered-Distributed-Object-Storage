@@ -1,6 +1,6 @@
 # How-to: Run HA Metadata Profile (3 PD + 3 TiKV)
 
-Use this when validating metadata high availability behavior.
+Scope: HA metadata profile startup, verification, and shutdown.
 
 ## 1. Start with HA compose overlay
 
@@ -32,3 +32,9 @@ docker compose -f docker-compose.yaml -f docker-compose.ha.yaml down
 1. old single-node volumes mixed with HA startup sequence
 2. stale container network from previous failed boot
 3. insufficient machine resources for 3PD+3TiKV on laptop
+
+## 6. Related Documents
+
+1. [Run the Full Stack Locally](start-local-stack-and-verify-health.md)
+2. [Recover from TiKV Startup Failure](recover-from-tikv-startup-failure.md)
+3. [System Dependencies and Runtime Topology Reference](../reference/system-dependencies-and-runtime-topology-reference.md)

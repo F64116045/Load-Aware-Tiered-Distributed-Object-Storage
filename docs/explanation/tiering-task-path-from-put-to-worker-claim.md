@@ -39,9 +39,9 @@ This document explains one end-to-end path in detail:
 
 Code:
 
-1. `internal/writeservice/writeservice.go`
-2. `internal/meta/tikv_store_objects.go`
-3. `internal/meta/tikv_store_due_index.go`
+1. [`internal/writeservice/writeservice.go`](../../internal/writeservice/writeservice.go)
+2. [`internal/meta/tikv_store_objects.go`](../../internal/meta/tikv_store_objects.go)
+3. [`internal/meta/tikv_store_due_index.go`](../../internal/meta/tikv_store_due_index.go)
 
 ### 3.2 Scanner enqueue path (policy-driven)
 
@@ -61,30 +61,66 @@ Scanner is the task insertion path:
 
 Code:
 
-1. `internal/tiering/policy_scanner.go`
-2. `internal/meta/tikv_store_policy.go`
-3. `internal/meta/tikv_store_due_index.go`
+1. [`internal/tiering/policy_scanner.go`](../../internal/tiering/policy_scanner.go)
+2. [`internal/meta/tikv_store_policy.go`](../../internal/meta/tikv_store_policy.go)
+3. [`internal/meta/tikv_store_due_index.go`](../../internal/meta/tikv_store_due_index.go)
 
 ### 3.3 Worker claim path
 
 Worker loop:
 
-1. reads task records
-2. filters runnable tasks:
-   1. state in `PENDING` or `RETRY_WAIT`
-   2. `scheduled_at <= now`
-3. sorts by:
-   1. higher priority first
-   2. earlier schedule first
-4. marks selected task as `RUNNING`
-5. dispatches by task type
+1. worker calls `ClaimNextTieringTask`
+2. claim path first promotes due waiting tasks:
+   1. scans `task_wait/*` by `scheduled_at`
+   2. moves due tasks (`scheduled_at <= now`) back into runnable index
+3. claim then scans `task_ready/*` in key order:
+   1. higher priority first (`priority_desc`)
+   2. then earlier `scheduled_at`
+4. for each candidate:
+   1. load `task/<task_id>` row
+   2. if row/index mismatch, self-heal index and continue
+   3. if valid runnable row, transition task to `RUNNING`
+5. transition to `RUNNING` is persisted with row+index atomic batch commit
+6. worker dispatches claimed task by type
 
 Code:
 
-1. `internal/meta/tikv_store_tasks.go` (`ClaimNextTieringTask`)
-2. `internal/tiering/worker.go`
+1. [`internal/meta/tikv_store_tasks.go`](../../internal/meta/tikv_store_tasks.go) (`ClaimNextTieringTask`)
+2. [`internal/meta/tikv_store_task_index.go`](../../internal/meta/tikv_store_task_index.go)
+3. [`internal/tiering/worker.go`](../../internal/tiering/worker.go)
 
-### 3.4 REPL_TO_EC execution and state transitions
+### 3.4 Scheduling time semantics (`eligible_at` vs `scheduled_at`)
+
+These are different gates:
+
+1. due-index gate (`tdue.eligible_at`): controls when scanner may enqueue migration work
+2. task gate (`task.scheduled_at`): controls when worker may claim queued work
+
+Current behavior:
+
+1. scanner-created migration/repair/gc candidates use `scheduled_at=now`
+2. `task_wait/*` is mostly from retry backoff (`RETRY_WAIT`)
+3. future `scheduled_at` can also come from direct `EnqueueTieringTask` callers
+
+### 3.5 Delivery guarantee boundary
+
+Current model is `at-least-once`:
+
+1. claim transition uses atomic row/index write to reduce duplicate claims
+2. this is not strict cross-replica exactly-once fencing
+3. duplicate execution can still happen under races/failures
+4. processors are designed to be idempotent and stale-safe
+
+### 3.6 RUNNING stuck behavior (current)
+
+Current implementation has no automatic `RUNNING` timeout reclaim.
+
+Implication:
+
+1. worker crash after claim can leave task in `RUNNING`
+2. operator uses admin `retry-now` / `cancel` for manual recovery
+
+### 3.7 REPL_TO_EC execution and state transitions
 
 Processor steps:
 
@@ -105,9 +141,9 @@ Failure path:
 
 Code:
 
-1. `internal/tiering/repl_to_ec_processor.go`
-2. `internal/meta/tikv_store_migration.go`
-3. `internal/meta/tikv_store_tasks.go`
+1. [`internal/tiering/repl_to_ec_processor.go`](../../internal/tiering/repl_to_ec_processor.go)
+2. [`internal/meta/tikv_store_migration.go`](../../internal/meta/tikv_store_migration.go)
+3. [`internal/meta/tikv_store_tasks.go`](../../internal/meta/tikv_store_tasks.go)
 
 ## 4. Why `tdue_ref/*` Exists
 
@@ -123,7 +159,7 @@ With reverse index:
 
 Code:
 
-1. `internal/meta/tikv_store_due_index.go` (`removeTieringDueIndexByVersionInBatch`)
+1. [`internal/meta/tikv_store_due_index.go`](../../internal/meta/tikv_store_due_index.go) (`removeTieringDueIndexByVersionInBatch`)
 
 ## 5. Current Performance Characteristics
 
@@ -141,7 +177,7 @@ Code:
    2. task state counts
    3. leader status
 
-## 7. Minimal Troubleshooting Checklist
+## 7. Minimal Troubleshooting Procedure
 
 1. Confirm object metadata exists and state/version are sane.
 2. Check due-index stats for ready candidates.

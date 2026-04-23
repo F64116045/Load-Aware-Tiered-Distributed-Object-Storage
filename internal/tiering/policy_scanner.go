@@ -38,6 +38,11 @@ type PolicyScannerConfig struct {
 	OldVersionRetentionN    int
 	OldVersionRetentionAge  int
 	OldVersionMaxTasks      int
+
+	TaskHistoryReaperEnabled  bool
+	TaskHistoryRetentionSec   int
+	TaskHistoryReaperMaxTasks int
+	TaskHistoryReaperInterval time.Duration
 }
 
 type PolicyScanStore interface {
@@ -46,6 +51,7 @@ type PolicyScanStore interface {
 	EnqueueTieringCandidatesStrategyC(ctx context.Context, ageThresholdSec int, maxObjects int, maxBytes int64) (int, error)
 	EnqueueRepairCandidates(ctx context.Context, maxObjects int) (int, error)
 	EnqueueOldVersionGCCandidates(ctx context.Context, keepLatest int, minAgeSec int, maxTasks int) (int, error)
+	PurgeTerminalTieringTasks(ctx context.Context, olderThan time.Time, limit int) (int, error)
 	ListNodeHeartbeats(ctx context.Context, limit int) ([]meta.NodeHeartbeatSnapshot, error)
 }
 
@@ -55,6 +61,7 @@ type PolicyScanner struct {
 	cfg   PolicyScannerConfig
 
 	lastThresholdTrigger time.Time
+	lastHistoryReaperRun time.Time
 	idleStableCount      int
 }
 
@@ -82,6 +89,15 @@ func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicySca
 	}
 	if cfg.OldVersionMaxTasks <= 0 {
 		cfg.OldVersionMaxTasks = 200
+	}
+	if cfg.TaskHistoryRetentionSec <= 0 {
+		cfg.TaskHistoryRetentionSec = 7 * 24 * 3600
+	}
+	if cfg.TaskHistoryReaperMaxTasks <= 0 {
+		cfg.TaskHistoryReaperMaxTasks = 200
+	}
+	if cfg.TaskHistoryReaperInterval <= 0 {
+		cfg.TaskHistoryReaperInterval = 15 * time.Minute
 	}
 	if cfg.HeartbeatStaleSec <= 0 {
 		cfg.HeartbeatStaleSec = 15
@@ -182,53 +198,53 @@ func (s *PolicyScanner) runThresholdPass(ctx context.Context, source string) {
 }
 
 func (s *PolicyScanner) runPolicyAndRepair(ctx context.Context, source string) {
+	tieringAllowed := true
+	tieringSource := source
 	if s.cfg.PolicyVariant == config.TieringPolicyC {
 		ready, gateReason, err := s.strategyCGatePass(ctx)
 		if err != nil {
 			log.Printf("[TieringPolicy] %s strategy=C gate check failed: %v", source, err)
-			return
+			tieringAllowed = false
+		} else if !ready {
+			tieringAllowed = false
+		} else {
+			tieringSource = fmt.Sprintf("%s:%s", source, gateReason)
 		}
-		if !ready {
-			return
+	}
+
+	if tieringAllowed {
+		count, err := s.enqueueTieringPolicy(ctx)
+		if err != nil {
+			log.Printf("[TieringPolicy] %s %s scan failed: %v", tieringSource, s.cfg.PolicyVariant, err)
+		} else if count > 0 {
+			log.Printf("[TieringPolicy] %s %s enqueued %d tasks", tieringSource, s.cfg.PolicyVariant, count)
 		}
-		source = fmt.Sprintf("%s:%s", source, gateReason)
 	}
 
-	count, err := s.enqueueTieringPolicy(ctx)
-	if err != nil {
-		log.Printf("[TieringPolicy] %s %s scan failed: %v", source, s.cfg.PolicyVariant, err)
-	} else if count > 0 {
-		log.Printf("[TieringPolicy] %s %s enqueued %d tasks", source, s.cfg.PolicyVariant, count)
+	if s.cfg.RepairEnabled {
+		repairCount, repairErr := s.store.EnqueueRepairCandidates(ctx, s.cfg.RepairMaxObjects)
+		if repairErr != nil {
+			log.Printf("[TieringPolicy] %s repair scan failed: %v", source, repairErr)
+		} else if repairCount > 0 {
+			log.Printf("[TieringPolicy] %s repair enqueued %d tasks", source, repairCount)
+		}
 	}
 
-	if !s.cfg.RepairEnabled {
-		return
-	}
-	repairCount, repairErr := s.store.EnqueueRepairCandidates(ctx, s.cfg.RepairMaxObjects)
-	if repairErr != nil {
-		log.Printf("[TieringPolicy] %s repair scan failed: %v", source, repairErr)
-		return
-	}
-	if repairCount > 0 {
-		log.Printf("[TieringPolicy] %s repair enqueued %d tasks", source, repairCount)
+	if s.cfg.OldVersionReaperEnabled {
+		gcCount, gcErr := s.store.EnqueueOldVersionGCCandidates(
+			ctx,
+			s.cfg.OldVersionRetentionN,
+			s.cfg.OldVersionRetentionAge,
+			s.cfg.OldVersionMaxTasks,
+		)
+		if gcErr != nil {
+			log.Printf("[TieringPolicy] %s old-version-gc scan failed: %v", source, gcErr)
+		} else if gcCount > 0 {
+			log.Printf("[TieringPolicy] %s old-version-gc enqueued %d tasks", source, gcCount)
+		}
 	}
 
-	if !s.cfg.OldVersionReaperEnabled {
-		return
-	}
-	gcCount, gcErr := s.store.EnqueueOldVersionGCCandidates(
-		ctx,
-		s.cfg.OldVersionRetentionN,
-		s.cfg.OldVersionRetentionAge,
-		s.cfg.OldVersionMaxTasks,
-	)
-	if gcErr != nil {
-		log.Printf("[TieringPolicy] %s old-version-gc scan failed: %v", source, gcErr)
-		return
-	}
-	if gcCount > 0 {
-		log.Printf("[TieringPolicy] %s old-version-gc enqueued %d tasks", source, gcCount)
-	}
+	s.runTaskHistoryReaper(ctx, source)
 }
 
 func (s *PolicyScanner) enqueueTieringPolicy(ctx context.Context) (int, error) {
@@ -254,6 +270,32 @@ func (s *PolicyScanner) enqueueTieringPolicy(ctx context.Context) (int, error) {
 			ctx,
 			s.cfg.AgeThresholdSec,
 			s.cfg.MaxObjects,
+		)
+	}
+}
+
+func (s *PolicyScanner) runTaskHistoryReaper(ctx context.Context, source string) {
+	if !s.cfg.TaskHistoryReaperEnabled || s.cfg.TaskHistoryRetentionSec <= 0 || s.cfg.TaskHistoryReaperMaxTasks <= 0 {
+		return
+	}
+	now := time.Now()
+	if !s.lastHistoryReaperRun.IsZero() && now.Sub(s.lastHistoryReaperRun) < s.cfg.TaskHistoryReaperInterval {
+		return
+	}
+	s.lastHistoryReaperRun = now
+
+	olderThan := now.Add(-time.Duration(s.cfg.TaskHistoryRetentionSec) * time.Second)
+	purged, err := s.store.PurgeTerminalTieringTasks(ctx, olderThan, s.cfg.TaskHistoryReaperMaxTasks)
+	if err != nil {
+		log.Printf("[TieringPolicy] %s task-history reaper failed: %v", source, err)
+		return
+	}
+	if purged > 0 {
+		log.Printf(
+			"[TieringPolicy] %s task-history reaper purged %d terminal tasks older_than=%s",
+			source,
+			purged,
+			olderThan.UTC().Format(time.RFC3339),
 		)
 	}
 }

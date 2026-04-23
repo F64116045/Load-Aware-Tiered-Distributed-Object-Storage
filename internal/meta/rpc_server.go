@@ -252,6 +252,13 @@ func (s *RPCServer) dispatch(ctx context.Context, req rpcRequest) (interface{}, 
 			return nil, err
 		}
 		return nil, s.repo.MarkTieringTaskFailed(ctx, a.TaskID, a.LastError)
+	case rpcMethodPurgeTerminalTieringTasks:
+		var a rpcPurgeTerminalTieringTasksArgs
+		if err := decodeRPCParams(req.Params, &a); err != nil {
+			return nil, err
+		}
+		v, err := s.repo.PurgeTerminalTieringTasks(ctx, a.OlderThan, a.Limit)
+		return rpcIntResult{Value: v}, err
 	case rpcMethodEnqueueTieringCandidatesA:
 		var a rpcEnqueueTieringCandidatesAArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {

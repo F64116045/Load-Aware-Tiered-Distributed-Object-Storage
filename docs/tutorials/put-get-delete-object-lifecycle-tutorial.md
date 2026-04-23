@@ -1,8 +1,8 @@
-# Tutorial 01: Hello Object Lifecycle (PUT -> GET -> DELETE)
+# Tutorial 01: Object Lifecycle (PUT -> GET -> DELETE)
 
-Audience: first-time contributor or evaluator.
+Scope: validate base object lifecycle and metadata/task observability.
 
-Goal: store one object, read it back, inspect metadata/task views, and delete it.
+Outcome: write one object, read it back, inspect metadata/task views, then delete it.
 
 ## 1. Start Stack
 
@@ -85,3 +85,9 @@ curl -i -sS 'http://127.0.0.1:8000/v2/objects/hello-1'
 ```bash
 rm -f /tmp/hello.bin /tmp/hello.out
 ```
+
+## 9. Related Documents
+
+1. [Request and Task Lifecycles](../explanation/put-get-delete-and-task-lifecycles.md)
+2. [API Endpoints Reference](../reference/api-endpoints-reference.md)
+3. [Local Setup and Smoke Validation](../operations/local-setup-and-smoke-validation.md)

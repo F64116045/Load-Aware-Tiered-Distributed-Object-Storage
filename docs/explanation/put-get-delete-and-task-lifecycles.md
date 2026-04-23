@@ -1,6 +1,6 @@
-# Explanation: Request and Task Lifecycles (Deep Dive)
+# Explanation: Request and Task Lifecycles
 
-This is the most important behavior document. It connects runtime paths to concrete code.
+This document maps runtime paths to concrete code locations.
 
 For a deeper and strictly step-by-step tiering path from metadata insert to worker claim, see:
 
@@ -11,9 +11,9 @@ For a deeper and strictly step-by-step tiering path from metadata insert to work
 
 Primary code:
 
-1. route: `cmd/api/main.go` (`registerV2ObjectRoutes`)
-2. write logic: `internal/writeservice/writeservice.go`
-3. metadata commit: `internal/meta/tikv_store_objects.go`
+1. route: [`cmd/api/main.go`](../../cmd/api/main.go) (`registerV2ObjectRoutes`)
+2. write logic: [`internal/writeservice/writeservice.go`](../../internal/writeservice/writeservice.go)
+3. metadata commit: [`internal/meta/tikv_store_objects.go`](../../internal/meta/tikv_store_objects.go)
 
 ### 1.1 Sequence
 
@@ -55,9 +55,9 @@ sequenceDiagram
 
 Primary code:
 
-1. route: `cmd/api/main.go`
+1. route: [`cmd/api/main.go`](../../cmd/api/main.go)
 2. metadata lookup: `loadMetadata(...)`
-3. reads: `internal/readservice/readservice.go`
+3. reads: [`internal/readservice/readservice.go`](../../internal/readservice/readservice.go)
 
 ### 2.1 Sequence
 
@@ -93,7 +93,7 @@ sequenceDiagram
 
 Primary code:
 
-1. route: `cmd/api/main.go`
+1. route: [`cmd/api/main.go`](../../cmd/api/main.go)
 2. storage delete helpers: `internal/storageops/*`
 3. metadata delete: `DeleteNormalizedMetadata`
 
@@ -108,9 +108,9 @@ Primary code:
 
 Primary code:
 
-1. claim loop: `internal/tiering/worker.go`
-2. processor: `internal/tiering/repl_to_ec_processor.go`
-3. metadata transition: `internal/meta/tikv_store_migration.go`
+1. claim loop: [`internal/tiering/worker.go`](../../internal/tiering/worker.go)
+2. processor: [`internal/tiering/repl_to_ec_processor.go`](../../internal/tiering/repl_to_ec_processor.go)
+3. metadata transition: [`internal/meta/tikv_store_migration.go`](../../internal/meta/tikv_store_migration.go)
 
 ### 4.1 Processing steps
 
@@ -126,7 +126,7 @@ Primary code:
 
 ## 5. Repair Lifecycle (`REPAIR`)
 
-Primary code: `internal/tiering/repair_replication_processor.go`
+Primary code: [`internal/tiering/repair_replication_processor.go`](../../internal/tiering/repair_replication_processor.go)
 
 ### 5.1 HOT repair
 
@@ -147,8 +147,8 @@ Primary code: `internal/tiering/repair_replication_processor.go`
 
 Primary code:
 
-1. candidate enqueue: `internal/meta/tikv_store_old_version_gc.go`
-2. execution: `internal/tiering/old_version_gc_processor.go`
+1. candidate enqueue: [`internal/meta/tikv_store_old_version_gc.go`](../../internal/meta/tikv_store_old_version_gc.go)
+2. execution: [`internal/tiering/old_version_gc_processor.go`](../../internal/tiering/old_version_gc_processor.go)
 
 ### 6.1 Rules
 
@@ -166,8 +166,8 @@ Primary code:
 
 Primary code:
 
-1. lock loop: `cmd/tiering_worker/main.go`
-2. lock impl: `internal/meta/kvstore/client.go`
+1. lock loop: [`cmd/tiering_worker/main.go`](../../cmd/tiering_worker/main.go)
+2. lock impl: [`internal/meta/kvstore/client.go`](../../internal/meta/kvstore/client.go)
 
 ### 7.1 Behavior
 

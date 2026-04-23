@@ -139,5 +139,5 @@ flowchart TB
 
 1. API remains independent from backend metadata technology details.
 2. Lock and metadata semantics are centralized.
-3. Multi-component code can share one repository contract (`internal/meta/repository.go`).
+3. Multi-component code can share one repository contract ([`internal/meta/repository.go`](../../internal/meta/repository.go)).
 4. Failure handling is easier to reason about when state machine is centralized.

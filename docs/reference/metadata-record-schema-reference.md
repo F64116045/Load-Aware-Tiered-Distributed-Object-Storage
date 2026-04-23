@@ -4,7 +4,7 @@ This is the concrete metadata record schema persisted in TiKV values.
 
 Source of truth:
 
-1. `internal/meta/tikv_store_schema.go`
+1. [`internal/meta/tikv_store_schema.go`](../../internal/meta/tikv_store_schema.go)
 
 ## 1. `tiKVObjectRecord`
 
@@ -90,7 +90,7 @@ updated_at: time
 
 ## 8. Derived Runtime Views
 
-The repository maps concrete records to admin/runtime structs in `internal/meta/types.go`:
+The repository maps concrete records to admin/runtime structs in [`internal/meta/types.go`](../../internal/meta/types.go):
 
 1. `ObjectAdminView`
 2. `TieringTask`

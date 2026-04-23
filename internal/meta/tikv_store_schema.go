@@ -10,6 +10,7 @@ const (
 	tiKVPrefixTask    = "task/"
 	tiKVPrefixTaskRdy = "task_ready/"
 	tiKVPrefixTaskWtg = "task_wait/"
+	tiKVPrefixTaskTer = "task_terminal/"
 	tiKVPrefixHB      = "hb/"
 	tiKVPrefixLeader  = "leader/"
 	tiKVPrefixLk      = "leader_lock/"

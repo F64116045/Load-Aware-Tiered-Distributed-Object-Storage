@@ -41,7 +41,7 @@ flowchart LR
 
 ### 4.1 Functional profile
 
-File: `docker-compose.yaml`
+File: [`docker-compose.yaml`](../../docker-compose.yaml)
 
 1. 1 PD
 2. 1 TiKV

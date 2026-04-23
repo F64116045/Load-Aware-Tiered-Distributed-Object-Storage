@@ -168,3 +168,9 @@ These endpoints are internal data-plane primitives:
 4. `DELETE /delete/*key`
 5. `GET /health`
 6. `GET /info`
+
+## 5. Related Documents
+
+1. [Request and Task Lifecycles](../explanation/put-get-delete-and-task-lifecycles.md)
+2. [Metadata RPC Method Mapping Reference](metadata-rpc-method-mapping-reference.md)
+3. [Configuration Env Vars Reference](configuration-env-vars-reference.md)

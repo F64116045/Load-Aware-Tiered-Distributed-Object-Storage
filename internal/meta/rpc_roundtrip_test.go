@@ -81,6 +81,16 @@ func TestRPCClientServerRoundTrip(t *testing.T) {
 	if task == nil || task.TaskID != taskID {
 		t.Fatalf("unexpected claimed task: %+v", task)
 	}
+	if err := client.MarkTieringTaskDone(ctx, taskID); err != nil {
+		t.Fatalf("mark task done failed: %v", err)
+	}
+	purged, err := client.PurgeTerminalTieringTasks(ctx, time.Now().Add(time.Hour), 10)
+	if err != nil {
+		t.Fatalf("purge terminal tasks failed: %v", err)
+	}
+	if purged <= 0 {
+		t.Fatalf("expected purged terminal tasks > 0, got=%d", purged)
+	}
 
 	lock, acquired, err := client.TryAcquireLeaderLock(ctx, 42042)
 	if err != nil {

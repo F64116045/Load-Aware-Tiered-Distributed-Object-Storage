@@ -42,6 +42,12 @@ type policyScannerStubStore struct {
 		maxTasks   int
 	}
 
+	historyReaperCalls int
+	lastHistoryReaper  struct {
+		olderThan time.Time
+		limit     int
+	}
+
 	heartbeats []meta.NodeHeartbeatSnapshot
 }
 
@@ -89,6 +95,15 @@ func (s *policyScannerStubStore) EnqueueOldVersionGCCandidates(ctx context.Conte
 	s.lastOldVersion.keepLatest = keepLatest
 	s.lastOldVersion.minAgeSec = minAgeSec
 	s.lastOldVersion.maxTasks = maxTasks
+	return 1, nil
+}
+
+func (s *policyScannerStubStore) PurgeTerminalTieringTasks(ctx context.Context, olderThan time.Time, limit int) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.historyReaperCalls++
+	s.lastHistoryReaper.olderThan = olderThan
+	s.lastHistoryReaper.limit = limit
 	return 1, nil
 }
 
@@ -359,5 +374,121 @@ func TestPolicyScanner_IdleStableRounds_ResetOnBusySample(t *testing.T) {
 	scanner.runThresholdPass(context.Background(), "test")
 	if store.aCalls != 1 {
 		t.Fatalf("expected trigger after 2 consecutive idle samples, got=%d", store.aCalls)
+	}
+}
+
+func TestPolicyScanner_OldVersionRunsWhenRepairDisabled(t *testing.T) {
+	t.Parallel()
+
+	store := &policyScannerStubStore{}
+	scanner := NewPolicyScanner(store, PolicyScannerConfig{
+		PolicyVariant:           config.TieringPolicyA,
+		AgeThresholdSec:         10,
+		MaxObjects:              20,
+		RepairEnabled:           false,
+		OldVersionReaperEnabled: true,
+		OldVersionRetentionN:    2,
+		OldVersionRetentionAge:  3600,
+		OldVersionMaxTasks:      9,
+	})
+
+	scanner.runPolicyAndRepair(context.Background(), "test")
+
+	if store.aCalls != 1 {
+		t.Fatalf("expected policy scan to run once, calls=%d", store.aCalls)
+	}
+	if store.oldVersionCalls != 1 {
+		t.Fatalf("expected old-version scan even when repair disabled, calls=%d", store.oldVersionCalls)
+	}
+}
+
+func TestPolicyScanner_TaskHistoryReaperInterval(t *testing.T) {
+	t.Parallel()
+
+	store := &policyScannerStubStore{}
+	scanner := NewPolicyScanner(store, PolicyScannerConfig{
+		PolicyVariant:             config.TieringPolicyA,
+		AgeThresholdSec:           10,
+		MaxObjects:                20,
+		RepairEnabled:             false,
+		OldVersionReaperEnabled:   false,
+		TaskHistoryReaperEnabled:  true,
+		TaskHistoryRetentionSec:   60,
+		TaskHistoryReaperMaxTasks: 7,
+		TaskHistoryReaperInterval: time.Hour,
+	})
+
+	before := time.Now().Add(-70 * time.Second)
+	after := time.Now().Add(-50 * time.Second)
+
+	scanner.runPolicyAndRepair(context.Background(), "test")
+	if store.historyReaperCalls != 1 {
+		t.Fatalf("expected first task-history reaper call, got=%d", store.historyReaperCalls)
+	}
+	if store.lastHistoryReaper.limit != 7 {
+		t.Fatalf("unexpected task-history reaper limit=%d", store.lastHistoryReaper.limit)
+	}
+	if store.lastHistoryReaper.olderThan.Before(before) || store.lastHistoryReaper.olderThan.After(after) {
+		t.Fatalf("unexpected olderThan cutoff=%s", store.lastHistoryReaper.olderThan)
+	}
+
+	scanner.runPolicyAndRepair(context.Background(), "test")
+	if store.historyReaperCalls != 1 {
+		t.Fatalf("expected interval throttle, got calls=%d", store.historyReaperCalls)
+	}
+}
+
+func TestPolicyScanner_StrategyCBusyStillRunsMaintenanceLane(t *testing.T) {
+	t.Parallel()
+
+	store := &policyScannerStubStore{
+		heartbeats: []meta.NodeHeartbeatSnapshot{
+			{
+				NodeID:        "n1",
+				Status:        "UP",
+				LastSeenAt:    time.Now(),
+				IOQueueDepth:  128,
+				CPULoad:       0.90,
+				MemoryUsedPct: 90,
+				DiskIOWaitPct: 50,
+			},
+		},
+	}
+	scanner := NewPolicyScanner(store, PolicyScannerConfig{
+		PolicyVariant:             config.TieringPolicyC,
+		AgeThresholdSec:           1,
+		MaxObjects:                50,
+		MaxBytes:                  1024,
+		IdleStableRounds:          1,
+		IdleCPUPercent:            70,
+		IdleMemoryPercent:         80,
+		IdleIOWaitPercent:         20,
+		IdleQueueDepth:            16,
+		HeartbeatStaleSec:         30,
+		RepairEnabled:             true,
+		RepairMaxObjects:          11,
+		OldVersionReaperEnabled:   true,
+		OldVersionRetentionN:      2,
+		OldVersionRetentionAge:    3600,
+		OldVersionMaxTasks:        13,
+		TaskHistoryReaperEnabled:  true,
+		TaskHistoryRetentionSec:   60,
+		TaskHistoryReaperMaxTasks: 7,
+		TaskHistoryReaperInterval: time.Minute,
+	})
+
+	scanner.runPolicyAndRepair(context.Background(), "test")
+
+	if store.cCalls != 0 {
+		t.Fatalf("expected strategy-C tiering lane blocked by busy gate, cCalls=%d", store.cCalls)
+	}
+	if store.repairCalls != 1 || store.lastRepairMax != 11 {
+		t.Fatalf("expected maintenance repair lane to run once, calls=%d max=%d", store.repairCalls, store.lastRepairMax)
+	}
+	if store.oldVersionCalls != 1 || store.lastOldVersion.maxTasks != 13 {
+		t.Fatalf("expected maintenance old-version lane to run once, calls=%d maxTasks=%d", store.oldVersionCalls, store.lastOldVersion.maxTasks)
+	}
+	if store.historyReaperCalls != 1 || store.lastHistoryReaper.limit != 7 {
+		t.Fatalf("expected maintenance task-history lane to run once, calls=%d limit=%d", store.historyReaperCalls, store.lastHistoryReaper.limit)
 	}
 }

@@ -6,7 +6,7 @@ The system is mostly asynchronous. These loops are what keep it converging.
 
 Source:
 
-1. `cmd/storage_node/heartbeat.go`
+1. [`cmd/storage_node/heartbeat.go`](../../cmd/storage_node/heartbeat.go)
 
 Behavior:
 
@@ -22,7 +22,7 @@ Purpose:
 
 Source:
 
-1. `cmd/api/main.go` (`watchNodesFromMetadata`)
+1. [`cmd/api/main.go`](../../cmd/api/main.go) (`watchNodesFromMetadata`)
 
 Behavior:
 
@@ -37,7 +37,7 @@ Purpose:
 
 Source:
 
-1. `cmd/tiering_worker/main.go` (`runScannerAsLeader`)
+1. [`cmd/tiering_worker/main.go`](../../cmd/tiering_worker/main.go) (`runScannerAsLeader`)
 
 Behavior:
 
@@ -50,11 +50,15 @@ Purpose:
 
 1. enforce single scanner even if many workers run
 
+Related reference:
+
+1. [Scanner Leader Lock Mechanism](scanner-leader-lock-mechanism.md)
+
 ## 4. Policy Scanner Loop
 
 Source:
 
-1. `internal/tiering/policy_scanner.go`
+1. [`internal/tiering/policy_scanner.go`](../../internal/tiering/policy_scanner.go)
 
 Behavior:
 
@@ -71,7 +75,7 @@ See detailed strategy and trigger interaction:
 
 Source:
 
-1. `internal/tiering/worker.go`
+1. [`internal/tiering/worker.go`](../../internal/tiering/worker.go)
 
 Behavior:
 

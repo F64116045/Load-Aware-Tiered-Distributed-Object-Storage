@@ -4,9 +4,9 @@ This document maps RPC methods to repository operations and runtime callers.
 
 Source of truth:
 
-1. protocol constants: `internal/meta/rpc_protocol.go`
-2. server dispatch: `internal/meta/rpc_server.go`
-3. repository contract: `internal/meta/repository.go`
+1. protocol constants: [`internal/meta/rpc_protocol.go`](../../internal/meta/rpc_protocol.go)
+2. server dispatch: [`internal/meta/rpc_server.go`](../../internal/meta/rpc_server.go)
+3. repository contract: [`internal/meta/repository.go`](../../internal/meta/repository.go)
 
 ## 1. Transport Contract
 
@@ -82,6 +82,7 @@ Envelope:
 | `mark_tiering_task_done` | `MarkTieringTaskDone` | worker success path |
 | `mark_tiering_task_retry` | `MarkTieringTaskRetry` | worker retry path |
 | `mark_tiering_task_failed` | `MarkTieringTaskFailed` | worker terminal failure |
+| `purge_terminal_tiering_tasks` | `PurgeTerminalTieringTasks` | scanner task-history reaper |
 | `enqueue_tiering_candidates_strategy_a` | `EnqueueTieringCandidatesStrategyA` | scanner |
 | `enqueue_tiering_candidates_strategy_b` | `EnqueueTieringCandidatesStrategyB` | scanner |
 | `enqueue_tiering_candidates_strategy_c` | `EnqueueTieringCandidatesStrategyC` | scanner |

@@ -1,10 +1,10 @@
-# How-to: Deep Dive the Codebase Without Getting Lost
+# How-to: Trace Code by Runtime Flow
 
-Use this when you want to regain full engineering control quickly.
+Scope: map runtime behavior to source files with a fixed reading order.
 
 ## 1. Strategy
 
-Do not read files randomly. Use feature slices:
+Read by feature slices:
 
 1. API ingress slice
 2. write/read service slice
@@ -18,11 +18,11 @@ Do not read files randomly. Use feature slices:
 
 Read:
 
-1. `cmd/api/bootstrap_runtime.go`
-2. `cmd/api/main.go`
-3. `cmd/api/routes_admin_misc.go`
+1. [`cmd/api/bootstrap_runtime.go`](../../cmd/api/bootstrap_runtime.go)
+2. [`cmd/api/main.go`](../../cmd/api/main.go)
+3. [`cmd/api/routes_admin_misc.go`](../../cmd/api/routes_admin_misc.go)
 
-Goal:
+Expected understanding:
 
 1. understand route registration
 2. understand dependency injection (`appRuntime`)
@@ -32,11 +32,11 @@ Goal:
 
 Read:
 
-1. `internal/writeservice/writeservice.go`
-2. `internal/readservice/readservice.go`
+1. [`internal/writeservice/writeservice.go`](../../internal/writeservice/writeservice.go)
+2. [`internal/readservice/readservice.go`](../../internal/readservice/readservice.go)
 3. `internal/storageops/*`
 
-Goal:
+Expected understanding:
 
 1. write quorum behavior
 2. metadata finalize timing
@@ -46,13 +46,13 @@ Goal:
 
 Read:
 
-1. `internal/meta/repository.go`
-2. `internal/meta/rpc_protocol.go`
-3. `internal/meta/rpc_client.go`
-4. `internal/meta/rpc_server.go`
+1. [`internal/meta/repository.go`](../../internal/meta/repository.go)
+2. [`internal/meta/rpc_protocol.go`](../../internal/meta/rpc_protocol.go)
+3. [`internal/meta/rpc_client.go`](../../internal/meta/rpc_client.go)
+4. [`internal/meta/rpc_server.go`](../../internal/meta/rpc_server.go)
 5. `internal/meta/tikv_store_*.go`
 
-Goal:
+Expected understanding:
 
 1. know every repository method family
 2. know which methods are RPC-exposed
@@ -62,12 +62,12 @@ Goal:
 
 Read:
 
-1. `cmd/tiering_worker/main.go`
-2. `internal/tiering/worker.go`
-3. `internal/tiering/policy_scanner.go`
+1. [`cmd/tiering_worker/main.go`](../../cmd/tiering_worker/main.go)
+2. [`internal/tiering/worker.go`](../../internal/tiering/worker.go)
+3. [`internal/tiering/policy_scanner.go`](../../internal/tiering/policy_scanner.go)
 4. processors in `internal/tiering/*processor*.go`
 
-Goal:
+Expected understanding:
 
 1. leader lock lifecycle
 2. scanner trigger modes and policy variants
@@ -77,12 +77,12 @@ Goal:
 
 Read:
 
-1. `cmd/storage_node/main.go`
-2. `cmd/storage_node/engine.go`
-3. `cmd/storage_node/routes.go`
-4. `cmd/storage_node/heartbeat.go`
+1. [`cmd/storage_node/main.go`](../../cmd/storage_node/main.go)
+2. [`cmd/storage_node/engine.go`](../../cmd/storage_node/engine.go)
+3. [`cmd/storage_node/routes.go`](../../cmd/storage_node/routes.go)
+4. [`cmd/storage_node/heartbeat.go`](../../cmd/storage_node/heartbeat.go)
 
-Goal:
+Expected understanding:
 
 1. durable write acknowledgment model
 2. heartbeat metrics production
@@ -90,7 +90,7 @@ Goal:
 
 ## 3. Debug Workflow
 
-When investigating a bug:
+For incident-level debugging:
 
 1. start from route handler
 2. follow service call
@@ -100,7 +100,7 @@ When investigating a bug:
 
 ## 4. Useful Commands
 
-List routes quickly:
+List routes:
 
 ```bash
 rg -n "router\.(GET|POST|PUT|DELETE|PATCH|HEAD)\(" cmd/api cmd/storage_node
@@ -118,9 +118,9 @@ List task-related code:
 rg -n "TaskType|TaskState|ClaimNextTieringTask|MarkTieringTask" internal
 ```
 
-## 5. Comprehension Check (Self-test)
+## 5. Verification Questions
 
-You are ready when you can answer:
+Code reading is complete when these questions can be answered with file-level references:
 
 1. exactly where `PUT /v2/objects/:id` commits metadata
 2. exactly where stale tasks are skipped

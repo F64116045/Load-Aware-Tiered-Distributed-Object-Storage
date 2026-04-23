@@ -280,6 +280,15 @@ func (c *RPCClient) MarkTieringTaskFailed(ctx context.Context, taskID, lastErr s
 	}, nil)
 }
 
+func (c *RPCClient) PurgeTerminalTieringTasks(ctx context.Context, olderThan time.Time, limit int) (int, error) {
+	var out rpcIntResult
+	err := c.call(ctx, rpcMethodPurgeTerminalTieringTasks, rpcPurgeTerminalTieringTasksArgs{
+		OlderThan: olderThan,
+		Limit:     limit,
+	}, &out)
+	return out.Value, err
+}
+
 func (c *RPCClient) EnqueueTieringCandidatesStrategyA(ctx context.Context, ageThresholdSec int, maxObjects int) (int, error) {
 	var out rpcIntResult
 	err := c.call(ctx, rpcMethodEnqueueTieringCandidatesA, rpcEnqueueTieringCandidatesAArgs{

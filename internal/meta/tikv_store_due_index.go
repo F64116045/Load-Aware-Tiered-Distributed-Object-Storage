@@ -118,6 +118,11 @@ func (s *TiKVStore) removeTieringDueIndexForObjectInBatch(b *kvstore.Batch, obje
 }
 
 func (s *TiKVStore) listTieringDueCandidatesReady(now time.Time, maxScan int) ([]tiKVTierDueCandidate, error) {
+	out, _, _, err := s.listTieringDueCandidatesReadyWindow(now, maxScan, "")
+	return out, err
+}
+
+func (s *TiKVStore) listTieringDueCandidatesReadyWindow(now time.Time, maxScan int, startAfterKey string) ([]tiKVTierDueCandidate, bool, string, error) {
 	if maxScan <= 0 {
 		maxScan = config.TieringDueIndexMaxScan
 	}
@@ -127,13 +132,18 @@ func (s *TiKVStore) listTieringDueCandidatesReady(now time.Time, maxScan int) ([
 
 	it, err := s.newPrefixIter(tiKVTierDuePrefix())
 	if err != nil {
-		return nil, err
+		return nil, false, "", err
 	}
 	defer it.Close()
 
 	out := make([]tiKVTierDueCandidate, 0, maxScan)
+	hasMoreReady := false
+	lastKey := startAfterKey
 	for it.First(); it.Valid(); it.Next() {
 		key := string(it.Key())
+		if startAfterKey != "" && key <= startAfterKey {
+			continue
+		}
 		eligibleNano, _, _, ok := tiKVParseTierDueKey(key)
 		if ok && eligibleNano > now.UnixNano() {
 			break
@@ -141,23 +151,25 @@ func (s *TiKVStore) listTieringDueCandidatesReady(now time.Time, maxScan int) ([
 
 		rec := tiKVTierDueRecord{}
 		if err := json.Unmarshal(it.Value(), &rec); err != nil {
-			return nil, fmt.Errorf("decode due-index record failed: %w", err)
+			return nil, false, "", fmt.Errorf("decode due-index record failed: %w", err)
 		}
 		if rec.EligibleAt.After(now) {
+			break
+		}
+		if len(out) >= maxScan {
+			hasMoreReady = true
 			break
 		}
 		out = append(out, tiKVTierDueCandidate{
 			Key:    key,
 			Record: rec,
 		})
-		if len(out) >= maxScan {
-			break
-		}
+		lastKey = key
 	}
 	if err := it.Error(); err != nil {
-		return nil, fmt.Errorf("iterate due-index failed: %w", err)
+		return nil, false, "", fmt.Errorf("iterate due-index failed: %w", err)
 	}
-	return out, nil
+	return out, hasMoreReady, lastKey, nil
 }
 
 func (s *TiKVStore) GetTieringIndexStats(ctx context.Context) (*TieringIndexStats, error) {
