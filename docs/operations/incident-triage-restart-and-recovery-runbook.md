@@ -1,8 +1,8 @@
 # Runbook (Operations and Incident Response)
 
-Audience: on-call engineer or operator.
+Scope: production-style triage and recovery for local/compose runtime incidents.
 
-Primary goal: recover service quickly and safely.
+Objective: restore service safely with deterministic triage and recovery steps.
 
 ## 1. Stack Control
 
@@ -159,3 +159,9 @@ Current practical rollback strategy (lab profile):
 2. Record timeline and impact.
 3. Add/adjust smoke test when bug class was missing.
 4. Update this runbook if steps were unclear.
+
+## 7. Related Documents
+
+1. [Debug Scanner Leader Lock Flapping](../how-to/debug-scanner-leader-lock-flapping.md)
+2. [Recover from TiKV Startup Failure](../how-to/recover-from-tikv-startup-failure.md)
+3. [Start Local Stack and Verify Health](../how-to/start-local-stack-and-verify-health.md)

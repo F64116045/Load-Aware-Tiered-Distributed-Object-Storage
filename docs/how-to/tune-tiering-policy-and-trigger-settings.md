@@ -1,6 +1,6 @@
 # How-to: Tune Tiering Policies (A/B/C + Trigger Modes)
 
-Use this when you want reproducible policy experiments.
+Scope: reproducible policy tuning and experiment parameterization.
 
 ## 1. Policy Variant Selection
 
@@ -56,7 +56,7 @@ Interpretation:
 
 Note:
 
-1. these pressure inputs are currently configuration-level inputs; scanner threshold path today is idle-window based.
+1. these pressure inputs are currently configuration-level inputs; scanner threshold path is currently idle-window based.
 
 ## 6. Suggested Experiment Template
 

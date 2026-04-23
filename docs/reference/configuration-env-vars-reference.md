@@ -2,7 +2,7 @@
 
 Source of truth:
 
-1. `internal/config/config.go`
+1. [`internal/config/config.go`](../../internal/config/config.go)
 2. service-specific startup files in `cmd/*`
 
 ## 1. Metadata Connectivity

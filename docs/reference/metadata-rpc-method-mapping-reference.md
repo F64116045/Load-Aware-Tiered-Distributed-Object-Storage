@@ -4,9 +4,9 @@ This document maps RPC methods to repository operations and runtime callers.
 
 Source of truth:
 
-1. protocol constants: `internal/meta/rpc_protocol.go`
-2. server dispatch: `internal/meta/rpc_server.go`
-3. repository contract: `internal/meta/repository.go`
+1. protocol constants: [`internal/meta/rpc_protocol.go`](../../internal/meta/rpc_protocol.go)
+2. server dispatch: [`internal/meta/rpc_server.go`](../../internal/meta/rpc_server.go)
+3. repository contract: [`internal/meta/repository.go`](../../internal/meta/repository.go)
 
 ## 1. Transport Contract
 

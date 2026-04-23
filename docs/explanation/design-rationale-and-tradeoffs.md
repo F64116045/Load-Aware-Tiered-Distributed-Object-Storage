@@ -33,3 +33,9 @@
 1. deterministic stale-task rejection
 2. repair/cleanup can target exact version
 3. supports retention and old-version lifecycle policies
+
+## 7. Related Documents
+
+1. [System Architecture and Responsibilities](system-architecture-and-responsibilities.md)
+2. [Tiering Policy Strategies and Trigger Modes](tiering-policy-strategies-and-trigger-modes.md)
+3. [Consistency and Failure Model](consistency-and-failure-model.md)

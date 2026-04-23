@@ -117,3 +117,9 @@
 `Write Quorum`
 
 1. Minimum successful replica writes required before PUT ACK.
+
+## Related Documents
+
+1. [System Architecture and Responsibilities](../explanation/system-architecture-and-responsibilities.md)
+2. [Task State Machine Reference](task-state-machine-reference.md)
+3. [TiKV Keyspace and Key Encoding Reference](tikv-keyspace-and-key-encoding-reference.md)

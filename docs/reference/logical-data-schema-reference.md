@@ -202,3 +202,9 @@ Purpose:
 | REPAIR EC | - | maybe k/m/checksum refresh | - | upsert missing ACTIVE | update REPAIR | - |
 | GC (replication) | maybe state | - | mark deleted | - | update GC | - |
 | GC_OLD_VERSION | no current change | delete old version | delete old | delete old | update GC_OLD_VERSION | remove |
+
+## 10. Related Documents
+
+1. [Metadata Record Schema Reference](metadata-record-schema-reference.md)
+2. [TiKV Keyspace and Key Encoding Reference](tikv-keyspace-and-key-encoding-reference.md)
+3. [Task State Machine Reference](task-state-machine-reference.md)
