@@ -1,4 +1,4 @@
-# Load-Aware Tiered Object Storage - A Study and Implementation of Load-Aware Asynchronous Migration (資訊專題)
+# Load-Aware Asynchronous Tiering for Distributed Object Storage - A Study and Implementation of Load-Aware Asynchronous Migration (資訊專題)
 
 A TiKV-backed object storage prototype for studying load-aware asynchronous tiering.
 
