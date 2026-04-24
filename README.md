@@ -44,11 +44,22 @@ Health check:
 curl -sS http://127.0.0.1:8000/health
 ```
 
-Run core smoke:
+Run core smoke (first run / bootstrap):
+
+```bash
+START_STACK=true ./scripts/smoke_e2e_v2_tikv.sh
+```
+
+Fast re-run (only when current stack was started with the same smoke compose settings):
 
 ```bash
 START_STACK=false ./scripts/smoke_e2e_v2_tikv.sh
 ```
+
+Notes:
+
+- `START_STACK=false` reuses the current running stack and does not apply smoke overrides.
+- If you started stack via plain `./scripts/up_stack.sh` (default `AGE_THRESHOLD_SEC=3600`), run one bootstrap with `START_STACK=true` first.
 
 Stop stack:
 

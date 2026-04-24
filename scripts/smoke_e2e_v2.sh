@@ -117,7 +117,17 @@ fi
 
 if [[ "${FORCE_TASK_NOW}" == "true" && -n "${TASK_ID}" ]]; then
   echo "[6/9] Force task runnable now via admin retry-now"
-  curl -sS -f -X POST "${API_BASE}/v2/admin/tasks/${TASK_ID}/retry-now" >/dev/null || true
+  retry_http_code="$(
+    curl -sS -o /dev/null -w "%{http_code}" -X POST \
+      "${API_BASE}/v2/admin/tasks/${TASK_ID}/retry-now" || true
+  )"
+  if [[ "${retry_http_code}" == "200" ]]; then
+    echo "retry-now accepted (task requeued immediately)"
+  elif [[ "${retry_http_code}" == "404" ]]; then
+    echo "retry-now skipped: task already non-requeueable (likely claimed/running/done)"
+  elif [[ -n "${retry_http_code}" ]]; then
+    echo "retry-now returned HTTP ${retry_http_code}; continue with state-based validation"
+  fi
 else
   echo "[6/9] Skip force scheduling (task id unavailable or FORCE_TASK_NOW=false)"
 fi
@@ -144,6 +154,12 @@ obj_resp="$(curl -sS -f "${API_BASE}/v2/admin/objects/${KEY}")"
 if ! printf "%s" "${obj_resp}" | grep -q "\"state\":\"EC_ACTIVE\"" ||
   ! printf "%s" "${obj_resp}" | grep -q "\"tier\":\"EC\""; then
   task_state="$(find_task_state_by_object "REPL_TO_EC" "${KEY}")"
+  if [[ -z "${task_state}" ]]; then
+    echo "HINT: REPL_TO_EC task not observed for this object within timeout." >&2
+    echo "HINT: If stack was started by scripts/up_stack.sh (without smoke override)," >&2
+    echo "HINT: AGE_THRESHOLD_SEC may still be 3600 and scanner period 300s." >&2
+    echo "HINT: Run START_STACK=true ./scripts/smoke_e2e_v2_tikv.sh once, then retry with START_STACK=false." >&2
+  fi
   echo "ERROR: promotion timeout/failure. task_state=${task_state} obj=${obj_resp}" >&2
   exit 1
 fi

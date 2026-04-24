@@ -34,9 +34,22 @@ Expected result:
 
 ## 4. Run Core Smoke
 
+First run (bootstrap with smoke overrides):
+
+```bash
+START_STACK=true ./scripts/smoke_e2e_v2_tikv.sh
+```
+
+Then fast re-run:
+
 ```bash
 START_STACK=false ./scripts/smoke_e2e_v2_tikv.sh
 ```
+
+Important:
+
+1. `START_STACK=false` only reuses current running containers.
+2. If the stack was started by plain `./scripts/up_stack.sh`, smoke may stall at `HOT_ACTIVE` because default age/policy settings are not smoke-friendly.
 
 Coverage:
 

@@ -18,7 +18,12 @@ dc() {
 wait_tikv_ready() {
   local deadline=$((SECONDS + STARTUP_TIMEOUT_SEC))
   while (( SECONDS < deadline )); do
-    if dc logs --no-color tikv 2>&1 | grep -q "TiKV is ready to serve"; then
+    # Prefer probing TiKV's status endpoint; startup log wording is not stable across TiKV versions.
+    if dc exec -T tikv wget -q -O /dev/null http://127.0.0.1:20180/status >/dev/null 2>&1; then
+      return 0
+    fi
+    # Keep legacy log-match fallback for older images.
+    if dc logs --no-color --tail 200 tikv 2>&1 | grep -q "TiKV is ready to serve"; then
       return 0
     fi
     sleep 2
