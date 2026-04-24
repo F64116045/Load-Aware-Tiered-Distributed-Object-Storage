@@ -1,7 +1,11 @@
-# Load-Aware Tiered Object Storage (Replication + Erasure Coding)
+# Load-Aware Tiered Object Storage - A Study and Implementation of Load-Aware Asynchronous Migration (資訊專題)
 
-A prototype of distributed object storage in Go focused on evaluating data tiering policies: 
-how to move objects from replication to erasure coding with minimal foreground impact under resource constraints.
+A TiKV-backed object storage prototype for studying load-aware asynchronous tiering.
+
+Foreground requests serve HOT replicated objects, while background workers migrate eligible objects to EC.
+We compare three scheduling policies (A: age-based, B: budget-limited, C: pressure-aware idle-window)
+and evaluate their trade-offs on P99 latency, throughput, migration efficiency, and space savings
+under resource-constrained conditions.
 
 ## Architecture Diagrams
 
