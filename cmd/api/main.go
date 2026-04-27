@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +19,7 @@ import (
 
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/meta"
+	"hybrid_distributed_store/internal/placement"
 )
 
 // --- Service Discovery Globals ---
@@ -123,8 +123,33 @@ func watchNodesFromMetadata(ctx context.Context, metaStore meta.Repository) {
 	}
 }
 
+func selectDynamicNodesForObject(objectID string, allNodes []string, replicaTarget int, writeQuorum int, ecTarget int) ([]string, []string, error) {
+	if replicaTarget <= 0 {
+		replicaTarget = 3
+	}
+	if writeQuorum <= 0 {
+		writeQuorum = 1
+	}
+	if writeQuorum > replicaTarget {
+		return nil, nil, fmt.Errorf("HOT_WRITE_QUORUM(%d) cannot exceed HOT_REPLICA_COUNT(%d)", writeQuorum, replicaTarget)
+	}
+	if len(allNodes) < replicaTarget {
+		return nil, nil, fmt.Errorf("need %d healthy replica nodes", replicaTarget)
+	}
+	if ecTarget <= 0 {
+		ecTarget = config.K + config.M
+	}
+	if len(allNodes) < ecTarget {
+		return nil, nil, fmt.Errorf("need %d healthy EC nodes", ecTarget)
+	}
+
+	replicaNodes := placement.SelectByRendezvous(placement.HotReplicaKey(objectID), allNodes, replicaTarget)
+	ecNodes := placement.SelectByRendezvous(placement.ECShardKey(objectID, 0), allNodes, ecTarget)
+	return replicaNodes, ecNodes, nil
+}
+
 // getDynamicNodes ensures enough nodes are available for operations.
-func getDynamicNodes(c *gin.Context) ([]string, []string, error) {
+func getDynamicNodes(c *gin.Context, objectID string) ([]string, []string, error) {
 	select {
 	case <-NodesReadyEvent:
 	case <-time.After(30 * time.Second):
@@ -138,40 +163,30 @@ func getDynamicNodes(c *gin.Context) ([]string, []string, error) {
 	for _, url := range ActiveNodeURLs {
 		allNodes = append(allNodes, url)
 	}
-	sort.Strings(allNodes)
 	NodeListLock.RUnlock()
 
 	replicaTarget := config.HotReplicaCount
-	if replicaTarget <= 0 {
-		replicaTarget = 3
-	}
 	writeQuorum := config.HotWriteQuorum
-	if writeQuorum <= 0 {
-		writeQuorum = 1
-	}
-	if writeQuorum > replicaTarget {
+	replicaNodes, ecNodes, selectErr := selectDynamicNodesForObject(objectID, allNodes, replicaTarget, writeQuorum, config.K+config.M)
+	if selectErr != nil {
+		if strings.Contains(selectErr.Error(), "HOT_WRITE_QUORUM") {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":  "Service unavailable: invalid hot write configuration",
+				"detail": selectErr.Error(),
+			})
+			return nil, nil, fmt.Errorf("invalid hot write configuration")
+		}
+		if strings.Contains(selectErr.Error(), "replica") {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":  "Service unavailable: Insufficient replica nodes",
+				"detail": selectErr.Error(),
+			})
+			return nil, nil, fmt.Errorf("service unavailable")
+		}
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":  "Service unavailable: invalid hot write configuration",
-			"detail": fmt.Sprintf("HOT_WRITE_QUORUM(%d) cannot exceed HOT_REPLICA_COUNT(%d)", writeQuorum, replicaTarget),
+			"error":  "Service unavailable: Insufficient EC nodes",
+			"detail": selectErr.Error(),
 		})
-		return nil, nil, fmt.Errorf("invalid hot write configuration")
-	}
-
-	replicaNodes := allNodes
-	if len(allNodes) > replicaTarget {
-		replicaNodes = allNodes[:replicaTarget]
-	}
-	ecNodes := allNodes
-
-	if len(replicaNodes) < replicaTarget {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":  "Service unavailable: Insufficient replica nodes",
-			"detail": fmt.Sprintf("need %d healthy replica nodes", replicaTarget),
-		})
-		return nil, nil, fmt.Errorf("service unavailable")
-	}
-	if len(ecNodes) < config.K+config.M {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": fmt.Sprintf("Service unavailable: Insufficient EC nodes (need %d)", config.K+config.M)})
 		return nil, nil, fmt.Errorf("service unavailable")
 	}
 
@@ -222,8 +237,77 @@ func loadMetadata(ctx context.Context, key string, metaStore meta.Repository) (m
 	return pgNormalizedMeta, "normalized_metadata", nil
 }
 
+func hotReplicaNodesFromMetadata(metadata map[string]interface{}) []string {
+	if len(metadata) == 0 {
+		return nil
+	}
+
+	addNode := func(out []string, seen map[string]struct{}, nodeID string) []string {
+		nodeID = strings.TrimSpace(nodeID)
+		if nodeID == "" {
+			return out
+		}
+		if _, ok := seen[nodeID]; ok {
+			return out
+		}
+		seen[nodeID] = struct{}{}
+		return append(out, nodeID)
+	}
+
+	nodes := make([]string, 0)
+	seen := make(map[string]struct{})
+	switch placements := metadata["hot_replicas"].(type) {
+	case []map[string]interface{}:
+		for _, placement := range placements {
+			status, _ := placement["status"].(string)
+			if status != "" && status != "ACTIVE" {
+				continue
+			}
+			nodeID, _ := placement["node_id"].(string)
+			nodes = addNode(nodes, seen, nodeID)
+		}
+	case []interface{}:
+		for _, item := range placements {
+			placement, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			status, _ := placement["status"].(string)
+			if status != "" && status != "ACTIVE" {
+				continue
+			}
+			nodeID, _ := placement["node_id"].(string)
+			nodes = addNode(nodes, seen, nodeID)
+		}
+	}
+	if len(nodes) > 0 {
+		return nodes
+	}
+
+	switch replicaNodes := metadata["replica_nodes"].(type) {
+	case []string:
+		for _, nodeID := range replicaNodes {
+			nodes = addNode(nodes, seen, nodeID)
+		}
+	case []interface{}:
+		for _, item := range replicaNodes {
+			nodeID, _ := item.(string)
+			nodes = addNode(nodes, seen, nodeID)
+		}
+	}
+	return nodes
+}
+
+func preferMetadataReplicaNodes(metadata map[string]interface{}, fallback []string) []string {
+	nodes := hotReplicaNodesFromMetadata(metadata)
+	if len(nodes) > 0 {
+		return nodes
+	}
+	return fallback
+}
+
 type v2ObjectRouteDeps struct {
-	getDynamicNodes              func(c *gin.Context) ([]string, []string, error)
+	getDynamicNodes              func(c *gin.Context, objectID string) ([]string, []string, error)
 	writeReplicationWithMetadata func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error)
 	loadMetadata                 func(ctx context.Context, key string) (map[string]interface{}, string, error)
 	readReplication              func(ctx context.Context, replicaNodes []string, key string) ([]byte, error)
@@ -256,7 +340,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			return
 		}
 
-		replicaNodes, _, err := deps.getDynamicNodes(c)
+		replicaNodes, _, err := deps.getDynamicNodes(c, objectID)
 		if err != nil {
 			return
 		}
@@ -305,7 +389,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			return
 		}
 
-		replicaNodes, ecNodes, err := deps.getDynamicNodes(c)
+		replicaNodes, ecNodes, err := deps.getDynamicNodes(c, objectID)
 		if err != nil {
 			return
 		}
@@ -324,6 +408,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 		var dataBytes []byte
 		switch config.StorageStrategy(strategyStr) {
 		case config.StrategyReplication:
+			replicaNodes = preferMetadataReplicaNodes(metadata, replicaNodes)
 			hotKey := objectID
 			if hk, ok := metadata["hot_key"].(string); ok && strings.TrimSpace(hk) != "" {
 				hotKey = strings.TrimSpace(hk)
@@ -363,7 +448,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			return
 		}
 
-		replicaNodes, ecNodes, err := deps.getDynamicNodes(c)
+		replicaNodes, ecNodes, err := deps.getDynamicNodes(c, objectID)
 		if err != nil {
 			return
 		}
@@ -387,6 +472,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 
 		switch config.StorageStrategy(strategyStr) {
 		case config.StrategyReplication:
+			replicaNodes = preferMetadataReplicaNodes(metadata, replicaNodes)
 			hotKey := objectID
 			if hk, ok := metadata["hot_key"].(string); ok && strings.TrimSpace(hk) != "" {
 				hotKey = strings.TrimSpace(hk)

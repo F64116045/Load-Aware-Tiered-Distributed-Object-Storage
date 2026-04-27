@@ -20,7 +20,7 @@ func newLegacyTestRouter(deps legacyRouteDeps) *gin.Engine {
 
 func baseLegacyDeps() legacyRouteDeps {
 	return legacyRouteDeps{
-		getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+		getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 			return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 		},
 		loadMetadata: func(ctx context.Context, key string) (map[string]interface{}, string, error) {

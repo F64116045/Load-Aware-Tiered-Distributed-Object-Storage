@@ -16,7 +16,7 @@ import (
 )
 
 type legacyRouteDeps struct {
-	getDynamicNodes func(c *gin.Context) ([]string, []string, error)
+	getDynamicNodes func(c *gin.Context, objectID string) ([]string, []string, error)
 	loadMetadata    func(ctx context.Context, key string) (map[string]interface{}, string, error)
 
 	writeReplication func(ctx context.Context, replicaNodes []string, key string, value []byte) (map[string]interface{}, error)
@@ -42,7 +42,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 		key := c.Query("key")
 		strategy := config.StorageStrategy(c.DefaultQuery("strategy", string(config.StrategyReplication)))
 
-		replicaNodes, _, err := deps.getDynamicNodes(c)
+		replicaNodes, _, err := deps.getDynamicNodes(c, key)
 		if err != nil {
 			return
 		}
@@ -108,7 +108,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 
 	router.GET("/read/:key", func(c *gin.Context) {
 		key := c.Param("key")
-		replicaNodes, ecNodes, err := deps.getDynamicNodes(c)
+		replicaNodes, ecNodes, err := deps.getDynamicNodes(c, key)
 		if err != nil {
 			return
 		}
@@ -129,6 +129,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			var dataBytes []byte
 			var errRead error
 			if config.StorageStrategy(strategyStr) == config.StrategyReplication {
+				replicaNodes = preferMetadataReplicaNodes(metadata, replicaNodes)
 				hotKey := key
 				if hk, ok := metadata["hot_key"].(string); ok && strings.TrimSpace(hk) != "" {
 					hotKey = strings.TrimSpace(hk)
@@ -168,7 +169,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 	router.DELETE("/delete/:key", func(c *gin.Context) {
 		start := time.Now()
 		key := c.Param("key")
-		replicaNodes, ecNodes, err := deps.getDynamicNodes(c)
+		replicaNodes, ecNodes, err := deps.getDynamicNodes(c, key)
 		if err != nil {
 			return
 		}
@@ -192,6 +193,7 @@ func registerLegacyRoutes(router gin.IRoutes, deps legacyRouteDeps) {
 			var delErr error
 			switch config.StorageStrategy(strategyStr) {
 			case config.StrategyReplication:
+				replicaNodes = preferMetadataReplicaNodes(metadata, replicaNodes)
 				hotKey := key
 				if hk, ok := metadata["hot_key"].(string); ok && strings.TrimSpace(hk) != "" {
 					hotKey = strings.TrimSpace(hk)
