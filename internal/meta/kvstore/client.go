@@ -28,6 +28,9 @@ const (
 // ErrNotFound indicates key absence for Get operations.
 var ErrNotFound = errors.New("not found")
 
+// ErrConflict indicates an optimistic transaction write conflict.
+var ErrConflict = errors.New("write conflict")
+
 // Client is a tiny KV facade used by metadata repositories.
 //
 // Runtime mode:
@@ -192,6 +195,126 @@ type batchOp struct {
 type Batch struct {
 	db  *Client
 	ops []batchOp
+}
+
+// Txn is a tiny transaction facade used by metadata operations that need
+// read-check-write conflict detection.
+type Txn struct {
+	db      *Client
+	txn     *txnkv.KVTxn
+	memSets map[string][]byte
+	memDels map[string]struct{}
+}
+
+// RunInTxn executes fn in one TiKV transaction. For memory-backed stores it
+// applies writes atomically only when fn succeeds.
+func (d *Client) RunInTxn(ctx context.Context, fn func(*Txn) error) error {
+	if d == nil || (d.client == nil && d.mem == nil) || fn == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d.mem != nil {
+		d.mem.mu.Lock()
+		defer d.mem.mu.Unlock()
+		t := &Txn{
+			db:      d,
+			memSets: make(map[string][]byte),
+			memDels: make(map[string]struct{}),
+		}
+		if err := fn(t); err != nil {
+			return err
+		}
+		for key := range t.memDels {
+			delete(d.mem.kv, key)
+		}
+		for key, value := range t.memSets {
+			d.mem.kv[key] = append([]byte(nil), value...)
+		}
+		return nil
+	}
+
+	tikvTxn, err := d.client.Begin()
+	if err != nil {
+		return fmt.Errorf("tikv begin transaction failed: %w", err)
+	}
+	t := &Txn{db: d, txn: tikvTxn}
+	if err := fn(t); err != nil {
+		_ = tikvTxn.Rollback()
+		return err
+	}
+	if err := tikvTxn.Commit(ctx); err != nil {
+		_ = tikvTxn.Rollback()
+		if tikverr.IsErrWriteConflict(err) {
+			return ErrConflict
+		}
+		return fmt.Errorf("tikv transaction commit failed: %w", err)
+	}
+	return nil
+}
+
+func (t *Txn) Get(ctx context.Context, key []byte) ([]byte, error) {
+	if t == nil || t.db == nil {
+		return nil, ErrNotFound
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if t.db.mem != nil {
+		k := string(key)
+		if _, deleted := t.memDels[k]; deleted {
+			return nil, ErrNotFound
+		}
+		if value, ok := t.memSets[k]; ok {
+			return append([]byte(nil), value...), nil
+		}
+		value, ok := t.db.mem.kv[k]
+		if !ok {
+			return nil, ErrNotFound
+		}
+		return append([]byte(nil), value...), nil
+	}
+	value, err := t.txn.Get(ctx, key)
+	if err != nil {
+		if tikverr.IsErrNotFound(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("tikv transaction get failed: %w", err)
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (t *Txn) Set(key []byte, value []byte) error {
+	if t == nil || t.db == nil {
+		return nil
+	}
+	if t.db.mem != nil {
+		k := string(key)
+		delete(t.memDels, k)
+		t.memSets[k] = append([]byte(nil), value...)
+		return nil
+	}
+	if err := t.txn.Set(key, value); err != nil {
+		return fmt.Errorf("tikv transaction set failed: %w", err)
+	}
+	return nil
+}
+
+func (t *Txn) Delete(key []byte) error {
+	if t == nil || t.db == nil {
+		return nil
+	}
+	if t.db.mem != nil {
+		k := string(key)
+		delete(t.memSets, k)
+		t.memDels[k] = struct{}{}
+		return nil
+	}
+	if err := t.txn.Delete(key); err != nil {
+		return fmt.Errorf("tikv transaction delete failed: %w", err)
+	}
+	return nil
 }
 
 func (d *Client) NewBatch() *Batch {

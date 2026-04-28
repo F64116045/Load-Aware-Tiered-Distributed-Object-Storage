@@ -1,6 +1,8 @@
 package kvstore
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -58,5 +60,60 @@ func TestLockValueBackwardCompatibleFallback(t *testing.T) {
 	}
 	if gotExp != 0 {
 		t.Fatalf("fallback expiry must be 0, got=%d", gotExp)
+	}
+}
+
+func TestRunInTxnMemoryCommitAndRollback(t *testing.T) {
+	t.Parallel()
+
+	client, err := Open("memory://txn-test", nil)
+	if err != nil {
+		t.Fatalf("open memory client failed: %v", err)
+	}
+	ctx := context.Background()
+	key := []byte("task/t1")
+
+	if err := client.RunInTxn(ctx, func(txn *Txn) error {
+		if err := txn.Set(key, []byte("running")); err != nil {
+			return err
+		}
+		got, err := txn.Get(ctx, key)
+		if err != nil {
+			return err
+		}
+		if string(got) != "running" {
+			t.Fatalf("txn read-own-write mismatch: got=%q", string(got))
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("commit transaction failed: %v", err)
+	}
+
+	got, closer, err := client.Get(key)
+	if err != nil {
+		t.Fatalf("expected committed value: %v", err)
+	}
+	_ = closer.Close()
+	if string(got) != "running" {
+		t.Fatalf("committed value mismatch: got=%q", string(got))
+	}
+
+	rollbackErr := errors.New("rollback")
+	if err := client.RunInTxn(ctx, func(txn *Txn) error {
+		if err := txn.Set(key, []byte("failed")); err != nil {
+			return err
+		}
+		return rollbackErr
+	}); !errors.Is(err, rollbackErr) {
+		t.Fatalf("expected rollback error, got=%v", err)
+	}
+
+	got, closer, err = client.Get(key)
+	if err != nil {
+		t.Fatalf("expected original value after rollback: %v", err)
+	}
+	_ = closer.Close()
+	if string(got) != "running" {
+		t.Fatalf("rollback leaked value: got=%q", string(got))
 	}
 }
