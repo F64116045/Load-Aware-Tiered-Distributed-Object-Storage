@@ -8,11 +8,11 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"sort"
 
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/interfaces"
 	"hybrid_distributed_store/internal/meta"
+	"hybrid_distributed_store/internal/placement"
 )
 
 // ReplicationRepairProcessor heals missing placements for current object version.
@@ -96,16 +96,7 @@ func (p *ReplicationRepairProcessor) processHOTRepair(ctx context.Context, task 
 	}
 
 	need := targetReplicaCount - len(replicas)
-	targetNodes := make([]string, 0, need)
-	for _, nodeID := range healthyNodes {
-		if _, exists := activeSet[nodeID]; exists {
-			continue
-		}
-		targetNodes = append(targetNodes, nodeID)
-		if len(targetNodes) >= need {
-			break
-		}
-	}
+	targetNodes := p.pickRepairTargetNodes(placement.HotRepairKey(task.ObjectID, task.Version), healthyNodes, activeSet, need)
 	if len(targetNodes) == 0 {
 		return fmt.Errorf("no candidate nodes to place repaired replicas")
 	}
@@ -227,9 +218,7 @@ func (p *ReplicationRepairProcessor) processECRepair(ctx context.Context, task *
 	if len(healthyNodes) == 0 {
 		return fmt.Errorf("no healthy nodes available for ec repair")
 	}
-	sort.Strings(healthyNodes)
-
-	targetNodes := p.pickRepairTargetNodes(healthyNodes, usedNodeSet, len(missingIndices))
+	targetNodes := p.pickRepairTargetNodes(placement.ECRepairKey(task.ObjectID, task.Version), healthyNodes, usedNodeSet, len(missingIndices))
 	if len(targetNodes) < len(missingIndices) {
 		return fmt.Errorf("not enough target nodes for ec repair: need=%d got=%d", len(missingIndices), len(targetNodes))
 	}
@@ -372,22 +361,33 @@ func (p *ReplicationRepairProcessor) writeSingleBlob(ctx context.Context, nodeID
 	return nil
 }
 
-func (p *ReplicationRepairProcessor) pickRepairTargetNodes(healthyNodes []string, usedNodeSet map[string]struct{}, need int) []string {
-	out := make([]string, 0, need)
+func (p *ReplicationRepairProcessor) pickRepairTargetNodes(key string, healthyNodes []string, usedNodeSet map[string]struct{}, need int) []string {
+	if need <= 0 {
+		return nil
+	}
+	unused := make([]string, 0, len(healthyNodes))
 	for _, nodeID := range healthyNodes {
 		if _, used := usedNodeSet[nodeID]; used {
 			continue
 		}
-		out = append(out, nodeID)
-		if len(out) >= need {
-			return out
-		}
+		unused = append(unused, nodeID)
 	}
+
+	out := placement.SelectByRendezvous(key, unused, need)
+	if len(out) >= need {
+		return out
+	}
+	selected := make(map[string]struct{}, len(out))
+	for _, nodeID := range out {
+		selected[nodeID] = struct{}{}
+	}
+	fallback := make([]string, 0, len(healthyNodes))
 	for _, nodeID := range healthyNodes {
-		out = append(out, nodeID)
-		if len(out) >= need {
-			return out
+		if _, ok := selected[nodeID]; ok {
+			continue
 		}
+		fallback = append(fallback, nodeID)
 	}
+	out = append(out, placement.SelectByRendezvous(key+":fallback", fallback, need-len(out))...)
 	return out
 }
