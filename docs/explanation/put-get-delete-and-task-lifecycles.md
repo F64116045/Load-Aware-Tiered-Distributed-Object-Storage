@@ -29,6 +29,7 @@ sequenceDiagram
   C->>N: PUT /v2/objects/:id (raw bytes)
   N->>A: forward request
   A->>M: list healthy nodes
+  A->>A: rank healthy nodes by object id (rendezvous hashing)
   A->>S: POST /store?key=hot/<id>/<version> (parallel)
   S-->>A: per-node write result (durable fsync before ACK)
   A->>M: upsert normalized metadata
@@ -45,6 +46,8 @@ sequenceDiagram
 2. Metadata commit occurs after quorum success.
 3. Each write creates a new version id (`hot_version`).
 4. Partial replica success is marked (`is_dirty=true`), and repair is scanner-enqueued later.
+5. Healthy nodes are selected by deterministic rendezvous ranking, not fixed first-N order.
+6. Successful HOT replica placements are persisted in `repl/*` and returned as `hot_replicas` / `replica_nodes`.
 
 ### 1.3 Why this shape
 
@@ -88,6 +91,7 @@ sequenceDiagram
 1. GET does not require client to provide version.
 2. current version resolved from metadata head.
 3. content type returned from metadata if available.
+4. HOT reads prefer recorded replica placement from metadata before falling back to dynamic node selection.
 
 ## 3. DELETE Lifecycle (`DELETE /v2/objects/:id`)
 
@@ -103,6 +107,7 @@ Primary code:
 2. branch by strategy
 3. delete physical data from storage nodes
 4. remove metadata records (object/version/placements/due index)
+5. HOT deletes prefer recorded replica placement; EC deletes prefer recorded shard placement.
 
 ## 4. Background Tiering Lifecycle (`REPL_TO_EC`)
 
@@ -120,7 +125,7 @@ Primary code:
 4. mark object `MIGRATING`
 5. fetch source bytes from active replicas
 6. split+encode shards (k,m)
-7. write shards to nodes
+7. write shards to rendezvous-ranked healthy nodes
 8. promote metadata tier to `EC_ACTIVE`
 9. enqueue replication GC task
 
