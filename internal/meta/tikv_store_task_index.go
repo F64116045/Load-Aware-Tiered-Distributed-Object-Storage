@@ -1,6 +1,9 @@
 package meta
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -263,9 +266,12 @@ func (s *TiKVStore) promoteDueWaitingTasksLocked(now time.Time, maxPromote int) 
 	return touched, nil
 }
 
-func (s *TiKVStore) claimNextTieringTaskFromReadyIndexLocked(now time.Time, taskType string) (*TieringTask, bool, error) {
+func (s *TiKVStore) claimNextTieringTaskFromReadyIndexLocked(ctx context.Context, now time.Time, taskType string) (*TieringTask, bool, error) {
 	if s == nil || s.kv == nil {
 		return nil, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if now.IsZero() {
 		now = time.Now()
@@ -309,20 +315,99 @@ func (s *TiKVStore) claimNextTieringTaskFromReadyIndexLocked(now time.Time, task
 			continue
 		}
 
-		prev := copyTaskRecord(rec)
-		startedAt := now
-		rec.TaskState = "RUNNING"
-		rec.StartedAt = &startedAt
-		rec.FinishedAt = nil
-		rec.LastError = nil
-		if err := s.writeTaskRecordWithRunnableIndexLocked(prev, rec, now); err != nil {
+		task, claimed, err := s.tryClaimTaskCAS(ctx, readyKeyRaw, indexedType, taskID, now)
+		if err != nil {
 			return nil, false, err
 		}
-		task := toTieringTaskFromTiKV(*rec)
-		return &task, true, nil
+		if !claimed {
+			continue
+		}
+		return task, true, nil
 	}
 	if err := it.Error(); err != nil {
 		return nil, false, fmt.Errorf("iterate task ready index failed: %w", err)
 	}
 	return nil, false, nil
+}
+
+func (s *TiKVStore) tryClaimTaskCAS(ctx context.Context, readyKeyRaw []byte, indexedType string, taskID string, now time.Time) (*TieringTask, bool, error) {
+	if s == nil || s.kv == nil || taskID == "" {
+		return nil, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	var claimed *TieringTask
+	err := s.kv.RunInTxn(ctx, func(txn *kvstore.Txn) error {
+		taskKey := tiKVTaskKey(taskID)
+		raw, err := txn.Get(ctx, []byte(taskKey))
+		if err != nil {
+			if errors.Is(err, kvstore.ErrNotFound) {
+				if len(readyKeyRaw) > 0 {
+					return txn.Delete(readyKeyRaw)
+				}
+				return nil
+			}
+			return err
+		}
+
+		var rec tiKVTaskRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return fmt.Errorf("decode task record for cas claim failed: %w", err)
+		}
+		if rec.TaskID == "" {
+			rec.TaskID = taskID
+		}
+
+		if rec.TaskType != indexedType || !isTaskRunnableState(rec.TaskState) || rec.ScheduledAt.After(now) {
+			return nil
+		}
+
+		startedAt := now
+		rec.TaskState = "RUNNING"
+		rec.StartedAt = &startedAt
+		rec.FinishedAt = nil
+		rec.LastError = nil
+
+		encoded, err := json.Marshal(&rec)
+		if err != nil {
+			return fmt.Errorf("encode task record for cas claim failed: %w", err)
+		}
+		if err := txn.Set([]byte(taskKey), encoded); err != nil {
+			return err
+		}
+		if len(readyKeyRaw) > 0 {
+			if err := txn.Delete(readyKeyRaw); err != nil {
+				return err
+			}
+		}
+		if readyKey := s.taskReadyIndexKey(&rec); readyKey != "" {
+			if err := txn.Delete([]byte(readyKey)); err != nil {
+				return err
+			}
+		}
+		if waitKey := s.taskWaitIndexKey(&rec); waitKey != "" {
+			if err := txn.Delete([]byte(waitKey)); err != nil {
+				return err
+			}
+		}
+
+		task := toTieringTaskFromTiKV(rec)
+		claimed = &task
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, kvstore.ErrConflict) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if claimed == nil {
+		return nil, false, nil
+	}
+	return claimed, true, nil
 }
