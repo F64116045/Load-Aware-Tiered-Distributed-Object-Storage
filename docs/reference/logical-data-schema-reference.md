@@ -58,6 +58,7 @@ Tier enum:
 Logical role:
 
 1. records where HOT bytes of a version are stored
+2. source of truth for HOT reads, deletes, repair, and REPL->EC source fetches
 
 Fields:
 
@@ -134,6 +135,7 @@ Task index keys:
 Logical role:
 
 1. node liveness and load input for placement/scanner decisions
+2. healthy node pool for rendezvous-ranked HOT replica and EC shard target selection
 
 Fields:
 
@@ -148,6 +150,12 @@ Fields:
 | `memory_used_pct` | float64 | memory used % |
 | `disk_iowait_pct` | float64 | iowait % |
 | `status` | enum string | `UP` or `DOWN` |
+
+Current placement boundary:
+
+1. status and heartbeat staleness decide whether a node is eligible.
+2. rendezvous hashing balances eligible nodes per object/version.
+3. load fields are used by scanner idle-window admission and observability, not yet as weighted placement penalties.
 
 ## 7. Leader State Entity
 
