@@ -185,6 +185,43 @@ func TestReadEC_Success(t *testing.T) {
 	}
 }
 
+func TestReadEC_UsesShardPlacements(t *testing.T) {
+	mockHttp := NewMockHttpClient()
+	mockEc := &MockEcDriver{}
+	nodes := []string{"http://fallback1", "http://fallback2", "http://fallback3"}
+
+	mockHttp.SetResponse("http://n4/retrieve/placed_chunk_0", 200, "aa")
+	mockHttp.SetResponse("http://n2/retrieve/placed_chunk_1", 200, "bb")
+	mockHttp.SetResponse("http://n6/retrieve/placed_chunk_2", 200, "cc")
+	mockHttp.SetResponse("http://n1/retrieve/placed_chunk_3", 200, "dd")
+	mockHttp.SetResponse("http://n5/retrieve/placed_chunk_4", 200, "ee")
+	mockHttp.SetResponse("http://n3/retrieve/placed_chunk_5", 200, "ff")
+
+	metadata := map[string]interface{}{
+		"k":               4,
+		"m":               2,
+		"chunk_prefix":    "fallback_chunk_",
+		"original_length": 8,
+		"ec_shards": []map[string]interface{}{
+			{"shard_index": 0, "node_id": "http://n4", "path": "placed_chunk_0", "status": "ACTIVE"},
+			{"shard_index": 1, "node_id": "http://n2", "path": "placed_chunk_1", "status": "ACTIVE"},
+			{"shard_index": 2, "node_id": "http://n6", "path": "placed_chunk_2", "status": "ACTIVE"},
+			{"shard_index": 3, "node_id": "http://n1", "path": "placed_chunk_3", "status": "ACTIVE"},
+			{"shard_index": 4, "node_id": "http://n5", "path": "placed_chunk_4", "status": "ACTIVE"},
+			{"shard_index": 5, "node_id": "http://n3", "path": "placed_chunk_5", "status": "ACTIVE"},
+		},
+	}
+
+	readSvc := createMockService(mockHttp, mockEc, nil)
+	data, err := readSvc.ReadEC(context.Background(), nodes, metadata)
+	if err != nil {
+		t.Fatalf("ReadEC() expected success with placements, got error: %v", err)
+	}
+	if string(data) != "aabbccdd" {
+		t.Fatalf("ReadEC() data mismatch via placements: got=%q", string(data))
+	}
+}
+
 func TestReadEC_Fails_NotEnoughChunks(t *testing.T) {
 	mockHttp := NewMockHttpClient()
 	mockEc := &MockEcDriver{}

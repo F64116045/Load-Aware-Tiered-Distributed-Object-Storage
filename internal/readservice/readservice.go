@@ -14,6 +14,12 @@ import (
 	"hybrid_distributed_store/internal/interfaces"
 )
 
+type ecShardPlacement struct {
+	index  int
+	nodeID string
+	path   string
+}
+
 // Service implements IReadService.
 // It orchestrates data retrieval across Replication and EC strategies.
 type Service struct {
@@ -136,6 +142,10 @@ func (s *Service) ReadEC(ctx context.Context, ecNodes []string, metadata map[str
 	if err != nil {
 		k = config.K
 	}
+	m, err := s.getIntFromMetadata(metadata, "m")
+	if err != nil {
+		m = config.M
+	}
 	originalLength, err := s.getIntFromMetadata(metadata, "original_length")
 	if err != nil {
 		return nil, fmt.Errorf("metadata missing 'original_length'")
@@ -150,38 +160,61 @@ func (s *Service) ReadEC(ctx context.Context, ecNodes []string, metadata map[str
 	}
 
 	// Parallel Fetch
-	chunks := make([][]byte, len(ecNodes))
+	totalShards := k + m
+	if totalShards <= 0 {
+		totalShards = len(ecNodes)
+	}
+	placements := parseECShardPlacements(metadata)
+	usePlacements := len(placements) > 0
+	if !usePlacements && len(ecNodes) > totalShards {
+		totalShards = len(ecNodes)
+	}
+	chunks := make([][]byte, totalShards)
 	var wg sync.WaitGroup
 	var mutex sync.Mutex
 	healthyCount := 0
 
-	for i, nodeURL := range ecNodes {
-		wg.Add(1)
-		go func(index int, nodeURL string) {
-			defer wg.Done()
-			chunkKey := fmt.Sprintf("%s%d", chunkPrefix, index)
+	fetchShard := func(index int, nodeURL string, chunkKey string) {
+		defer wg.Done()
+		if index < 0 || index >= len(chunks) || nodeURL == "" || chunkKey == "" {
+			return
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", nodeURL, neturl.PathEscape(chunkKey)), nil)
+		if err != nil {
+			return
+		}
+		resp, err := s.http.Do(req)
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
 
-			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/retrieve/%s", nodeURL, neturl.PathEscape(chunkKey)), nil)
+		if resp.StatusCode == http.StatusOK {
+			data, err := io.ReadAll(resp.Body)
 			if err != nil {
 				return
 			}
-			resp, err := s.http.Do(req)
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
+			mutex.Lock()
+			chunks[index] = data
+			healthyCount++
+			mutex.Unlock()
+		}
+	}
 
-			if resp.StatusCode == http.StatusOK {
-				data, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return
-				}
-				mutex.Lock()
-				chunks[index] = data
-				healthyCount++
-				mutex.Unlock()
+	if usePlacements {
+		for _, placement := range placements {
+			wg.Add(1)
+			go fetchShard(placement.index, placement.nodeID, placement.path)
+		}
+	} else {
+		for i, nodeURL := range ecNodes {
+			if i >= len(chunks) {
+				break
 			}
-		}(i, nodeURL)
+			chunkKey := fmt.Sprintf("%s%d", chunkPrefix, i)
+			wg.Add(1)
+			go fetchShard(i, nodeURL, chunkKey)
+		}
 	}
 	wg.Wait()
 
@@ -212,6 +245,70 @@ func (s *Service) ReadEC(ctx context.Context, ecNodes []string, metadata map[str
 	log.Printf("  %s[ReadService] ReadEC truncated data length = %d%s\n", config.Colors["YELLOW"], len(unpaddedData), config.Colors["RESET"])
 
 	return unpaddedData, nil
+}
+
+func parseECShardPlacements(metadata map[string]interface{}) []ecShardPlacement {
+	if metadata == nil {
+		return nil
+	}
+	raw, ok := metadata["ec_shards"]
+	if !ok {
+		return nil
+	}
+	rows, ok := raw.([]interface{})
+	if !ok {
+		if typed, ok := raw.([]map[string]interface{}); ok {
+			rows = make([]interface{}, 0, len(typed))
+			for _, row := range typed {
+				rows = append(rows, row)
+			}
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	out := make([]ecShardPlacement, 0, len(rows))
+	for _, row := range rows {
+		fields, ok := row.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		index, ok := intFromAny(fields["shard_index"])
+		if !ok {
+			continue
+		}
+		nodeID, _ := fields["node_id"].(string)
+		path, _ := fields["path"].(string)
+		status, _ := fields["status"].(string)
+		if status != "" && status != "ACTIVE" {
+			continue
+		}
+		if nodeID == "" || path == "" {
+			continue
+		}
+		out = append(out, ecShardPlacement{
+			index:  index,
+			nodeID: nodeID,
+			path:   path,
+		})
+	}
+	return out
+}
+
+func intFromAny(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	default:
+		return 0, false
+	}
 }
 
 // helper: getIntFromMetadata safely extracts an integer from the generic map.
