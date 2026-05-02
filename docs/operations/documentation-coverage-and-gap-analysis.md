@@ -17,11 +17,12 @@ Covered:
 
 Covered:
 
-1. [Logical Data Schema Reference](../reference/logical-data-schema-reference.md)
-2. [Metadata Record Schema Reference](../reference/metadata-record-schema-reference.md)
-3. [TiKV Keyspace and Key Encoding Reference](../reference/tikv-keyspace-and-key-encoding-reference.md)
-4. [Task State Machine Reference](../reference/task-state-machine-reference.md)
-5. [Metadata RPC Method Mapping Reference](../reference/metadata-rpc-method-mapping-reference.md)
+1. [Metadata Keyspace Data Model Walkthrough](../reference/metadata-keyspace-data-model-walkthrough.md)
+2. [Logical Data Schema Reference](../reference/logical-data-schema-reference.md)
+3. [Metadata Record Schema Reference](../reference/metadata-record-schema-reference.md)
+4. [TiKV Keyspace and Key Encoding Reference](../reference/tikv-keyspace-and-key-encoding-reference.md)
+5. [Task State Machine Reference](../reference/task-state-machine-reference.md)
+6. [Metadata RPC Method Mapping Reference](../reference/metadata-rpc-method-mapping-reference.md)
 
 ## 3. API and Configuration Coverage
 
@@ -61,5 +62,5 @@ Covered:
 ## 7. Reading Paths for High System Mastery
 
 1. Control plane and scheduling: [Runtime Control Loops and Schedulers](../explanation/runtime-control-loops-and-schedulers.md) -> [Scanner Leader Lock Mechanism](../explanation/scanner-leader-lock-mechanism.md) -> [Tiering Policy Strategies and Trigger Modes](../explanation/tiering-policy-strategies-and-trigger-modes.md) -> [Tiering Task Path from PUT to Worker Claim](../explanation/tiering-task-path-from-put-to-worker-claim.md).
-2. Data path and correctness: [Request and Task Lifecycles](../explanation/put-get-delete-and-task-lifecycles.md) -> [Consistency and Failure Model](../explanation/consistency-and-failure-model.md) -> [Task State Machine Reference](../reference/task-state-machine-reference.md) -> [TiKV Keyspace and Key Encoding Reference](../reference/tikv-keyspace-and-key-encoding-reference.md) + [Metadata Record Schema Reference](../reference/metadata-record-schema-reference.md).
+2. Data path and correctness: [Request and Task Lifecycles](../explanation/put-get-delete-and-task-lifecycles.md) -> [Metadata Keyspace Data Model Walkthrough](../reference/metadata-keyspace-data-model-walkthrough.md) -> [Consistency and Failure Model](../explanation/consistency-and-failure-model.md) -> [Task State Machine Reference](../reference/task-state-machine-reference.md) -> [TiKV Keyspace and Key Encoding Reference](../reference/tikv-keyspace-and-key-encoding-reference.md) + [Metadata Record Schema Reference](../reference/metadata-record-schema-reference.md).
 3. Runtime debugging: [Start Local Stack and Verify Health](../how-to/start-local-stack-and-verify-health.md) -> [Local Setup and Smoke Validation](local-setup-and-smoke-validation.md) -> [Incident Triage, Restart, and Recovery Runbook](incident-triage-restart-and-recovery-runbook.md) -> [Trace Code by Runtime Flow](../how-to/trace-code-by-runtime-flow.md).

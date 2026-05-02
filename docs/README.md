@@ -28,14 +28,15 @@ API contracts, and operational procedures for the TiKV-backed tiered object stor
 
 1. [API Endpoints Reference](reference/api-endpoints-reference.md)
 2. [Configuration Env Vars Reference](reference/configuration-env-vars-reference.md)
-3. [Logical Data Schema Reference](reference/logical-data-schema-reference.md)
-4. [Metadata Record Schema Reference](reference/metadata-record-schema-reference.md)
-5. [TiKV Keyspace and Key Encoding Reference](reference/tikv-keyspace-and-key-encoding-reference.md)
-6. [Metadata RPC Method Mapping Reference](reference/metadata-rpc-method-mapping-reference.md)
-7. [Task State Machine Reference](reference/task-state-machine-reference.md)
-8. [System Dependencies and Runtime Topology Reference](reference/system-dependencies-and-runtime-topology-reference.md)
-9. [Code Map from Runtime Flow to Files](reference/code-map-from-runtime-flow-to-files.md)
-10. [System Glossary](reference/system-glossary.md)
+3. [Metadata Keyspace Data Model Walkthrough](reference/metadata-keyspace-data-model-walkthrough.md)
+4. [Logical Data Schema Reference](reference/logical-data-schema-reference.md)
+5. [Metadata Record Schema Reference](reference/metadata-record-schema-reference.md)
+6. [TiKV Keyspace and Key Encoding Reference](reference/tikv-keyspace-and-key-encoding-reference.md)
+7. [Metadata RPC Method Mapping Reference](reference/metadata-rpc-method-mapping-reference.md)
+8. [Task State Machine Reference](reference/task-state-machine-reference.md)
+9. [System Dependencies and Runtime Topology Reference](reference/system-dependencies-and-runtime-topology-reference.md)
+10. [Code Map from Runtime Flow to Files](reference/code-map-from-runtime-flow-to-files.md)
+11. [System Glossary](reference/system-glossary.md)
 
 ## Setup and Verification
 
@@ -72,6 +73,7 @@ API contracts, and operational procedures for the TiKV-backed tiered object stor
 [Metadata RPC Method Mapping Reference](reference/metadata-rpc-method-mapping-reference.md).
 
 3. Data model and keyspace:
+[Metadata Keyspace Data Model Walkthrough](reference/metadata-keyspace-data-model-walkthrough.md) ->
 [Logical Data Schema Reference](reference/logical-data-schema-reference.md) ->
 [Metadata Record Schema Reference](reference/metadata-record-schema-reference.md) ->
 [TiKV Keyspace and Key Encoding Reference](reference/tikv-keyspace-and-key-encoding-reference.md).

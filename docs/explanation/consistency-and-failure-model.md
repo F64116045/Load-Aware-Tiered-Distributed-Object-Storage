@@ -42,7 +42,9 @@ Safety properties:
 1. each transition is explicit and observable
 2. transient errors do not drop work silently
 3. retry cap prevents infinite retry storms
-4. processing model is `at-least-once`, not strict cross-replica `exactly-once`
+4. claim transition uses a CAS-style transaction on `task/<task_id>`
+5. concurrent `meta_service` replicas should not both successfully claim the same task
+6. processing model is still not strict end-to-end `exactly-once`
 
 ## 5. Failure Cases
 
@@ -89,10 +91,13 @@ Safety properties:
 1. migration is executed in background and validated against version snapshot.
 2. object state transitions (`MIGRATION_PENDING`/`MIGRATING`/`EC_ACTIVE`) are metadata-driven.
 3. stale or superseded migration tasks are skipped safely.
-4. correctness depends on processor idempotency and stale-version checks, not global exactly-once locking.
+4. task claim is transaction-fenced, but correctness still depends on processor idempotency and stale-version checks after crashes/retries.
 
 ## 7. Current Boundary Conditions
 
-1. claim semantics are `at-least-once`; duplicate execution is still possible under distributed races.
-2. no automatic timeout reclaim for stuck `RUNNING` tasks in current implementation.
-3. manual recovery path is admin `retry-now` / `cancel`.
+1. task claim is CAS-style: claim transaction reads `task/<task_id>`, verifies it is still runnable, writes `RUNNING`, deletes runnable indexes, and commits.
+2. if another metadata service already claimed the same row, the later transaction sees a conflict or no-longer-runnable row and skips that candidate.
+3. this fences duplicate successful claims under normal concurrent `meta_service` races.
+4. no automatic timeout reclaim exists for stuck `RUNNING` tasks in current implementation.
+5. if a worker crashes after claim, recovery is admin `retry-now` / `cancel`.
+6. processors remain idempotent and version-safe because retry/crash recovery is still not strict end-to-end `exactly-once`.

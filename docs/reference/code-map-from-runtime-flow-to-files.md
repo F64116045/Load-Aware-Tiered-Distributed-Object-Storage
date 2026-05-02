@@ -28,12 +28,14 @@ Scope: fast runtime-to-file mapping for debugging and implementation work.
 3. strategy dispatch:
    - HOT: `ReadReplication` in [`internal/readservice/readservice.go`](../../internal/readservice/readservice.go)
    - EC: `ReadEC` in [`internal/readservice/readservice.go`](../../internal/readservice/readservice.go)
+4. EC placement source: `GetNormalizedMetadata` in [`internal/meta/tikv_store_objects.go`](../../internal/meta/tikv_store_objects.go) loads active `ec/*` shard rows into normalized metadata
 
 ## 4. End-to-End DELETE Map
 
 1. route handler: [`cmd/api/main.go`](../../cmd/api/main.go) (`DELETE /v2/objects/:id`)
 2. strategy-specific data deletion through storage ops
 3. metadata deletion: `DeleteNormalizedMetadata` in [`internal/meta/tikv_store_objects.go`](../../internal/meta/tikv_store_objects.go)
+4. EC deletion uses recorded shard placement in [`internal/storageops/storageops.go`](../../internal/storageops/storageops.go) when normalized metadata includes `ec_shards`
 
 ## 5. Tiering and Maintenance Engine Map
 
@@ -46,8 +48,10 @@ Scope: fast runtime-to-file mapping for debugging and implementation work.
 ### 5.2 Worker claim and dispatch
 
 1. claim: `ClaimNextTieringTask` in [`internal/meta/tikv_store_tasks.go`](../../internal/meta/tikv_store_tasks.go)
-2. dispatch: switch in [`internal/tiering/worker.go`](../../internal/tiering/worker.go)
-3. retry/fail policy: same file (`MarkTieringTaskRetry`, `MarkTieringTaskFailed`)
+2. CAS transaction helper: `RunInTxn` in [`internal/meta/kvstore/client.go`](../../internal/meta/kvstore/client.go)
+3. ready/wait index claim logic: [`internal/meta/tikv_store_task_index.go`](../../internal/meta/tikv_store_task_index.go)
+4. dispatch: switch in [`internal/tiering/worker.go`](../../internal/tiering/worker.go)
+5. retry/fail policy: same file (`MarkTieringTaskRetry`, `MarkTieringTaskFailed`)
 
 ### 5.3 Processor implementations
 
