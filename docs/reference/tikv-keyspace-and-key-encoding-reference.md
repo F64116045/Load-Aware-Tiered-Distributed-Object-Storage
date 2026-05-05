@@ -87,5 +87,6 @@ Used by:
 
 Field-level definitions:
 
-1. [Metadata Record Schema Reference](metadata-record-schema-reference.md)
-2. [Logical Data Schema Reference](logical-data-schema-reference.md)
+1. [Metadata Keyspace Data Model Walkthrough](metadata-keyspace-data-model-walkthrough.md)
+2. [Metadata Record Schema Reference](metadata-record-schema-reference.md)
+3. [Logical Data Schema Reference](logical-data-schema-reference.md)

@@ -120,6 +120,46 @@ func TestDeleteEC(t *testing.T) {
 	}
 }
 
+func TestDeleteEC_UsesShardPlacements(t *testing.T) {
+	mockHttp := NewMockHttpClient()
+	svc := createMockService(mockHttp)
+
+	nodes := []string{"http://fallback1", "http://fallback2"}
+	metadata := map[string]interface{}{
+		"key_name":     "test_ec_key",
+		"chunk_prefix": "fallback_prefix_",
+		"ec_shards": []map[string]interface{}{
+			{"shard_index": 0, "node_id": "http://n4", "path": "placed_chunk_0", "status": "ACTIVE"},
+			{"shard_index": 1, "node_id": "http://n2", "path": "placed_chunk_1", "status": "ACTIVE"},
+			{"shard_index": 2, "node_id": "http://n6", "path": "placed_chunk_2", "status": "ACTIVE"},
+			{"shard_index": 3, "node_id": "http://n1", "path": "placed_chunk_3", "status": "ACTIVE"},
+			{"shard_index": 4, "node_id": "http://n5", "path": "placed_chunk_4", "status": "ACTIVE"},
+			{"shard_index": 5, "node_id": "http://n3", "path": "placed_chunk_5", "status": "ACTIVE"},
+			{"shard_index": 6, "node_id": "http://n7", "path": "inactive_chunk", "status": "DELETED"},
+		},
+	}
+
+	count, err := svc.DeleteEC(context.Background(), nodes, metadata)
+	if err != nil {
+		t.Fatalf("DeleteEC() expected success with placements, got error: %v", err)
+	}
+	if count != 6 {
+		t.Fatalf("expected successCount 6, got %d", count)
+	}
+
+	expectedURLs := map[string]int{
+		"http://n4/delete/placed_chunk_0": 1,
+		"http://n2/delete/placed_chunk_1": 1,
+		"http://n6/delete/placed_chunk_2": 1,
+		"http://n1/delete/placed_chunk_3": 1,
+		"http://n5/delete/placed_chunk_4": 1,
+		"http://n3/delete/placed_chunk_5": 1,
+	}
+	if !reflect.DeepEqual(mockHttp.CalledURLs, expectedURLs) {
+		t.Errorf("URL call mismatch:\nExpected: %v\nActual:   %v", expectedURLs, mockHttp.CalledURLs)
+	}
+}
+
 func TestDeleteReplication_EscapesSpecialKey(t *testing.T) {
 	mockHttp := NewMockHttpClient()
 	svc := createMockService(mockHttp)

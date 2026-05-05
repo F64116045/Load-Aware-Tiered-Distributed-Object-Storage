@@ -205,6 +205,7 @@ Purpose:
 
 ## 10. Related Documents
 
-1. [Metadata Record Schema Reference](metadata-record-schema-reference.md)
-2. [TiKV Keyspace and Key Encoding Reference](tikv-keyspace-and-key-encoding-reference.md)
-3. [Task State Machine Reference](task-state-machine-reference.md)
+1. [Metadata Keyspace Data Model Walkthrough](metadata-keyspace-data-model-walkthrough.md)
+2. [Metadata Record Schema Reference](metadata-record-schema-reference.md)
+3. [TiKV Keyspace and Key Encoding Reference](tikv-keyspace-and-key-encoding-reference.md)
+4. [Task State Machine Reference](task-state-machine-reference.md)

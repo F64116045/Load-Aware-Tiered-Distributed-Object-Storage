@@ -60,14 +60,23 @@ Current claim path:
 
 1. promote due waiting tasks (`task_wait/*`) into ready index
 2. scan `task_ready/*` in key order (priority-desc, then schedule)
-3. atomically write task row + runnable indexes for `RUNNING` transition
+3. for each candidate, run a CAS-style transaction:
+   1. read authoritative row `task/<task_id>`
+   2. verify row still matches the scanned index task type
+   3. verify state is `PENDING` or `RETRY_WAIT`
+   4. verify `scheduled_at <= now`
+   5. write task row as `RUNNING`
+   6. delete stale runnable/waiting index rows for that task
+   7. commit the transaction
+4. if the transaction hits a write conflict, treat that candidate as already claimed and continue scanning
 
 Guarantee boundary:
 
-1. this is `at-least-once` processing, not strict `exactly-once`
-2. single meta instance has local serialization (`mu` lock)
-3. under multi `meta_service` replicas, duplicate execution is still possible in races
-4. processors must remain idempotent and stale-safe
+1. concurrent `meta_service` replicas should not both successfully claim the same task, because both transactions read/write the same `task/<task_id>` row
+2. this still is not strict end-to-end `exactly-once` processing
+3. if a worker crashes after a successful claim, the task can stay `RUNNING`
+4. current recovery for stuck `RUNNING` tasks is admin-driven (`retry-now` or `cancel`)
+5. processors still remain idempotent and stale-safe because retries, crashes, and stale task versions are possible
 
 ## 6. RUNNING Liveness (Current Behavior)
 

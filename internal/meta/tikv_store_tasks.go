@@ -229,7 +229,7 @@ func (s *TiKVStore) ClaimNextTieringTask(ctx context.Context, taskType string) (
 			}
 		}
 	}
-	if task, claimed, err := s.claimNextTieringTaskFromReadyIndexLocked(now, taskType); err != nil {
+	if task, claimed, err := s.claimNextTieringTaskFromReadyIndexLocked(ctx, now, taskType); err != nil {
 		return nil, err
 	} else if claimed {
 		return task, nil

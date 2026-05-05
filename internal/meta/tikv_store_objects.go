@@ -183,6 +183,30 @@ func (s *TiKVStore) GetNormalizedMetadata(ctx context.Context, objectID string) 
 	if _, ok := meta["m"]; !ok {
 		meta["m"] = 2
 	}
+	if ver.Tier == "EC" {
+		shards, err := s.listECShardRecords(objectID, obj.CurrentVersion)
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(shards, func(i, j int) bool {
+			return shards[i].ShardIndex < shards[j].ShardIndex
+		})
+		placements := make([]map[string]interface{}, 0, len(shards))
+		for _, shard := range shards {
+			if shard.Status != "ACTIVE" {
+				continue
+			}
+			placements = append(placements, map[string]interface{}{
+				"shard_index": shard.ShardIndex,
+				"node_id":     shard.NodeID,
+				"path":        shard.Path,
+				"status":      shard.Status,
+			})
+		}
+		if len(placements) > 0 {
+			meta["ec_shards"] = placements
+		}
+	}
 	return meta, nil
 }
 

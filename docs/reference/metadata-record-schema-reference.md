@@ -6,6 +6,9 @@ Source of truth:
 
 1. [`internal/meta/tikv_store_schema.go`](../../internal/meta/tikv_store_schema.go)
 
+For a worked explanation of how these records combine into read/write/delete
+flows, start with [Metadata Keyspace Data Model Walkthrough](metadata-keyspace-data-model-walkthrough.md).
+
 ## 1. `tiKVObjectRecord`
 
 ```text
@@ -108,3 +111,10 @@ Current enum-like strings are code-convention based (not centralized in one enum
 5. task states: `PENDING`, `RUNNING`, `DONE`, `RETRY_WAIT`, `FAILED`
 6. node status: `UP`, `DOWN`
 7. leader status: `LEADING`, `STOPPED`, `LOCK_LOST`
+
+## 10. Related Documents
+
+1. [Metadata Keyspace Data Model Walkthrough](metadata-keyspace-data-model-walkthrough.md)
+2. [Logical Data Schema Reference](logical-data-schema-reference.md)
+3. [TiKV Keyspace and Key Encoding Reference](tikv-keyspace-and-key-encoding-reference.md)
+4. [Task State Machine Reference](task-state-machine-reference.md)

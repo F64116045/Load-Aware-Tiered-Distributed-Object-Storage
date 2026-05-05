@@ -77,17 +77,24 @@ Worker loop:
    1. higher priority first (`priority_desc`)
    2. then earlier `scheduled_at`
 4. for each candidate:
-   1. load `task/<task_id>` row
-   2. if row/index mismatch, self-heal index and continue
-   3. if valid runnable row, transition task to `RUNNING`
-5. transition to `RUNNING` is persisted with row+index atomic batch commit
-6. worker dispatches claimed task by type
+   1. open a CAS-style metadata transaction
+   2. read `task/<task_id>` row inside the transaction
+   3. verify row still matches the scanned task type
+   4. verify task state is `PENDING` or `RETRY_WAIT`
+   5. verify `scheduled_at <= now`
+   6. set task state to `RUNNING`
+   7. clear terminal/error fields for the new attempt
+   8. delete stale `task_ready/*` and `task_wait/*` index entries
+   9. commit the transaction
+5. if commit conflicts, another metadata service likely claimed the row first; worker skips this candidate and keeps scanning
+6. worker dispatches claimed task by type after a successful claim
 
 Code:
 
 1. [`internal/meta/tikv_store_tasks.go`](../../internal/meta/tikv_store_tasks.go) (`ClaimNextTieringTask`)
 2. [`internal/meta/tikv_store_task_index.go`](../../internal/meta/tikv_store_task_index.go)
-3. [`internal/tiering/worker.go`](../../internal/tiering/worker.go)
+3. [`internal/meta/kvstore/client.go`](../../internal/meta/kvstore/client.go) (`RunInTxn`)
+4. [`internal/tiering/worker.go`](../../internal/tiering/worker.go)
 
 ### 3.4 Scheduling time semantics (`eligible_at` vs `scheduled_at`)
 
@@ -104,12 +111,13 @@ Current behavior:
 
 ### 3.5 Delivery guarantee boundary
 
-Current model is `at-least-once`:
+Current processing model remains `at-least-once`:
 
-1. claim transition uses atomic row/index write to reduce duplicate claims
-2. this is not strict cross-replica exactly-once fencing
-3. duplicate execution can still happen under races/failures
-4. processors are designed to be idempotent and stale-safe
+1. claim transition uses a TiKV transaction as a CAS fence on `task/<task_id>`
+2. two metadata services racing for the same candidate should not both commit `RUNNING`
+3. this is still not strict end-to-end exactly-once processing
+4. worker crash after successful claim can leave the task stuck in `RUNNING`
+5. processors are designed to be idempotent and stale-safe for retries, stale versions, and manual recovery
 
 ### 3.6 RUNNING stuck behavior (current)
 
