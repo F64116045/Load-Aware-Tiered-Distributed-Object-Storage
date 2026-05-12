@@ -219,6 +219,28 @@ Used by:
 3. HOT repair
 4. replica GC after EC promotion
 
+Normalized metadata exposes active HOT placements as:
+
+```json
+{
+  "hot_key": "hot/demo-001/01714300000000000000",
+  "replica_nodes": [
+    "http://storage_node_2:9002",
+    "http://storage_node_5:9005"
+  ],
+  "hot_replicas": [
+    {
+      "node_id": "http://storage_node_2:9002",
+      "path": "hot/demo-001/01714300000000000000",
+      "status": "ACTIVE"
+    }
+  ]
+}
+```
+
+Foreground HOT reads and deletes prefer these recorded placements. Dynamic node
+selection is a fallback for missing legacy placement metadata.
+
 ## 6. EC Shard Placement: `ec/`
 
 Key:
@@ -512,6 +534,10 @@ Used by scanner leader election. Only the lock owner should run the scanner.
 Metadata mutation:
 
 ```text
+healthy node set
+  filtered by status/staleness from node heartbeats
+  ranked per object with rendezvous hashing
+
 obj/<object_id>
   current_version = new version
   state = HOT_ACTIVE
@@ -570,11 +596,12 @@ Worker execution:
 3. mark obj.state = MIGRATING
 4. fetch source bytes from repl/* placements
 5. split and encode Reed-Solomon shards
-6. write shards to storage nodes
-7. write ec/* shard placement rows
-8. set objv.tier = EC and objv.encoding_k/m
-9. set obj.state = EC_ACTIVE
-10. enqueue GC task for old HOT replicas
+6. rank healthy target nodes with rendezvous hashing using object/version
+7. write shards to selected storage nodes
+8. write ec/* shard placement rows
+9. set objv.tier = EC and objv.encoding_k/m
+10. set obj.state = EC_ACTIVE
+11. enqueue GC task for old HOT replicas
 ```
 
 ## 14. GET Path: EC Object
@@ -687,7 +714,7 @@ Processing is still not strict exactly-once because:
 
 | Runtime question | Primary code path | Metadata keys touched |
 | --- | --- | --- |
-| PUT creates a HOT object | `WriteReplicationWithMetadata` -> `UpsertNormalizedMetadata` -> `upsertTieringDueIndex` | `obj/`, `objv/`, `repl/`, `tdue/`, `tdue_ref/` |
+| PUT creates a HOT object | `SelectByRendezvous` -> `WriteReplicationWithMetadata` -> `UpsertNormalizedMetadata` -> `upsertTieringDueIndex` | `obj/`, `objv/`, `repl/`, `tdue/`, `tdue_ref/` |
 | GET reads a HOT object | API `loadMetadata` -> `GetNormalizedMetadata` -> `ReadReplication` | `obj/`, `objv/`, `repl/` |
 | GET reads an EC object | API `loadMetadata` -> `GetNormalizedMetadata` -> `ReadEC` | `obj/`, `objv/`, `ec/` |
 | DELETE removes HOT data | API delete route -> `DeleteReplication` -> `DeleteNormalizedMetadata` | physical HOT blobs, then `obj/`, `objv/`, `repl/`, `ec/`, `tdue/`, `tdue_ref/` |

@@ -27,11 +27,19 @@ Source:
 Behavior:
 
 1. periodically queries healthy node list from metadata
-2. refreshes in-memory node pool for write placement
+2. filters out DOWN/stale nodes through metadata repository health checks
+3. refreshes in-memory node pool for write placement
 
 Purpose:
 
 1. dynamic placement without process restart
+2. foreground HOT placement ranks healthy nodes per object with rendezvous hashing
+3. this avoids a fixed first-N healthy-node hotspot while keeping placement deterministic across API replicas
+
+Current boundary:
+
+1. heartbeat load fields are collected and shown to admin/scanner logic
+2. foreground placement currently uses health/staleness plus rendezvous hashing, not weighted load/capacity scoring
 
 ## 3. Scanner Leader Loop
 

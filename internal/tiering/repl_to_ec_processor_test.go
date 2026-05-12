@@ -11,6 +11,7 @@ import (
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/ec"
 	"hybrid_distributed_store/internal/meta"
+	"hybrid_distributed_store/internal/placement"
 )
 
 func TestReplicationToECProcessor_UsesVersionedReplicaPath(t *testing.T) {
@@ -28,7 +29,7 @@ func TestReplicationToECProcessor_UsesVersionedReplicaPath(t *testing.T) {
 	payload := []byte("payload-for-migration")
 	hotPath := meta.BuildHotReplicaPath(objectID, version)
 
-	nodeCount := config.K + config.M
+	nodeCount := config.K + config.M + 3
 	if nodeCount < 4 {
 		nodeCount = 4
 	}
@@ -46,7 +47,9 @@ func TestReplicationToECProcessor_UsesVersionedReplicaPath(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	serverURLs := make([]string, 0, len(servers))
 	for _, srv := range servers {
+		serverURLs = append(serverURLs, srv.URL)
 		if err := store.UpsertNodeHeartbeat(ctx, srv.URL, 100, 1000, 0, 0, 25, 0, "UP"); err != nil {
 			t.Fatalf("upsert node heartbeat failed: %v", err)
 		}
@@ -87,6 +90,18 @@ func TestReplicationToECProcessor_UsesVersionedReplicaPath(t *testing.T) {
 	}
 	if len(view.ECShardLocations) < config.K {
 		t.Fatalf("expected at least %d active shards, got %d", config.K, len(view.ECShardLocations))
+	}
+	expectedShardNodes := placement.SelectByRendezvous(placement.ECShardKey(objectID, version), serverURLs, config.K+config.M)
+	if len(view.ECShardLocations) != len(expectedShardNodes) {
+		t.Fatalf("expected %d active shards, got %d", len(expectedShardNodes), len(view.ECShardLocations))
+	}
+	for _, shard := range view.ECShardLocations {
+		if shard.ShardIndex < 0 || shard.ShardIndex >= len(expectedShardNodes) {
+			t.Fatalf("unexpected shard index in placement: %+v", shard)
+		}
+		if shard.NodeID != expectedShardNodes[shard.ShardIndex] {
+			t.Fatalf("shard %d placed on %s, want %s", shard.ShardIndex, shard.NodeID, expectedShardNodes[shard.ShardIndex])
+		}
 	}
 
 	tasks, err := store.ListTieringTasks(ctx, "PENDING", TaskTypeGC, 10)

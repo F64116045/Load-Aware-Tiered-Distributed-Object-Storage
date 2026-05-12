@@ -16,6 +16,7 @@ import (
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/interfaces"
 	"hybrid_distributed_store/internal/meta"
+	"hybrid_distributed_store/internal/placement"
 )
 
 // ReplicationToECProcessor executes REPL_TO_EC migration for one object version.
@@ -106,7 +107,11 @@ func (p *ReplicationToECProcessor) ProcessReplicationToEC(ctx context.Context, t
 		return fmt.Errorf("ec encode failed: %w", err)
 	}
 
-	success, locations := p.writeShards(ctx, nodes, task.ObjectID, task.Version, shards)
+	targetNodes := placement.SelectByRendezvous(placement.ECShardKey(task.ObjectID, task.Version), nodes, len(shards))
+	if len(targetNodes) < config.K {
+		return fmt.Errorf("insufficient selected nodes for migration: have=%d need_at_least=%d", len(targetNodes), config.K)
+	}
+	success, locations := p.writeShards(ctx, targetNodes, task.ObjectID, task.Version, shards)
 	if success < config.K {
 		return fmt.Errorf("ec shard write insufficient: success=%d required=%d", success, config.K)
 	}

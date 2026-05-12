@@ -28,7 +28,7 @@ func TestV2PutObject_DefaultContentType(t *testing.T) {
 	var gotContentType string
 
 	router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-		getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+		getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 			return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 		},
 		writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -82,9 +82,10 @@ func TestV2PutObject_DefaultContentType(t *testing.T) {
 func TestV2GetObject_ReplicationAndEC(t *testing.T) {
 	t.Run("replication", func(t *testing.T) {
 		var gotReadKey string
+		var gotReplicaNodes []string
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
-				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
+				return []string{"fallback-1", "fallback-2", "fallback-3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
 				return nil, nil
@@ -94,9 +95,14 @@ func TestV2GetObject_ReplicationAndEC(t *testing.T) {
 					"strategy":     string(config.StrategyReplication),
 					"content_type": "image/png",
 					"hot_key":      "hot/o2/00000000000000000001",
+					"hot_replicas": []interface{}{
+						map[string]interface{}{"node_id": "placed-1", "path": "hot/o2/00000000000000000001", "status": "ACTIVE"},
+						map[string]interface{}{"node_id": "placed-2", "path": "hot/o2/00000000000000000001", "status": "ACTIVE"},
+					},
 				}, "normalized_metadata", nil
 			},
 			readReplication: func(ctx context.Context, replicaNodes []string, key string) ([]byte, error) {
+				gotReplicaNodes = append([]string(nil), replicaNodes...)
 				gotReadKey = key
 				return []byte("replica-data"), nil
 			},
@@ -122,11 +128,14 @@ func TestV2GetObject_ReplicationAndEC(t *testing.T) {
 		if gotReadKey != "hot/o2/00000000000000000001" {
 			t.Fatalf("expected hot_key read, got %q", gotReadKey)
 		}
+		if len(gotReplicaNodes) != 2 || gotReplicaNodes[0] != "placed-1" || gotReplicaNodes[1] != "placed-2" {
+			t.Fatalf("expected metadata replica nodes, got %v", gotReplicaNodes)
+		}
 	})
 
 	t.Run("ec", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -165,7 +174,7 @@ func TestV2GetObject_ReplicationAndEC(t *testing.T) {
 func TestV2GetObject_MetadataNotFoundAndConflict(t *testing.T) {
 	t.Run("metadata_not_found", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -194,7 +203,7 @@ func TestV2GetObject_MetadataNotFoundAndConflict(t *testing.T) {
 
 	t.Run("strategy_conflict", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -225,7 +234,7 @@ func TestV2GetObject_MetadataNotFoundAndConflict(t *testing.T) {
 func TestV2Object_ErrorPaths(t *testing.T) {
 	t.Run("put_write_error_returns_500", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -250,7 +259,7 @@ func TestV2Object_ErrorPaths(t *testing.T) {
 
 	t.Run("get_metadata_internal_error_returns_500", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -279,7 +288,7 @@ func TestV2Object_ErrorPaths(t *testing.T) {
 
 	t.Run("get_replication_read_error_returns_404", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -308,7 +317,7 @@ func TestV2Object_ErrorPaths(t *testing.T) {
 
 	t.Run("get_ec_read_error_returns_404", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -341,7 +350,7 @@ func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
 		var deletedMetaKey string
 		var deletedDataKey string
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -390,7 +399,7 @@ func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
 
 	t.Run("ec", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -433,7 +442,7 @@ func TestV2DeleteObject_ReplicationAndEC(t *testing.T) {
 func TestV2DeleteObject_ErrorPaths(t *testing.T) {
 	t.Run("metadata_not_found", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {
@@ -471,7 +480,7 @@ func TestV2DeleteObject_ErrorPaths(t *testing.T) {
 
 	t.Run("strategy_conflict", func(t *testing.T) {
 		router := newV2ObjectsTestRouter(v2ObjectRouteDeps{
-			getDynamicNodes: func(c *gin.Context) ([]string, []string, error) {
+			getDynamicNodes: func(c *gin.Context, objectID string) ([]string, []string, error) {
 				return []string{"n1", "n2", "n3"}, []string{"n1", "n2", "n3", "n4", "n5", "n6"}, nil
 			},
 			writeReplicationWithMetadata: func(ctx context.Context, replicaNodes []string, key string, data []byte, metadata map[string]interface{}) (map[string]interface{}, error) {

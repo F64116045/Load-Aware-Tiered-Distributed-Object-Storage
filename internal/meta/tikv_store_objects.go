@@ -156,6 +156,32 @@ func (s *TiKVStore) GetNormalizedMetadata(ctx context.Context, objectID string) 
 		"chunk_prefix": fmt.Sprintf("%s_cold_chunk_", objectID),
 	}
 
+	if len(replicas) > 0 {
+		sort.Slice(replicas, func(i, j int) bool {
+			if replicas[i].NodeID != replicas[j].NodeID {
+				return replicas[i].NodeID < replicas[j].NodeID
+			}
+			return replicas[i].Path < replicas[j].Path
+		})
+		replicaNodes := make([]string, 0, len(replicas))
+		replicaPlacements := make([]map[string]interface{}, 0, len(replicas))
+		for _, replica := range replicas {
+			if replica.NodeID == "" {
+				continue
+			}
+			replicaNodes = append(replicaNodes, replica.NodeID)
+			replicaPlacements = append(replicaPlacements, map[string]interface{}{
+				"node_id": replica.NodeID,
+				"path":    replica.Path,
+				"status":  replica.Status,
+			})
+		}
+		if len(replicaNodes) > 0 {
+			meta["replica_nodes"] = replicaNodes
+			meta["hot_replicas"] = replicaPlacements
+		}
+	}
+
 	switch obj.State {
 	case "EC_ACTIVE":
 		meta["hot_version"] = int64(0)

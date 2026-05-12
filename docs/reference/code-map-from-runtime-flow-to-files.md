@@ -15,11 +15,12 @@ Scope: fast runtime-to-file mapping for debugging and implementation work.
 
 1. route handler: [`cmd/api/main.go`](../../cmd/api/main.go) (`PUT /v2/objects/:id`)
 2. node selection: `getDynamicNodes(...)` in [`cmd/api/main.go`](../../cmd/api/main.go)
-3. write service call: `WriteReplicationWithMetadata` in [`internal/writeservice/writeservice.go`](../../internal/writeservice/writeservice.go)
-4. storage writes: storage-node `/store` calls inside write service
-5. metadata commit: `UpsertNormalizedMetadata` in [`internal/meta/tikv_store_objects.go`](../../internal/meta/tikv_store_objects.go)
-6. due-index write during metadata commit: `upsertTieringDueIndex` in [`internal/meta/tikv_store_due_index.go`](../../internal/meta/tikv_store_due_index.go)
-7. scanner-driven task enqueue later: `EnqueueTieringCandidatesStrategy*` in [`internal/meta/tikv_store_policy.go`](../../internal/meta/tikv_store_policy.go)
+3. placement ranking: rendezvous hashing in [`internal/placement/placement.go`](../../internal/placement/placement.go)
+4. write service call: `WriteReplicationWithMetadata` in [`internal/writeservice/writeservice.go`](../../internal/writeservice/writeservice.go)
+5. storage writes: storage-node `/store` calls inside write service
+6. metadata commit: `UpsertNormalizedMetadata` in [`internal/meta/tikv_store_objects.go`](../../internal/meta/tikv_store_objects.go)
+7. due-index write during metadata commit: `upsertTieringDueIndex` in [`internal/meta/tikv_store_due_index.go`](../../internal/meta/tikv_store_due_index.go)
+8. scanner-driven task enqueue later: `EnqueueTieringCandidatesStrategy*` in [`internal/meta/tikv_store_policy.go`](../../internal/meta/tikv_store_policy.go)
 
 ## 3. End-to-End GET Map
 
@@ -28,14 +29,16 @@ Scope: fast runtime-to-file mapping for debugging and implementation work.
 3. strategy dispatch:
    - HOT: `ReadReplication` in [`internal/readservice/readservice.go`](../../internal/readservice/readservice.go)
    - EC: `ReadEC` in [`internal/readservice/readservice.go`](../../internal/readservice/readservice.go)
-4. EC placement source: `GetNormalizedMetadata` in [`internal/meta/tikv_store_objects.go`](../../internal/meta/tikv_store_objects.go) loads active `ec/*` shard rows into normalized metadata
+4. HOT placement source: `GetNormalizedMetadata` loads active `repl/*` rows into `hot_replicas` / `replica_nodes`
+5. EC placement source: `GetNormalizedMetadata` loads active `ec/*` shard rows into `ec_shards`
 
 ## 4. End-to-End DELETE Map
 
 1. route handler: [`cmd/api/main.go`](../../cmd/api/main.go) (`DELETE /v2/objects/:id`)
 2. strategy-specific data deletion through storage ops
 3. metadata deletion: `DeleteNormalizedMetadata` in [`internal/meta/tikv_store_objects.go`](../../internal/meta/tikv_store_objects.go)
-4. EC deletion uses recorded shard placement in [`internal/storageops/storageops.go`](../../internal/storageops/storageops.go) when normalized metadata includes `ec_shards`
+4. HOT deletion uses recorded replica placement from `hot_replicas` / `replica_nodes`
+5. EC deletion uses recorded shard placement in [`internal/storageops/storageops.go`](../../internal/storageops/storageops.go) when normalized metadata includes `ec_shards`
 
 ## 5. Tiering and Maintenance Engine Map
 
@@ -59,6 +62,7 @@ Scope: fast runtime-to-file mapping for debugging and implementation work.
 2. REPAIR: [`internal/tiering/repair_replication_processor.go`](../../internal/tiering/repair_replication_processor.go)
 3. GC: [`internal/tiering/gc_replication_processor.go`](../../internal/tiering/gc_replication_processor.go)
 4. GC_OLD_VERSION: [`internal/tiering/old_version_gc_processor.go`](../../internal/tiering/old_version_gc_processor.go)
+5. placement ranking helper: [`internal/placement/placement.go`](../../internal/placement/placement.go)
 
 ## 6. Metadata Stack Map
 
