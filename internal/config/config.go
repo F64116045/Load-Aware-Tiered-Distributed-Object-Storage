@@ -97,6 +97,10 @@ var (
 	TieringIdleIOWaitPct = getEnvFloat64("TIERING_IDLE_IOWAIT_PCT", 20)
 	// TieringIdleQueueDepth is max queue depth considered idle.
 	TieringIdleQueueDepth = getEnvInt("TIERING_IDLE_QUEUE_DEPTH", 16)
+	// TieringIdleMinNodeRatio is the minimum live-node idle ratio required by strategy C.
+	TieringIdleMinNodeRatio = getEnvFloat64("TIERING_IDLE_MIN_NODE_RATIO", 0.8)
+	// TieringIdleMinNodeCount is the minimum idle live-node count required by strategy C.
+	TieringIdleMinNodeCount = getEnvInt("TIERING_IDLE_MIN_NODE_COUNT", K)
 	// HotPressureDiskPct is the per-node used-disk trigger threshold.
 	HotPressureDiskPct = getEnvInt("HOT_PRESSURE_DISK_PCT", 80)
 	// HotPressureQueueDepth is the per-node IO queue-depth trigger threshold.
