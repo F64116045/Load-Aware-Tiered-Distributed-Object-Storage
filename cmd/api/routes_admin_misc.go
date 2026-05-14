@@ -61,6 +61,9 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 			"retention_age_sec":   config.OldVersionRetentionAgeSec,
 			"max_tasks_per_round": config.OldVersionReaperMaxTasksPerRound,
 		}
+		tieringTasks := gin.H{
+			"enabled": config.MetaEnabled && deps.metaStore != nil,
+		}
 
 		leader := gin.H{
 			"lock_key": config.TieringPolicyLeaderLockKey,
@@ -101,6 +104,17 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 			} else {
 				oldVersionReaper["task_state_counts"] = reaperCounts
 			}
+
+			for _, taskType := range []string{"REPL_TO_EC", "GC"} {
+				countCtx, countCancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+				counts, countErr := deps.metaStore.ListTieringTaskStateCounts(countCtx, taskType)
+				countCancel()
+				if countErr != nil {
+					tieringTasks[taskType] = gin.H{"error": countErr.Error()}
+				} else {
+					tieringTasks[taskType] = counts
+				}
+			}
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -112,6 +126,7 @@ func registerAdminObservabilityRoutes(router gin.IRoutes, deps adminObservabilit
 			},
 			"tiering_due_index":  dueIndex,
 			"old_version_reaper": oldVersionReaper,
+			"tiering_tasks":      tieringTasks,
 			"tiering_leader":     leader,
 			"timestamp_unix":     time.Now().Unix(),
 		})
