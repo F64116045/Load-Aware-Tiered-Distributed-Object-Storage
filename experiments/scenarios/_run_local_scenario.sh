@@ -8,11 +8,11 @@ source "${SCRIPT_DIR}/../lib/common.sh"
 
 require_python3
 ensure_result_dir >/dev/null
-write_run_env
 
 RESET_STACK="${RESET_STACK:-true}"
 START_TIERING_WORKER="${START_TIERING_WORKER:-true}"
 PRELOAD_OBJECTS="${PRELOAD_OBJECTS:-true}"
+PRELOAD_AGE_WAIT_SEC="${PRELOAD_AGE_WAIT_SEC:-0}"
 OBJECT_COUNT="${OBJECT_COUNT:-200}"
 OBJECT_SIZE_BYTES="${OBJECT_SIZE_BYTES:-1048576}"
 KEY_PREFIX="${KEY_PREFIX:-exp-${RUN_ID}}"
@@ -27,6 +27,8 @@ METRICS_INTERVAL_SEC="${METRICS_INTERVAL_SEC:-5}"
 COLLECT_DURATION_SEC="${COLLECT_DURATION_SEC:-$((WORKLOAD_DURATION_SEC + PRESSURE_DURATION_SEC + PRESSURE_DELAY_SEC + 30))}"
 SUMMARY_FILE="${SUMMARY_FILE:-${RESULT_DIR}/summary.csv}"
 
+write_run_env
+
 if [[ "${RESET_STACK}" == "true" ]]; then
   reset_stack
 fi
@@ -40,6 +42,11 @@ if [[ "${PRELOAD_OBJECTS}" == "true" ]]; then
   OBJECT_SIZE_BYTES="${OBJECT_SIZE_BYTES}" \
   KEY_PREFIX="${KEY_PREFIX}" \
   "${SCRIPT_DIR}/../workloads/prepare_objects.sh"
+
+  if (( PRELOAD_AGE_WAIT_SEC > 0 )); then
+    exp_log "Wait preload aging: ${PRELOAD_AGE_WAIT_SEC}s"
+    sleep "${PRELOAD_AGE_WAIT_SEC}"
+  fi
 fi
 
 DURATION_SEC="${COLLECT_DURATION_SEC}" \
