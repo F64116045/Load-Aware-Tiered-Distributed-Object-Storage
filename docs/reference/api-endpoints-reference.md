@@ -107,7 +107,8 @@ Returns heartbeat snapshots with derived utilization:
 
 1. `free_bytes`, `total_bytes`, `used_pct`
 2. `io_queue_depth`, `cpu_load`
-3. staleness flag
+3. `memory_used_pct`, `disk_iowait_pct`
+4. staleness flag
 
 ### 2.5 `GET /v2/admin/objects/:id`
 

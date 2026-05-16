@@ -191,16 +191,18 @@ func registerAdminMetadataRoutes(router gin.IRoutes, metaStore meta.Repository) 
 				usedPct = (float64(usedBytes) / float64(n.TotalBytes)) * 100
 			}
 			out = append(out, gin.H{
-				"node_id":        n.NodeID,
-				"status":         n.Status,
-				"last_seen_at":   n.LastSeenAt,
-				"is_stale":       isStale,
-				"free_bytes":     n.FreeBytes,
-				"total_bytes":    n.TotalBytes,
-				"used_bytes":     usedBytes,
-				"used_pct":       usedPct,
-				"io_queue_depth": n.IOQueueDepth,
-				"cpu_load":       n.CPULoad,
+				"node_id":         n.NodeID,
+				"status":          n.Status,
+				"last_seen_at":    n.LastSeenAt,
+				"is_stale":        isStale,
+				"free_bytes":      n.FreeBytes,
+				"total_bytes":     n.TotalBytes,
+				"used_bytes":      usedBytes,
+				"used_pct":        usedPct,
+				"io_queue_depth":  n.IOQueueDepth,
+				"cpu_load":        n.CPULoad,
+				"memory_used_pct": n.MemoryUsedPct,
+				"disk_iowait_pct": n.DiskIOWaitPct,
 			})
 		}
 

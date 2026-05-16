@@ -1,2 +1,4 @@
-# intentionally left empty; keep documentation under version control
+# Keep documentation and experiment scripts under version control.
 .codex
+.experiment-pressure/
+experiments/results/
