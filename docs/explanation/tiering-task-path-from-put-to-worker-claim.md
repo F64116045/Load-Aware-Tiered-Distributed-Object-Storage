@@ -109,6 +109,12 @@ Current behavior:
 2. `task_wait/*` is mostly from retry backoff (`RETRY_WAIT`)
 3. future `scheduled_at` can also come from direct `EnqueueTieringTask` callers
 
+Budget behavior:
+
+1. If a B/C candidate would exceed `MAX_BYTES_PER_ROUND`, scanner does not create a task for it in that pass.
+2. The candidate stays in due-index, so the next scanner policy pass can consider it again.
+3. Workers only see tasks after scanner creates `task/*` and `task_ready/*`; byte-budget skips do not enter the worker claim loop.
+
 ### 3.5 Delivery guarantee boundary
 
 Current processing model remains `at-least-once`:

@@ -51,6 +51,8 @@ Source of truth:
 | `TIERING_IDLE_MEMORY_PCT` | `80` | max memory used for idle |
 | `TIERING_IDLE_IOWAIT_PCT` | `20` | max disk iowait for idle |
 | `TIERING_IDLE_QUEUE_DEPTH` | `16` | max io queue depth for idle |
+| `TIERING_IDLE_MIN_NODE_RATIO` | `0.8` | minimum live-node idle ratio required by strategy C |
+| `TIERING_IDLE_MIN_NODE_COUNT` | `4` | minimum idle live-node count required by strategy C |
 | `HOT_PRESSURE_DISK_PCT` | `80` | disk pressure trigger |
 | `HOT_PRESSURE_QUEUE_DEPTH` | `1000` | queue-depth pressure trigger |
 
