@@ -44,6 +44,7 @@ API contracts, and operational procedures for the TiKV-backed tiered object stor
 2. [Local Setup and Smoke Validation](operations/local-setup-and-smoke-validation.md)
 3. [Runtime and Code Understanding Guide](operations/runtime-and-code-understanding-guide.md)
 4. [Run HA Metadata Cluster Profile](how-to/run-ha-metadata-cluster-profile.md)
+5. [Run Fair Local Experiments](how-to/run-fair-local-experiments.md)
 
 ## Operations and Diagnostics
 

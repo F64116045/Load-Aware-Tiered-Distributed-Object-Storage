@@ -27,11 +27,50 @@ BUILD_STACK=false OBJECT_COUNT=50 WORKLOAD_DURATION_SEC=30 \
   ./experiments/scenarios/strategy_a_age_based.sh
 ```
 
-Run the default local matrix:
+Run a fair local matrix with no injected pressure:
 
 ```bash
-OBJECT_COUNT=200 WORKLOAD_DURATION_SEC=120 WORKLOAD_CONCURRENCY=8 \
+MATRIX_PRESSURE_PROFILE=none \
+AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
+OBJECT_COUNT=200 WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 \
   ./experiments/scenarios/run_matrix_local.sh
+```
+
+Run the same fair matrix with CPU pressure applied to every scenario:
+
+```bash
+MATRIX_PRESSURE_PROFILE=cpu MATRIX_PRESSURE_CPUS=2 \
+MATRIX_PRESSURE_DURATION_SEC=60 MATRIX_PRESSURE_WARMUP_SEC=10 \
+AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
+OBJECT_COUNT=200 WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 \
+  ./experiments/scenarios/run_matrix_local.sh
+```
+
+Run the same fair matrix with I/O pressure applied to every scenario:
+
+```bash
+MATRIX_PRESSURE_PROFILE=io MATRIX_HDD_WORKERS=2 MATRIX_HDD_BYTES=512M \
+MATRIX_PRESSURE_DURATION_SEC=60 MATRIX_PRESSURE_WARMUP_SEC=10 \
+AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
+OBJECT_COUNT=200 WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 \
+  ./experiments/scenarios/run_matrix_local.sh
+```
+
+The matrix runner passes the same workload and pressure parameters to every
+scenario. It also writes a fairness report and fails if non-policy parameters
+diverge:
+
+```text
+experiments/results/matrix-<run_id_root>-fairness.txt
+experiments/results/matrix-<run_id_root>-comparison.csv
+experiments/results/matrix-<run_id_root>-migration.csv
+```
+
+To compare the newest available run of each scenario without rerunning:
+
+```bash
+./experiments/collect/compare_summaries.py --latest-per-scenario
+./experiments/collect/summarize_migration.py --latest-per-scenario
 ```
 
 Results are written under:
@@ -58,16 +97,35 @@ run.env              scenario configuration
 | `baseline_no_migration.sh` | foreground-only baseline; tiering worker is not started |
 | `strategy_a_age_based.sh` | age-based migration, no byte budget |
 | `strategy_b_throttled.sh` | age-based migration with object/byte budget and worker bandwidth throttle |
-| `strategy_c_pressure_aware.sh` | idle-window admission gate with optional CPU pressure |
+| `strategy_c_pressure_aware.sh` | Strategy B's budget/throttle plus idle-window admission gate |
 
 The scripts default to `K=4, M=2` and wait for six storage nodes, matching the
 current code configuration.
+
+For strategy comparison, use `run_matrix_local.sh` rather than comparing ad-hoc
+single scenario runs. The intended controlled variables are object count, object
+size, preload aging, age threshold, foreground workload duration, foreground
+concurrency, GET ratio, pressure profile, pressure duration, and metrics
+interval. The intended policy variables are:
+
+| Policy | Intentional difference |
+| --- | --- |
+| baseline | no background tiering worker |
+| A | age-based enqueue, no migration budget/throttle |
+| B | age-based enqueue with object/byte budget and worker bandwidth limit |
+| C | same budget/throttle as B, plus pressure-aware idle-window admission |
+
+For the research question "does pressure awareness reduce tail latency under
+load?", compare B and C under the same `MATRIX_PRESSURE_PROFILE`. A is useful as
+an unthrottled stress baseline, but B is the closest control group for C.
 
 ## Useful Overrides
 
 ```bash
 OBJECT_COUNT=300
 OBJECT_SIZE_BYTES=1048576
+AGE_THRESHOLD_SEC=60
+PRELOAD_AGE_WAIT_SEC=70
 WORKLOAD_DURATION_SEC=180
 WORKLOAD_CONCURRENCY=12
 GET_PERCENT=70
@@ -76,6 +134,8 @@ MAX_BYTES_PER_ROUND=33554432
 WORKER_BW_LIMIT_MBPS=8
 PRESSURE_PROFILE=cpu
 PRESSURE_DURATION_SEC=90
+PRESSURE_DELAY_SEC=0
+PRESSURE_WARMUP_SEC=10
 ```
 
 Strategy C uses these idle-window settings:
@@ -86,9 +146,22 @@ TIERING_IDLE_CPU_PCT=70
 TIERING_IDLE_MEMORY_PCT=90
 TIERING_IDLE_IOWAIT_PCT=20
 TIERING_IDLE_QUEUE_DEPTH=16
+TIERING_IDLE_MIN_NODE_RATIO=0.8
+TIERING_IDLE_MIN_NODE_COUNT=4
 ```
 
 ## Notes
+
+For local matrix runs, keep `WORKLOAD_DURATION_SEC < AGE_THRESHOLD_SEC` unless
+you intentionally want live foreground PUTs to become migration candidates in the
+same run. The default matrix ages only the preload set before the workload
+starts, which avoids the feedback loop where foreground traffic creates new
+migration work immediately.
+
+Do not compare runs with different `run.env` workload, age, or pressure fields.
+A single run can contain local outliers, especially on WSL/Docker Desktop, so
+use at least three repeated matrices for report-quality numbers and report
+median P99 or mean P99 with the raw CSV files retained.
 
 The pressure scripts run a temporary `alpine:3.18` container and install
 `stress-ng` inside it. This is convenient for local experiments, but it means the
