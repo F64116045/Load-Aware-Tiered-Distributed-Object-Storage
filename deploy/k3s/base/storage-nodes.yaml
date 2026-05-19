@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-node
+  labels:
+    app: storage-node
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+  selector:
+    app: storage-node
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: storage-node
+  labels:
+    app: storage-node
+spec:
+  serviceName: storage-node
+  replicas: 6
+  selector:
+    matchLabels:
+      app: storage-node
+  template:
+    metadata:
+      labels:
+        app: storage-node
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: storage-node
+      containers:
+        - name: storage-node
+          image: rec-store-image
+          imagePullPolicy: IfNotPresent
+          command:
+            - /usr/local/bin/storage_node
+          envFrom:
+            - configMapRef:
+                name: rec-store-config
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              value: "$(POD_NAME).storage-node"
+            - name: NODE_PORT
+              value: "8001"
+            - name: STORAGE_DIR
+              value: /data/storage
+            - name: META_RPC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rec-store-secret
+                  key: META_RPC_AUTH_TOKEN
+          ports:
+            - name: http
+              containerPort: 8001
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data/storage
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi

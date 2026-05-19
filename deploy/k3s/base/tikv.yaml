@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tikv
+  labels:
+    app: tikv
+spec:
+  ports:
+    - name: client
+      port: 20160
+      targetPort: 20160
+    - name: status
+      port: 20180
+      targetPort: 20180
+  selector:
+    app: tikv
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tikv
+  labels:
+    app: tikv
+spec:
+  serviceName: tikv
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tikv
+  template:
+    metadata:
+      labels:
+        app: tikv
+    spec:
+      containers:
+        - name: tikv
+          image: pingcap/tikv:v7.5.0
+          args:
+            - --pd=pd:2379
+            - --addr=0.0.0.0:20160
+            - --advertise-addr=tikv:20160
+            - --status-addr=0.0.0.0:20180
+            - --data-dir=/var/lib/tikv
+            - --log-level=info
+          ports:
+            - name: client
+              containerPort: 20160
+            - name: status
+              containerPort: 20180
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/tikv
+          readinessProbe:
+            tcpSocket:
+              port: 20160
+            initialDelaySeconds: 15
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi
