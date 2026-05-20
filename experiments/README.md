@@ -73,6 +73,21 @@ To compare the newest available run of each scenario without rerunning:
 ./experiments/collect/summarize_migration.py --latest-per-scenario
 ```
 
+For AWS/k3s runs, build and push an image, deploy `deploy/k3s/base`, then use
+the k3s matrix runner:
+
+```bash
+IMAGE=<registry>/<repo>:aws-exp-001 \
+API_BASE=http://<control-plane-public-ip>:30080 \
+MATRIX_PRESSURE_PROFILE=none \
+AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
+OBJECT_COUNT=200 OBJECT_SIZE_BYTES=1048576 \
+WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 GET_PERCENT=70 \
+  ./experiments/scenarios/run_matrix_k3s.sh
+```
+
+See `docs/how-to/run-aws-k3s-experiments.md` for the full cloud workflow.
+
 Results are written under:
 
 ```text
