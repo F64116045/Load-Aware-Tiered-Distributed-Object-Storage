@@ -9,9 +9,10 @@ IMAGE="${IMAGE:-}"
 NAMESPACE="${NAMESPACE:-rec-store}"
 RESET_NAMESPACE="${RESET_NAMESPACE:-false}"
 WAIT="${WAIT:-true}"
+KUSTOMIZE_DIR="${KUSTOMIZE_DIR:-deploy/k3s/base}"
 
 if [[ -z "${IMAGE}" ]]; then
-  echo "ERROR: IMAGE is required, for example IMAGE=123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/rec-store:exp-001" >&2
+  echo "ERROR: IMAGE is required, for example IMAGE=asia-east1-docker.pkg.dev/<project>/<repo>/rec-store:gke-exp-001" >&2
   exit 1
 fi
 
@@ -25,6 +26,16 @@ image_tag="${IMAGE##*:}"
 if [[ "${image_name}" == "${IMAGE}" ]]; then
   image_name="${IMAGE}"
   image_tag="latest"
+fi
+
+if [[ "${KUSTOMIZE_DIR}" = /* ]]; then
+  kustomize_path="${KUSTOMIZE_DIR}"
+else
+  kustomize_path="${REPO_ROOT}/${KUSTOMIZE_DIR}"
+fi
+if [[ ! -d "${kustomize_path}" ]]; then
+  echo "ERROR: KUSTOMIZE_DIR does not exist: ${KUSTOMIZE_DIR}" >&2
+  exit 1
 fi
 
 if [[ "${RESET_NAMESPACE}" == "true" ]]; then
@@ -42,7 +53,7 @@ cat >"${tmp_dir}/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ${REPO_ROOT}/deploy/k3s/base
+  - ${kustomize_path}
 images:
   - name: rec-store-image
     newName: ${image_name}

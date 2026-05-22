@@ -46,6 +46,7 @@ API contracts, and operational procedures for the TiKV-backed tiered object stor
 4. [Run HA Metadata Cluster Profile](how-to/run-ha-metadata-cluster-profile.md)
 5. [Run Fair Local Experiments](how-to/run-fair-local-experiments.md)
 6. [Run AWS k3s Experiments](how-to/run-aws-k3s-experiments.md)
+7. [Run GCP GKE Experiments](how-to/run-gcp-gke-experiments.md)
 
 ## Operations and Diagnostics
 

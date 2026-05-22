@@ -88,6 +88,21 @@ WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 GET_PERCENT=70 \
 
 See `docs/how-to/run-aws-k3s-experiments.md` for the full cloud workflow.
 
+For GCP/GKE runs, build and push an Artifact Registry image, deploy the GKE
+overlay, then use the GKE matrix runner:
+
+```bash
+IMAGE=asia-east1-docker.pkg.dev/<project-id>/rec-store/rec-store:gke-exp-001 \
+API_BASE=http://<api-load-balancer-ip>:8000 \
+MATRIX_PRESSURE_PROFILE=none \
+AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
+OBJECT_COUNT=200 OBJECT_SIZE_BYTES=1048576 \
+WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 GET_PERCENT=70 \
+  ./experiments/scenarios/run_matrix_gke.sh
+```
+
+See `docs/how-to/run-gcp-gke-experiments.md` for the full GCP workflow.
+
 Results are written under:
 
 ```text
