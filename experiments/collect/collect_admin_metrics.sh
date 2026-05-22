@@ -25,15 +25,11 @@ while (( SECONDS < deadline )); do
   tmp_dir="$(mktemp -d)"
   nodes_json="${tmp_dir}/nodes.json"
   metrics_json="${tmp_dir}/metrics.json"
-  repl_json="${tmp_dir}/repl_tasks.json"
-  gc_json="${tmp_dir}/gc_tasks.json"
 
   curl -sS "${API_BASE}/v2/admin/nodes?limit=1000" -o "${nodes_json}" || printf '{}' >"${nodes_json}"
   curl -sS "${API_BASE}/v2/admin/metrics-snapshot" -o "${metrics_json}" || printf '{}' >"${metrics_json}"
-  curl -sS "${API_BASE}/v2/admin/tasks?task_type=REPL_TO_EC&limit=1000" -o "${repl_json}" || printf '{}' >"${repl_json}"
-  curl -sS "${API_BASE}/v2/admin/tasks?task_type=GC&limit=1000" -o "${gc_json}" || printf '{}' >"${gc_json}"
 
-  python3 - "$ts" "$SCENARIO" "$RUN_ID" "$nodes_json" "$metrics_json" "$repl_json" "$gc_json" >>"${OUT_FILE}" <<'PY'
+  python3 - "$ts" "$SCENARIO" "$RUN_ID" "$nodes_json" "$metrics_json" >>"${OUT_FILE}" <<'PY'
 import csv
 import json
 import sys
@@ -48,7 +44,7 @@ def load(path):
     except Exception:
         return {}
 
-nodes_body, metrics_body, repl_body, gc_body = [load(p) for p in paths]
+nodes_body, metrics_body = [load(p) for p in paths]
 nodes = nodes_body.get("nodes") or []
 live = [n for n in nodes if n.get("status") == "UP" and not n.get("is_stale")]
 
@@ -68,18 +64,19 @@ queues = [int(fnum(n.get("io_queue_depth"))) for n in live]
 due = metrics_body.get("tiering_due_index") or {}
 leader = metrics_body.get("tiering_leader") or {}
 
-def counts(body):
-    c = body.get("state_counts") or {}
+def counts(task_type):
+    task_counts = metrics_body.get("tiering_tasks") or {}
+    c = task_counts.get(task_type) or {}
     return {
         "PENDING": int(c.get("PENDING", 0) or 0),
         "RUNNING": int(c.get("RUNNING", 0) or 0),
         "RETRY_WAIT": int(c.get("RETRY_WAIT", 0) or 0),
-        "DONE": int(c.get("DONE", 0) or 0),
-        "FAILED": int(c.get("FAILED", 0) or 0),
+        "DONE": int(c.get("DONE", 0) or c.get("DONE".lower(), 0) or 0),
+        "FAILED": int(c.get("FAILED", 0) or c.get("FAILED".lower(), 0) or 0),
     }
 
-repl = counts(repl_body)
-gc = counts(gc_body)
+repl = counts("REPL_TO_EC")
+gc = counts("GC")
 row = [
     ts,
     scenario,
@@ -111,12 +108,12 @@ row = [
 csv.writer(sys.stdout).writerow(row)
 PY
 
-  python3 - "$ts" "$nodes_json" "$metrics_json" "$repl_json" "$gc_json" >>"${RAW_FILE}" <<'PY'
+  python3 - "$ts" "$nodes_json" "$metrics_json" >>"${RAW_FILE}" <<'PY'
 import json
 import sys
 
 ts = sys.argv[1]
-labels = ["nodes", "metrics", "repl_tasks", "gc_tasks"]
+labels = ["nodes", "metrics"]
 payload = {"timestamp_unix": int(ts)}
 for label, path in zip(labels, sys.argv[2:]):
     try:

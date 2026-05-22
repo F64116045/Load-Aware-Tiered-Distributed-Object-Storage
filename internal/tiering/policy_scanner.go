@@ -30,6 +30,8 @@ type PolicyScannerConfig struct {
 	IdleMemoryPercent     float64
 	IdleIOWaitPercent     float64
 	IdleQueueDepth        int
+	IdleMinNodeRatio      float64
+	IdleMinNodeCount      int
 
 	RepairEnabled    bool
 	RepairMaxObjects int
@@ -113,6 +115,15 @@ func NewPolicyScanner(store PolicyScanStore, cfg PolicyScannerConfig) *PolicySca
 	}
 	if cfg.IdleQueueDepth <= 0 {
 		cfg.IdleQueueDepth = 16
+	}
+	if cfg.IdleMinNodeRatio <= 0 {
+		cfg.IdleMinNodeRatio = 1.0
+	}
+	if cfg.IdleMinNodeRatio > 1 {
+		cfg.IdleMinNodeRatio = 1.0
+	}
+	if cfg.IdleMinNodeCount <= 0 {
+		cfg.IdleMinNodeCount = 1
 	}
 	if cfg.PolicyVariant == "" {
 		cfg.PolicyVariant = config.TieringPolicyA
@@ -335,6 +346,8 @@ func (s *PolicyScanner) isIdleWindow(ctx context.Context) (bool, string, error) 
 	staleWindow := time.Duration(s.cfg.HeartbeatStaleSec) * time.Second
 	now := time.Now()
 	liveCount := 0
+	idleCount := 0
+	busyReasons := make([]string, 0)
 
 	for _, n := range nodes {
 		if n.Status != "UP" {
@@ -345,23 +358,45 @@ func (s *PolicyScanner) isIdleWindow(ctx context.Context) (bool, string, error) 
 		}
 		liveCount++
 
+		idle := true
 		cpuPercent := n.CPULoad * 100
 		if s.cfg.IdleCPUPercent > 0 && cpuPercent >= s.cfg.IdleCPUPercent {
-			return false, fmt.Sprintf("cpu_busy node=%s cpu_pct=%.2f threshold=%.2f", n.NodeID, cpuPercent, s.cfg.IdleCPUPercent), nil
+			idle = false
+			busyReasons = append(busyReasons, fmt.Sprintf("cpu_busy node=%s cpu_pct=%.2f threshold=%.2f", n.NodeID, cpuPercent, s.cfg.IdleCPUPercent))
 		}
 		if s.cfg.IdleQueueDepth > 0 && n.IOQueueDepth >= s.cfg.IdleQueueDepth {
-			return false, fmt.Sprintf("queue_busy node=%s depth=%d threshold=%d", n.NodeID, n.IOQueueDepth, s.cfg.IdleQueueDepth), nil
+			idle = false
+			busyReasons = append(busyReasons, fmt.Sprintf("queue_busy node=%s depth=%d threshold=%d", n.NodeID, n.IOQueueDepth, s.cfg.IdleQueueDepth))
 		}
 		if s.cfg.IdleIOWaitPercent > 0 && n.DiskIOWaitPct >= s.cfg.IdleIOWaitPercent {
-			return false, fmt.Sprintf("iowait_busy node=%s iowait_pct=%.2f threshold=%.2f", n.NodeID, n.DiskIOWaitPct, s.cfg.IdleIOWaitPercent), nil
+			idle = false
+			busyReasons = append(busyReasons, fmt.Sprintf("iowait_busy node=%s iowait_pct=%.2f threshold=%.2f", n.NodeID, n.DiskIOWaitPct, s.cfg.IdleIOWaitPercent))
 		}
 		if s.cfg.IdleMemoryPercent > 0 && n.MemoryUsedPct >= s.cfg.IdleMemoryPercent {
-			return false, fmt.Sprintf("memory_busy node=%s mem_pct=%.2f threshold=%.2f", n.NodeID, n.MemoryUsedPct, s.cfg.IdleMemoryPercent), nil
+			idle = false
+			busyReasons = append(busyReasons, fmt.Sprintf("memory_busy node=%s mem_pct=%.2f threshold=%.2f", n.NodeID, n.MemoryUsedPct, s.cfg.IdleMemoryPercent))
+		}
+		if idle {
+			idleCount++
 		}
 	}
 
 	if liveCount == 0 {
 		return false, "no_live_nodes", nil
 	}
-	return true, "idle_window", nil
+	if idleCount < s.cfg.IdleMinNodeCount {
+		return false, fmt.Sprintf("idle_nodes_insufficient idle=%d live=%d min=%d detail=%s", idleCount, liveCount, s.cfg.IdleMinNodeCount, firstBusyReason(busyReasons)), nil
+	}
+	idleRatio := float64(idleCount) / float64(liveCount)
+	if idleRatio < s.cfg.IdleMinNodeRatio {
+		return false, fmt.Sprintf("idle_ratio_insufficient idle=%d live=%d ratio=%.2f min_ratio=%.2f detail=%s", idleCount, liveCount, idleRatio, s.cfg.IdleMinNodeRatio, firstBusyReason(busyReasons)), nil
+	}
+	return true, fmt.Sprintf("idle_window idle=%d live=%d ratio=%.2f", idleCount, liveCount, idleRatio), nil
+}
+
+func firstBusyReason(reasons []string) string {
+	if len(reasons) == 0 {
+		return "none"
+	}
+	return reasons[0]
 }

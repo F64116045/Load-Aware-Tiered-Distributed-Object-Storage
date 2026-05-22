@@ -54,7 +54,10 @@ Important:
 ### 2.2 Scanner reads due-index and enqueues tasks
 
 1. Leader scanner calls strategy enqueue method.
-2. Metadata store scans ready due candidates from `tdue/*` (bounded by `TIERING_DUE_INDEX_MAX_SCAN`).
+2. Metadata store scans ready due candidates from `tdue/*`.
+   1. The first scan window is bounded by `TIERING_DUE_INDEX_MAX_SCAN`.
+   2. If more ready candidates remain, the policy pass may run up to `TIERING_DUE_INDEX_BURST_ROUNDS` scan bursts.
+   3. The per-burst scan window can grow adaptively, capped by `TIERING_DUE_INDEX_ADAPTIVE_MAX_SCAN`.
 3. For each due candidate, it validates:
    1. object exists
    2. candidate version is still current version
@@ -66,6 +69,14 @@ Important:
    2. set task state to `PENDING`
    3. delete `tdue/*` and `tdue_ref/*` for that version
    4. move object state from `HOT_ACTIVE` to `MIGRATION_PENDING` when applicable
+
+Important distinction:
+
+1. due-index scan caps limit how many candidate records the scanner inspects in one policy pass.
+2. `MAX_OBJECTS_PER_ROUND` and `MAX_BYTES_PER_ROUND` limit how many candidates become runnable migration tasks.
+3. A candidate skipped only because adding it would exceed the B/C byte budget keeps its `tdue/*` and `tdue_ref/*` entries.
+4. That skipped candidate is retried by a later scanner policy pass, not by a migration worker claim loop.
+5. If one object is larger than `MAX_BYTES_PER_ROUND`, B/C can keep skipping it indefinitely unless the byte budget is raised or disabled.
 
 Code:
 
@@ -125,7 +136,8 @@ Behavior:
 3. Applies both:
    1. object-count cap (`MAX_OBJECTS_PER_ROUND`)
    2. byte budget cap (`MAX_BYTES_PER_ROUND`)
-4. If adding one candidate exceeds byte budget, that candidate is skipped.
+4. If adding one candidate exceeds byte budget, that candidate is skipped and remains in due-index for a later scanner pass.
+5. The scanner does not split a single object across policy passes. If one object is larger than the byte budget, it needs a larger or disabled `MAX_BYTES_PER_ROUND`.
 
 ## 5. Strategy C: Idle-Window Admission + Static Throttling
 
@@ -141,21 +153,25 @@ Behavior:
 
 1. Before enqueue, scanner requires idle-window gate pass.
 2. Gate pass requires:
-   1. at least one live node heartbeat
-   2. no live node exceeds any idle threshold:
+   1. at least one non-stale live node heartbeat
+   2. each live node is classified idle or busy using:
       1. `TIERING_IDLE_CPU_PCT`
       2. `TIERING_IDLE_QUEUE_DEPTH`
       3. `TIERING_IDLE_IOWAIT_PCT`
       4. `TIERING_IDLE_MEMORY_PCT`
-   3. idle condition must hold for `TIERING_IDLE_STABLE_ROUNDS` consecutive samples
-   4. cooldown must pass: `TIERING_THRESHOLD_COOLDOWN_SEC`
+   3. idle node count must be at least `TIERING_IDLE_MIN_NODE_COUNT`
+   4. idle/live ratio must be at least `TIERING_IDLE_MIN_NODE_RATIO`
+   5. idle condition must hold for `TIERING_IDLE_STABLE_ROUNDS` consecutive samples
+   6. cooldown must pass: `TIERING_THRESHOLD_COOLDOWN_SEC`
 3. Once gate passes, candidate selection uses same B logic (`maxObjects` + `maxBytes`).
+
+This is a cluster-level admission gate. It avoids the older all-node rule where one hot node could starve all strategy-C migration, but it still does not create tasks only for locally idle nodes.
 
 ### 5.1 What happens when gate is false
 
 1. No tiering candidates are enqueued in that pass.
 2. `tdue/*` entries remain for future passes.
-3. idle stable counter resets when busy sample appears.
+3. idle stable counter resets when the idle ratio or minimum idle-node count fails.
 4. scanner retries on next trigger tick.
 5. maintenance lane (repair enqueue, old-version-gc enqueue, task-history reaper) still runs in that pass.
 

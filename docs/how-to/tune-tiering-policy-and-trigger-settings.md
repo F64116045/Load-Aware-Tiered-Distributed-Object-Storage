@@ -33,6 +33,14 @@ Current behavior summary:
 5. `TIERING_THRESHOLD_CHECK_SEC`
 6. `TIERING_THRESHOLD_COOLDOWN_SEC`
 
+Scan caps and enqueue budgets are different:
+
+1. `TIERING_DUE_INDEX_MAX_SCAN`, `TIERING_DUE_INDEX_BURST_ROUNDS`, and `TIERING_DUE_INDEX_ADAPTIVE_MAX_SCAN` control how many `tdue/*` records a scanner pass may inspect.
+2. `MAX_OBJECTS_PER_ROUND` controls how many inspected candidates may become migration tasks.
+3. `MAX_BYTES_PER_ROUND` controls total selected HOT bytes for strategy B/C.
+4. A candidate skipped by byte budget remains in `tdue/*` and waits for a later scanner pass.
+5. Set `MAX_BYTES_PER_ROUND` above the largest expected object, or set it to `0`, if every eligible object must eventually enqueue under B/C.
+
 ## 4. Idle Window (Strategy C style)
 
 Tune all together:
@@ -42,12 +50,16 @@ Tune all together:
 3. `TIERING_IDLE_MEMORY_PCT`
 4. `TIERING_IDLE_IOWAIT_PCT`
 5. `TIERING_IDLE_QUEUE_DEPTH`
+6. `TIERING_IDLE_MIN_NODE_RATIO`
+7. `TIERING_IDLE_MIN_NODE_COUNT`
 
 Interpretation:
 
-1. scanner runs migration only when metrics remain below thresholds for N rounds
-2. one metric breach resets stable counter
-3. if gate is false, no tiering enqueue happens in that pass and due-index stays for later passes
+1. scanner first classifies each live node as idle or busy from CPU, memory, iowait, and queue-depth thresholds
+2. migration runs only when enough live nodes are idle by count and ratio for N rounds
+3. lower `TIERING_IDLE_MIN_NODE_RATIO` tolerates isolated hot nodes, while higher values are more conservative
+4. a failed idle gate resets stable counter
+5. if gate is false, no tiering enqueue happens in that pass and due-index stays for later passes
 
 ## 5. Pressure Trigger Inputs
 

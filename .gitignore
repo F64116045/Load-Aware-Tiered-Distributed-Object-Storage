@@ -1,4 +1,5 @@
 # Keep documentation and experiment scripts under version control.
 .codex
+__pycache__/
 .experiment-pressure/
 experiments/results/

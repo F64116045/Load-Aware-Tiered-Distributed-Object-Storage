@@ -2,6 +2,7 @@ package tiering
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -113,6 +114,26 @@ func (s *policyScannerStubStore) ListNodeHeartbeats(ctx context.Context, limit i
 	out := make([]meta.NodeHeartbeatSnapshot, len(s.heartbeats))
 	copy(out, s.heartbeats)
 	return out, nil
+}
+
+func idleHeartbeat(nodeID string, now time.Time) meta.NodeHeartbeatSnapshot {
+	return meta.NodeHeartbeatSnapshot{
+		NodeID:        nodeID,
+		Status:        "UP",
+		LastSeenAt:    now,
+		IOQueueDepth:  1,
+		CPULoad:       0.10,
+		MemoryUsedPct: 30,
+		DiskIOWaitPct: 1,
+		TotalBytes:    100,
+		FreeBytes:     80,
+	}
+}
+
+func busyCPUHeartbeat(nodeID string, now time.Time) meta.NodeHeartbeatSnapshot {
+	n := idleHeartbeat(nodeID, now)
+	n.CPULoad = 0.95
+	return n
 }
 
 func TestPolicyScanner_EnqueuePolicyDispatch(t *testing.T) {
@@ -311,6 +332,106 @@ func TestPolicyScanner_IsIdleWindow_StaleHeartbeatIgnored(t *testing.T) {
 	}
 	if !idle {
 		t.Fatalf("stale heartbeat should be ignored, expected idle=true")
+	}
+}
+
+func TestPolicyScanner_IsIdleWindow_RatioGateAllowsPartialBusyCluster(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	store := &policyScannerStubStore{
+		heartbeats: []meta.NodeHeartbeatSnapshot{
+			idleHeartbeat("n1", now),
+			idleHeartbeat("n2", now),
+			idleHeartbeat("n3", now),
+			idleHeartbeat("n4", now),
+			busyCPUHeartbeat("n5", now),
+		},
+	}
+	scanner := NewPolicyScanner(store, PolicyScannerConfig{
+		IdleCPUPercent:    70,
+		IdleMemoryPercent: 80,
+		IdleIOWaitPercent: 20,
+		IdleQueueDepth:    16,
+		IdleMinNodeRatio:  0.8,
+		IdleMinNodeCount:  4,
+		HeartbeatStaleSec: 30,
+	})
+
+	idle, reason, err := scanner.isIdleWindow(context.Background())
+	if err != nil {
+		t.Fatalf("isIdleWindow returned error: %v", err)
+	}
+	if !idle {
+		t.Fatalf("expected 4/5 idle nodes to pass ratio gate, reason=%s", reason)
+	}
+}
+
+func TestPolicyScanner_IsIdleWindow_RatioGateBlocksBelowRatio(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	store := &policyScannerStubStore{
+		heartbeats: []meta.NodeHeartbeatSnapshot{
+			idleHeartbeat("n1", now),
+			idleHeartbeat("n2", now),
+			idleHeartbeat("n3", now),
+			busyCPUHeartbeat("n4", now),
+			busyCPUHeartbeat("n5", now),
+		},
+	}
+	scanner := NewPolicyScanner(store, PolicyScannerConfig{
+		IdleCPUPercent:    70,
+		IdleMemoryPercent: 80,
+		IdleIOWaitPercent: 20,
+		IdleQueueDepth:    16,
+		IdleMinNodeRatio:  0.8,
+		IdleMinNodeCount:  1,
+		HeartbeatStaleSec: 30,
+	})
+
+	idle, reason, err := scanner.isIdleWindow(context.Background())
+	if err != nil {
+		t.Fatalf("isIdleWindow returned error: %v", err)
+	}
+	if idle {
+		t.Fatalf("expected 3/5 idle nodes to fail ratio gate")
+	}
+	if reason == "" || !strings.Contains(reason, "idle_ratio_insufficient") {
+		t.Fatalf("expected ratio failure reason, got=%q", reason)
+	}
+}
+
+func TestPolicyScanner_IsIdleWindow_MinNodeCountBlocksSmallCluster(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	store := &policyScannerStubStore{
+		heartbeats: []meta.NodeHeartbeatSnapshot{
+			idleHeartbeat("n1", now),
+			idleHeartbeat("n2", now),
+			idleHeartbeat("n3", now),
+		},
+	}
+	scanner := NewPolicyScanner(store, PolicyScannerConfig{
+		IdleCPUPercent:    70,
+		IdleMemoryPercent: 80,
+		IdleIOWaitPercent: 20,
+		IdleQueueDepth:    16,
+		IdleMinNodeRatio:  0.8,
+		IdleMinNodeCount:  4,
+		HeartbeatStaleSec: 30,
+	})
+
+	idle, reason, err := scanner.isIdleWindow(context.Background())
+	if err != nil {
+		t.Fatalf("isIdleWindow returned error: %v", err)
+	}
+	if idle {
+		t.Fatalf("expected all-idle 3-node cluster to fail min-node gate")
+	}
+	if reason == "" || !strings.Contains(reason, "idle_nodes_insufficient") {
+		t.Fatalf("expected min-node failure reason, got=%q", reason)
 	}
 }
 

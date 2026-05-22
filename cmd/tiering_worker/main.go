@@ -205,6 +205,8 @@ func main() {
 			IdleMemoryPercent:         config.TieringIdleMemoryPct,
 			IdleIOWaitPercent:         config.TieringIdleIOWaitPct,
 			IdleQueueDepth:            config.TieringIdleQueueDepth,
+			IdleMinNodeRatio:          config.TieringIdleMinNodeRatio,
+			IdleMinNodeCount:          config.TieringIdleMinNodeCount,
 			HotPressureDiskPct:        config.HotPressureDiskPct,
 			HotPressureQueueDepth:     config.HotPressureQueueDepth,
 			HeartbeatStaleSec:         config.NodeHeartbeatStaleSec,
