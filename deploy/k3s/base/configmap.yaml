@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rec-store-config
+data:
+  META_ENABLED: "true"
+  META_REQUIRE_ENDPOINT: "true"
+  META_ENDPOINT: "http://meta-service:8091"
+  META_DSN: ""
+  HOT_REPLICA_COUNT: "3"
+  HOT_WRITE_QUORUM: "2"
+  NODE_HEARTBEAT_INTERVAL_SEC: "3"
+  NODE_HEARTBEAT_STALE_SEC: "15"
+  TIERING_LEADER_STALE_SEC: "10"

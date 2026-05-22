@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tiering-worker
+  labels:
+    app: tiering-worker
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: tiering-worker
+  template:
+    metadata:
+      labels:
+        app: tiering-worker
+    spec:
+      containers:
+        - name: tiering-worker
+          image: rec-store-image
+          imagePullPolicy: IfNotPresent
+          command:
+            - /usr/local/bin/tiering_worker
+          envFrom:
+            - configMapRef:
+                name: rec-store-config
+          env:
+            - name: META_RPC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rec-store-secret
+                  key: META_RPC_AUTH_TOKEN
+            - name: TIERING_WORKER_POLL_SEC
+              value: "2"
+            - name: TIERING_POLICY_PERIOD_SEC
+              value: "300"
+            - name: TIERING_POLICY_VARIANT
+              value: "A"
+            - name: TIERING_TRIGGER_MODE
+              value: "periodic"
+            - name: TIERING_THRESHOLD_CHECK_SEC
+              value: "10"
+            - name: TIERING_THRESHOLD_COOLDOWN_SEC
+              value: "60"
+            - name: AGE_THRESHOLD_SEC
+              value: "3600"
+            - name: MAX_OBJECTS_PER_ROUND
+              value: "200"
+            - name: MAX_BYTES_PER_ROUND
+              value: "1073741824"
+            - name: HOT_PRESSURE_DISK_PCT
+              value: "80"
+            - name: HOT_PRESSURE_QUEUE_DEPTH
+              value: "1000"
+            - name: TIERING_POLICY_LEADER_RETRY_SEC
+              value: "2"
+            - name: TIERING_POLICY_LEADER_LOCK_KEY
+              value: "42042"
+            - name: TIERING_TASK_MAX_RETRY_COUNT
+              value: "8"
+            - name: TIERING_WORKER_TASK_TYPE
+              value: "ALL"
