@@ -13,6 +13,7 @@ region/zone: asia-east1 / asia-east1-a
 node pool: 6 nodes for the free-trial quota-friendly profile
 machine type: e2-standard-2 for first cloud runs
 disk: 30 GiB pd-balanced per node
+stateful workload PVCs: 45 GiB total by default
 namespace: rec-store
 ```
 
@@ -29,7 +30,15 @@ Inside Kubernetes:
 The GKE overlay changes the API service from NodePort to LoadBalancer and adds a
 required anti-affinity rule for storage-node pods so the six storage pods are
 spread one per Kubernetes node. This keeps the storage tier distributed even on
-the quota-friendly six-node profile.
+the quota-friendly six-node profile. It also shrinks lab PVC requests to fit the
+common free-trial `SSD_TOTAL_GB=250` quota:
+
+```text
+PD PVC: 5 GiB
+TiKV PVC: 10 GiB
+storage-node PVCs: 6 * 5 GiB
+total workload PVCs: 45 GiB
+```
 
 ## One-Time GCP Setup
 
@@ -103,8 +112,9 @@ kubectl get nodes -o wide
 ```
 
 You should see six ready nodes before deploying the storage system. This profile
-uses `6 * 2 vCPU = 12 vCPU` and `6 * 30 GiB = 180 GiB` of balanced persistent
-disk, which fits the common new-project quota observed during free-trial setup.
+uses `6 * 2 vCPU = 12 vCPU` and `6 * 30 GiB = 180 GiB` of node boot disk. The
+GKE overlay adds about 45 GiB of workload PVCs, keeping the expected persistent
+disk total near 225 GiB and under the common new-project 250 GiB SSD quota.
 
 ## Deploy the Store
 
