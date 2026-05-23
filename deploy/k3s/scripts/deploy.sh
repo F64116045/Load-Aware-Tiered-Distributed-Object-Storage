@@ -29,11 +29,14 @@ if [[ "${image_name}" == "${IMAGE}" ]]; then
 fi
 
 if [[ "${KUSTOMIZE_DIR}" = /* ]]; then
-  kustomize_path="${KUSTOMIZE_DIR}"
-else
-  kustomize_path="${REPO_ROOT}/${KUSTOMIZE_DIR}"
+  echo "ERROR: KUSTOMIZE_DIR must be relative to the repository root" >&2
+  exit 1
 fi
-if [[ ! -d "${kustomize_path}" ]]; then
+if [[ "${KUSTOMIZE_DIR}" != deploy/* ]]; then
+  echo "ERROR: KUSTOMIZE_DIR must point under deploy/, got: ${KUSTOMIZE_DIR}" >&2
+  exit 1
+fi
+if [[ ! -d "${REPO_ROOT}/${KUSTOMIZE_DIR}" ]]; then
   echo "ERROR: KUSTOMIZE_DIR does not exist: ${KUSTOMIZE_DIR}" >&2
   exit 1
 fi
@@ -43,19 +46,24 @@ if [[ "${RESET_NAMESPACE}" == "true" ]]; then
   kubectl wait --for=delete "namespace/${NAMESPACE}" --timeout=180s >/dev/null 2>&1 || true
 fi
 
-tmp_dir="$(mktemp -d)"
+tmp_dir="$(mktemp -d "${REPO_ROOT}/deploy/.tmp-kustomize.XXXXXX")"
 cleanup() {
   rm -rf "${tmp_dir}"
 }
 trap cleanup EXIT
 
+resource_path="../${KUSTOMIZE_DIR#deploy/}"
+
 cat >"${tmp_dir}/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ${kustomize_path}
+  - ${resource_path}
 images:
   - name: rec-store-image
+    newName: ${image_name}
+    newTag: ${image_tag}
+  - name: localhost/rec-store
     newName: ${image_name}
     newTag: ${image_tag}
 EOF
