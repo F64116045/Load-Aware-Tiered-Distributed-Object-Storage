@@ -33,14 +33,22 @@ METRICS_INTERVAL_SEC="${METRICS_INTERVAL_SEC:-5}"
 COLLECT_DURATION_SEC="${COLLECT_DURATION_SEC:-$((WORKLOAD_DURATION_SEC + PRESSURE_DURATION_SEC + PRESSURE_DELAY_SEC + 30))}"
 SUMMARY_FILE="${SUMMARY_FILE:-${RESULT_DIR}/summary.csv}"
 TIERING_WORKER_REPLICAS="${TIERING_WORKER_REPLICAS:-1}"
+K8S_DISCOVER_API_BASE="${K8S_DISCOVER_API_BASE:-false}"
+K8S_API_SERVICE_NAME="${K8S_API_SERVICE_NAME:-api}"
+K8S_API_SERVICE_PORT="${K8S_API_SERVICE_PORT:-8000}"
 
-write_run_env
-cat >>"${RESULT_DIR}/run.env" <<EOF
+write_k8s_run_env() {
+  write_run_env
+  cat >>"${RESULT_DIR}/run.env" <<EOF
 K8S_NAMESPACE=${K8S_NAMESPACE}
 KUSTOMIZE_DIR=${KUSTOMIZE_DIR:-}
 IMAGE=${IMAGE:-}
 TIERING_WORKER_REPLICAS=${TIERING_WORKER_REPLICAS}
+K8S_DISCOVER_API_BASE=${K8S_DISCOVER_API_BASE}
+K8S_API_SERVICE_NAME=${K8S_API_SERVICE_NAME}
+K8S_API_SERVICE_PORT=${K8S_API_SERVICE_PORT}
 EOF
+}
 
 deploy_k8s_stack() {
   if [[ "${RESET_STACK}" == "true" ]]; then
@@ -54,6 +62,33 @@ deploy_k8s_stack() {
     exp_log "Wait existing k3s stack: namespace=${K8S_NAMESPACE}"
     NAMESPACE="${K8S_NAMESPACE}" "${K8S_WAIT_SCRIPT}"
   fi
+}
+
+discover_k8s_api_base() {
+  if [[ "${K8S_DISCOVER_API_BASE}" != "true" ]]; then
+    return 0
+  fi
+
+  local deadline=$((SECONDS + TIMEOUT_SEC))
+  local endpoint=""
+  exp_log "Discover Kubernetes API endpoint: service=${K8S_API_SERVICE_NAME} port=${K8S_API_SERVICE_PORT}"
+  while (( SECONDS < deadline )); do
+    endpoint="$(kubectl -n "${K8S_NAMESPACE}" get service "${K8S_API_SERVICE_NAME}" \
+      -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+    if [[ -z "${endpoint}" ]]; then
+      endpoint="$(kubectl -n "${K8S_NAMESPACE}" get service "${K8S_API_SERVICE_NAME}" \
+        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+    fi
+    if [[ -n "${endpoint}" ]]; then
+      export API_BASE="http://${endpoint}:${K8S_API_SERVICE_PORT}"
+      exp_log "Use discovered API_BASE=${API_BASE}"
+      return 0
+    fi
+    sleep 2
+  done
+
+  exp_log "ERROR: Kubernetes service ${K8S_API_SERVICE_NAME} did not get a load balancer endpoint"
+  return 1
 }
 
 start_k8s_tiering_worker() {
@@ -131,6 +166,8 @@ start_k8s_pressure() {
 }
 
 deploy_k8s_stack
+discover_k8s_api_base
+write_k8s_run_env
 wait_api_health
 wait_node_discovery_ready "${MIN_HEALTHY_NODES}"
 
