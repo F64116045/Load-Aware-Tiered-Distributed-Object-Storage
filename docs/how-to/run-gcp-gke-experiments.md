@@ -10,9 +10,9 @@ Use one GKE Standard cluster:
 
 ```text
 region/zone: asia-east1 / asia-east1-a
-node pool: 7 nodes
+node pool: 6 nodes for the free-trial quota-friendly profile
 machine type: e2-standard-2 for first cloud runs
-disk: 50 GiB pd-balanced per node
+disk: 30 GiB pd-balanced per node
 namespace: rec-store
 ```
 
@@ -28,7 +28,8 @@ Inside Kubernetes:
 
 The GKE overlay changes the API service from NodePort to LoadBalancer and adds a
 required anti-affinity rule for storage-node pods so the six storage pods are
-spread across different Kubernetes nodes when the cluster has enough nodes.
+spread one per Kubernetes node. This keeps the storage tier distributed even on
+the quota-friendly six-node profile.
 
 ## One-Time GCP Setup
 
@@ -74,7 +75,7 @@ From the repository root:
 export GCP_PROJECT_ID="$(gcloud config get-value project)"
 export IMAGE="asia-east1-docker.pkg.dev/${GCP_PROJECT_ID}/rec-store/rec-store:gke-exp-001"
 
-IMAGE="${IMAGE}" ./deploy/k3s/scripts/build-and-push-image.sh
+IMAGE="${IMAGE}" ./deploy/gke/scripts/build-and-push-image.sh
 ```
 
 The script is registry-neutral. It works with Artifact Registry after
@@ -87,10 +88,10 @@ Create a Standard cluster:
 ```bash
 gcloud container clusters create rec-store-exp \
   --zone asia-east1-a \
-  --num-nodes 7 \
+  --num-nodes 6 \
   --machine-type e2-standard-2 \
   --disk-type pd-balanced \
-  --disk-size 50 \
+  --disk-size 30 \
   --enable-ip-alias
 ```
 
@@ -101,7 +102,9 @@ gcloud container clusters get-credentials rec-store-exp --zone asia-east1-a
 kubectl get nodes -o wide
 ```
 
-You should see seven ready nodes before deploying the storage system.
+You should see six ready nodes before deploying the storage system. This profile
+uses `6 * 2 vCPU = 12 vCPU` and `6 * 30 GiB = 180 GiB` of balanced persistent
+disk, which fits the common new-project quota observed during free-trial setup.
 
 ## Deploy the Store
 
@@ -109,10 +112,14 @@ Deploy with the GKE overlay:
 
 ```bash
 IMAGE="${IMAGE}" \
-KUSTOMIZE_DIR=deploy/gke/standard \
 RESET_NAMESPACE=true \
-./deploy/k3s/scripts/deploy.sh
+./deploy/gke/scripts/deploy.sh
 ```
+
+The GKE deploy wrapper uses the GKE overlay and grants the GKE node service
+account `roles/artifactregistry.reader` on the Artifact Registry repository by
+default. Set `GRANT_ARTIFACT_READER=false` only if this permission is managed
+elsewhere.
 
 Check pods and the API service:
 
