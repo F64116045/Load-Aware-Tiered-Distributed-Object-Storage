@@ -41,6 +41,16 @@ exp_log() {
   printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2
 }
 
+curl_exp() {
+  curl \
+    --connect-timeout "${CURL_CONNECT_TIMEOUT_SEC:-5}" \
+    --max-time "${CURL_MAX_TIME_SEC:-30}" \
+    --retry "${CURL_RETRY_COUNT:-2}" \
+    --retry-delay "${CURL_RETRY_DELAY_SEC:-1}" \
+    --retry-connrefused \
+    "$@"
+}
+
 ensure_result_dir() {
   mkdir -p "${RESULT_DIR}"
   printf '%s\n' "${RESULT_DIR}"
@@ -114,7 +124,7 @@ wait_api_health() {
   local deadline=$((SECONDS + TIMEOUT_SEC))
   exp_log "Wait API health at ${API_BASE}/health"
   while (( SECONDS < deadline )); do
-    if curl -sS -f "${API_BASE}/health" >/dev/null 2>&1; then
+    if CURL_MAX_TIME_SEC=5 CURL_RETRY_COUNT=0 curl_exp -sS -f "${API_BASE}/health" >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
@@ -129,7 +139,7 @@ wait_node_discovery_ready() {
   exp_log "Wait node discovery: min_nodes=${min_nodes}"
   while (( SECONDS < deadline )); do
     local body count
-    body="$(curl -sS -f "${API_BASE}/v2/admin/nodes?limit=1000" || true)"
+    body="$(CURL_MAX_TIME_SEC=5 CURL_RETRY_COUNT=0 curl_exp -sS -f "${API_BASE}/v2/admin/nodes?limit=1000" || true)"
     count="$(printf '%s' "${body}" | sed -n 's/.*"count":\([0-9]\+\).*/\1/p' | head -n1)"
     if [[ -n "${count}" ]] && (( count >= min_nodes )); then
       return 0

@@ -26,8 +26,8 @@ while (( SECONDS < deadline )); do
   nodes_json="${tmp_dir}/nodes.json"
   metrics_json="${tmp_dir}/metrics.json"
 
-  curl -sS "${API_BASE}/v2/admin/nodes?limit=1000" -o "${nodes_json}" || printf '{}' >"${nodes_json}"
-  curl -sS "${API_BASE}/v2/admin/metrics-snapshot" -o "${metrics_json}" || printf '{}' >"${metrics_json}"
+  CURL_MAX_TIME_SEC=10 CURL_RETRY_COUNT=0 curl_exp -sS "${API_BASE}/v2/admin/nodes?limit=1000" -o "${nodes_json}" || printf '{}' >"${nodes_json}"
+  CURL_MAX_TIME_SEC=10 CURL_RETRY_COUNT=0 curl_exp -sS "${API_BASE}/v2/admin/metrics-snapshot" -o "${metrics_json}" || printf '{}' >"${metrics_json}"
 
   python3 - "$ts" "$SCENARIO" "$RUN_ID" "$nodes_json" "$metrics_json" >>"${OUT_FILE}" <<'PY'
 import csv
