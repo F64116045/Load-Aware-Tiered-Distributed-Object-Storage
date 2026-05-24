@@ -155,6 +155,10 @@ it discovers the `api` LoadBalancer endpoint after every redeploy. You can keep
 `API_BASE` for manual smoke checks, but do not need to pass it to
 `run_matrix_gke.sh`.
 
+The runner also performs a short GKE auth preflight before the long experiment
+starts. If Cloud Shell shows an authorization dialog, click **Authorize** during
+that preflight instead of letting it interrupt the middle of a scenario.
+
 Smoke run:
 
 ```bash
