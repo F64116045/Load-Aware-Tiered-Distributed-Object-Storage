@@ -42,7 +42,7 @@ worker_loop() {
       op="GET"
       object_id="$(printf '%s-preload-%04d' "${KEY_PREFIX}" "$(( (RANDOM % PRELOAD_COUNT) + 1 ))")"
       curl_out="$(
-        curl -sS -o /dev/null -w '%{http_code} %{time_total}' \
+        curl_exp -sS -o /dev/null -w '%{http_code} %{time_total}' \
           "${API_BASE}/v2/objects/${object_id}" || true
       )"
       bytes=0
@@ -50,7 +50,7 @@ worker_loop() {
       op="PUT"
       object_id="$(printf '%s-live-%02d-%06d-%s' "${KEY_PREFIX}" "${worker_id}" "${seq_no}" "$(date +%s%N)")"
       curl_out="$(
-        curl -sS -o /dev/null -w '%{http_code} %{time_total}' \
+        curl_exp -sS -o /dev/null -w '%{http_code} %{time_total}' \
           -X PUT "${API_BASE}/v2/objects/${object_id}" \
           -H 'Content-Type: application/octet-stream' \
           --data-binary @"${PAYLOAD_FILE}" || true

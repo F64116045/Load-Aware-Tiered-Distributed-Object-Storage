@@ -150,10 +150,19 @@ The admin node list should show six live storage nodes.
 
 ## Run the Experiment Matrix
 
+The GKE matrix runner resets and redeploys the namespace for each scenario, so
+it discovers the `api` LoadBalancer endpoint after every redeploy. You can keep
+`API_BASE` for manual smoke checks, but do not need to pass it to
+`run_matrix_gke.sh`.
+
+The runner also performs a short GKE auth preflight before the long experiment
+starts. If Cloud Shell shows an authorization dialog, click **Authorize** during
+that preflight instead of letting it interrupt the middle of a scenario.
+
 Smoke run:
 
 ```bash
-IMAGE="${IMAGE}" API_BASE="${API_BASE}" \
+IMAGE="${IMAGE}" \
 MATRIX_PRESSURE_PROFILE=none \
 AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
 OBJECT_COUNT=20 OBJECT_SIZE_BYTES=262144 \
@@ -164,7 +173,7 @@ WORKLOAD_DURATION_SEC=20 WORKLOAD_CONCURRENCY=2 GET_PERCENT=70 \
 No-pressure matrix:
 
 ```bash
-IMAGE="${IMAGE}" API_BASE="${API_BASE}" \
+IMAGE="${IMAGE}" \
 MATRIX_PRESSURE_PROFILE=none \
 AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
 OBJECT_COUNT=200 OBJECT_SIZE_BYTES=1048576 \
@@ -175,7 +184,7 @@ WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 GET_PERCENT=70 \
 CPU-pressure matrix:
 
 ```bash
-IMAGE="${IMAGE}" API_BASE="${API_BASE}" \
+IMAGE="${IMAGE}" \
 MATRIX_PRESSURE_PROFILE=cpu MATRIX_PRESSURE_CPUS=2 \
 MATRIX_PRESSURE_DURATION_SEC=60 MATRIX_PRESSURE_WARMUP_SEC=10 \
 AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
@@ -187,7 +196,7 @@ WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 GET_PERCENT=70 \
 I/O-pressure matrix:
 
 ```bash
-IMAGE="${IMAGE}" API_BASE="${API_BASE}" \
+IMAGE="${IMAGE}" \
 MATRIX_PRESSURE_PROFILE=io MATRIX_HDD_WORKERS=2 MATRIX_HDD_BYTES=512M \
 MATRIX_PRESSURE_DURATION_SEC=60 MATRIX_PRESSURE_WARMUP_SEC=10 \
 AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
@@ -202,6 +211,38 @@ Outputs:
 experiments/results/matrix-<run_id_root>-fairness.txt
 experiments/results/matrix-<run_id_root>-comparison.csv
 experiments/results/matrix-<run_id_root>-migration.csv
+```
+
+## Run the Full GKE Suite
+
+After the smoke run succeeds, you can run all three experiment profiles with one
+command. The default values below are intentionally gentler than the local
+Docker matrix, because the free-trial GKE setup uses small nodes and small
+Persistent Disk volumes.
+
+```bash
+IMAGE="${IMAGE}" \
+AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=90 \
+OBJECT_COUNT=50 OBJECT_SIZE_BYTES=1048576 \
+WORKLOAD_DURATION_SEC=60 WORKLOAD_CONCURRENCY=2 GET_PERCENT=70 \
+./experiments/scenarios/run_gke_experiment_suite.sh
+```
+
+The suite runs `none`, `cpu`, and `io` pressure profiles. Each profile runs the
+same four policy scenarios: baseline, Strategy A, Strategy B, and Strategy C.
+
+Useful outputs:
+
+```text
+experiments/results/suite-<suite_run_id>-index.csv
+experiments/results/suite-<suite_run_id>-latency.csv
+experiments/results/suite-<suite_run_id>-migration.csv
+```
+
+To run only part of the suite:
+
+```bash
+GKE_SUITE_PROFILES="cpu io" IMAGE="${IMAGE}" ./experiments/scenarios/run_gke_experiment_suite.sh
 ```
 
 Use at least three matrix runs per pressure profile for report-quality numbers.

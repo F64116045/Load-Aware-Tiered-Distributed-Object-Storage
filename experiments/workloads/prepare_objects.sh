@@ -27,7 +27,7 @@ exp_log "Preload objects: count=${OBJECT_COUNT} size=${OBJECT_SIZE_BYTES} prefix
 for i in $(seq 1 "${OBJECT_COUNT}"); do
   object_id="$(printf '%s-preload-%04d' "${KEY_PREFIX}" "${i}")"
   curl_out="$(
-    curl -sS -o /dev/null -w '%{http_code} %{time_total}' \
+    curl_exp -sS -o /dev/null -w '%{http_code} %{time_total}' \
       -X PUT "${API_BASE}/v2/objects/${object_id}" \
       -H 'Content-Type: application/octet-stream' \
       --data-binary @"${PAYLOAD_FILE}" || true

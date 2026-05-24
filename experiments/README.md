@@ -89,11 +89,11 @@ WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 GET_PERCENT=70 \
 See `docs/how-to/run-aws-k3s-experiments.md` for the full cloud workflow.
 
 For GCP/GKE runs, build and push an Artifact Registry image, deploy the GKE
-overlay, then use the GKE matrix runner:
+overlay, then use the GKE matrix runner. The runner discovers the `api`
+LoadBalancer IP after each namespace reset.
 
 ```bash
 IMAGE=asia-east1-docker.pkg.dev/<project-id>/rec-store/rec-store:gke-exp-001 \
-API_BASE=http://<api-load-balancer-ip>:8000 \
 MATRIX_PRESSURE_PROFILE=none \
 AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=70 \
 OBJECT_COUNT=200 OBJECT_SIZE_BYTES=1048576 \
@@ -103,10 +103,24 @@ WORKLOAD_DURATION_SEC=45 WORKLOAD_CONCURRENCY=8 GET_PERCENT=70 \
 
 See `docs/how-to/run-gcp-gke-experiments.md` for the full GCP workflow.
 
+To run the full GKE experiment suite (`none`, `cpu`, and `io` pressure
+profiles; each profile runs baseline/A/B/C), use:
+
+```bash
+IMAGE=asia-east1-docker.pkg.dev/<project-id>/rec-store/rec-store:gke-exp-001 \
+AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=90 \
+OBJECT_COUNT=50 OBJECT_SIZE_BYTES=1048576 \
+WORKLOAD_DURATION_SEC=60 WORKLOAD_CONCURRENCY=2 GET_PERCENT=70 \
+  ./experiments/scenarios/run_gke_experiment_suite.sh
+```
+
 Results are written under:
 
 ```text
 experiments/results/<scenario>/<run_id>/
+experiments/results/suite-<suite_run_id>-index.csv
+experiments/results/suite-<suite_run_id>-latency.csv
+experiments/results/suite-<suite_run_id>-migration.csv
 ```
 
 Important files:

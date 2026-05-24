@@ -11,6 +11,9 @@ from typing import Dict, Iterable, List
 INVARIANT_KEYS = [
     "API_BASE",
     "COMPOSE_FILES",
+    "K8S_DISCOVER_API_BASE",
+    "K8S_API_SERVICE_NAME",
+    "K8S_API_SERVICE_PORT",
     "OBJECT_COUNT",
     "OBJECT_SIZE_BYTES",
     "PRELOAD_OBJECTS",
@@ -63,6 +66,12 @@ def format_row(values: Iterable[str]) -> str:
     return ",".join(values)
 
 
+def uses_discovered_k8s_endpoint(records: List[tuple[Path, Dict[str, str]]]) -> bool:
+    return bool(records) and all(
+        values.get("K8S_DISCOVER_API_BASE", "") == "true" for _, values in records
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--result-root", default="experiments/results")
@@ -102,9 +111,16 @@ def main() -> int:
         lines.append(format_row(row))
 
     failures = []
+    ignored_differences = []
+    ignore_api_base = uses_discovered_k8s_endpoint(records)
     for key in INVARIANT_KEYS:
         observed = {values.get(key, "") for _, values in records}
         if len(observed) > 1:
+            if key == "API_BASE" and ignore_api_base:
+                ignored_differences.append(
+                    f"{key} differs because each Kubernetes reset may allocate a new LoadBalancer endpoint: {sorted(observed)}"
+                )
+                continue
             failures.append(f"{key} differs: {sorted(observed)}")
 
     scenarios = {values.get("SCENARIO", "") for _, values in records}
@@ -119,6 +135,9 @@ def main() -> int:
     else:
         lines.append("PASS non-policy parameters are uniform across compared scenarios")
         exit_code = 0
+    if ignored_differences:
+        lines.append("INFO ignored derived endpoint differences")
+        lines.extend(ignored_differences)
 
     text = "\n".join(lines) + "\n"
     if args.out:
