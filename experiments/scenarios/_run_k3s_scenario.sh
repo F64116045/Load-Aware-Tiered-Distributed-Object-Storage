@@ -64,6 +64,21 @@ deploy_k8s_stack() {
   fi
 }
 
+configure_k8s_experiment_env() {
+  if [[ -z "${AGE_THRESHOLD_SEC:-}" ]]; then
+    return 0
+  fi
+
+  exp_log "Configure k8s experiment env: AGE_THRESHOLD_SEC=${AGE_THRESHOLD_SEC}"
+  kubectl -n "${K8S_NAMESPACE}" set env deployment/meta-service deployment/api \
+    AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
+  kubectl -n "${K8S_NAMESPACE}" set env deployment/tiering-worker \
+    AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
+
+  kubectl -n "${K8S_NAMESPACE}" rollout status deployment/meta-service --timeout=180s
+  kubectl -n "${K8S_NAMESPACE}" rollout status deployment/api --timeout=180s
+}
+
 discover_k8s_api_base() {
   if [[ "${K8S_DISCOVER_API_BASE}" != "true" ]]; then
     return 0
@@ -166,6 +181,7 @@ start_k8s_pressure() {
 }
 
 deploy_k8s_stack
+configure_k8s_experiment_env
 discover_k8s_api_base
 write_k8s_run_env
 wait_api_health
