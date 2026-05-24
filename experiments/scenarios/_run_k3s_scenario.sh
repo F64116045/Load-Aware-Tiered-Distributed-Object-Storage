@@ -133,6 +133,10 @@ start_k8s_tiering_worker() {
 pressure_job_name() {
   local suffix
   suffix="$(printf '%s' "${RUN_ID}" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | tr -c 'a-z0-9-' '-' | cut -c1-40)"
+  suffix="${suffix%-}"
+  if [[ -z "${suffix}" ]]; then
+    suffix="run"
+  fi
   printf 'pressure-%s-%s\n' "$1" "${suffix}"
 }
 
