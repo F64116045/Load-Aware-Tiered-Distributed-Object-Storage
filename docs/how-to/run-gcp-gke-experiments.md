@@ -209,6 +209,38 @@ experiments/results/matrix-<run_id_root>-comparison.csv
 experiments/results/matrix-<run_id_root>-migration.csv
 ```
 
+## Run the Full GKE Suite
+
+After the smoke run succeeds, you can run all three experiment profiles with one
+command. The default values below are intentionally gentler than the local
+Docker matrix, because the free-trial GKE setup uses small nodes and small
+Persistent Disk volumes.
+
+```bash
+IMAGE="${IMAGE}" \
+AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=90 \
+OBJECT_COUNT=50 OBJECT_SIZE_BYTES=1048576 \
+WORKLOAD_DURATION_SEC=60 WORKLOAD_CONCURRENCY=2 GET_PERCENT=70 \
+./experiments/scenarios/run_gke_experiment_suite.sh
+```
+
+The suite runs `none`, `cpu`, and `io` pressure profiles. Each profile runs the
+same four policy scenarios: baseline, Strategy A, Strategy B, and Strategy C.
+
+Useful outputs:
+
+```text
+experiments/results/suite-<suite_run_id>-index.csv
+experiments/results/suite-<suite_run_id>-latency.csv
+experiments/results/suite-<suite_run_id>-migration.csv
+```
+
+To run only part of the suite:
+
+```bash
+GKE_SUITE_PROFILES="cpu io" IMAGE="${IMAGE}" ./experiments/scenarios/run_gke_experiment_suite.sh
+```
+
 Use at least three matrix runs per pressure profile for report-quality numbers.
 
 ## Cleanup
