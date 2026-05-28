@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="940" viewBox="0 0 1600 940">
+<defs>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+<feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#0f172a" flood-opacity="0.10"/>
+</filter>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="70.0" y="70.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="38" font-weight="900" fill="#0f172a" text-anchor="start">I/O Pressure Resilience</text>
+<text x="70.0" y="108.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="18" font-weight="500" fill="#475569" text-anchor="start">A policy is useful only if it preserves throughput and avoids foreground errors while migration runs.</text>
+<rect x="910.0" y="95.0" width="18.0" height="18.0" rx="4.0" fill="#64748b" stroke="none" stroke-width="1.0"/>
+<text x="936.0" y="111.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="700" fill="#334155" text-anchor="start">Baseline</text>
+<rect x="1050.0" y="95.0" width="18.0" height="18.0" rx="4.0" fill="#2563eb" stroke="none" stroke-width="1.0"/>
+<text x="1076.0" y="111.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="700" fill="#334155" text-anchor="start">Age-based</text>
+<rect x="1190.0" y="95.0" width="18.0" height="18.0" rx="4.0" fill="#f97316" stroke="none" stroke-width="1.0"/>
+<text x="1216.0" y="111.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="700" fill="#334155" text-anchor="start">Throttled</text>
+<rect x="1330.0" y="95.0" width="18.0" height="18.0" rx="4.0" fill="#16a34a" stroke="none" stroke-width="1.0"/>
+<text x="1356.0" y="111.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="700" fill="#334155" text-anchor="start">Pressure-aware</text>
+<text x="150.0" y="185.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="24" font-weight="900" fill="#0f172a" text-anchor="start">Overall throughput</text>
+<line x1="150.0" y1="650.0" x2="710.0" y2="650.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="138.0" y="655.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">0 rps</text>
+<line x1="150.0" y1="557.9" x2="710.0" y2="557.9" stroke="#e2e8f0" stroke-width="1"/>
+<text x="138.0" y="562.9" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">3 rps</text>
+<line x1="150.0" y1="465.7" x2="710.0" y2="465.7" stroke="#e2e8f0" stroke-width="1"/>
+<text x="138.0" y="470.7" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">6 rps</text>
+<line x1="150.0" y1="373.6" x2="710.0" y2="373.6" stroke="#e2e8f0" stroke-width="1"/>
+<text x="138.0" y="378.6" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">9 rps</text>
+<line x1="150.0" y1="281.4" x2="710.0" y2="281.4" stroke="#e2e8f0" stroke-width="1"/>
+<text x="138.0" y="286.4" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">12 rps</text>
+<line x1="150.0" y1="220.0" x2="150.0" y2="650.0" stroke="#94a3b8" stroke-width="1.5"/>
+<line x1="150.0" y1="650.0" x2="710.0" y2="650.0" stroke="#94a3b8" stroke-width="1.5"/>
+<rect x="235.0" y="295.8" width="70.0" height="354.2" rx="10.0" fill="#64748b" stroke="none" stroke-width="1.0"/>
+<text x="270.0" y="283.8" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">11.5</text>
+<text x="270.0" y="684.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#475569" text-anchor="middle">baseline</text>
+<rect x="345.0" y="559.2" width="70.0" height="90.8" rx="10.0" fill="#2563eb" stroke="none" stroke-width="1.0"/>
+<text x="380.0" y="547.2" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">3.0</text>
+<text x="380.0" y="684.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#475569" text-anchor="middle">A</text>
+<rect x="455.0" y="513.0" width="70.0" height="137.0" rx="10.0" fill="#f97316" stroke="none" stroke-width="1.0"/>
+<text x="490.0" y="501.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">4.5</text>
+<text x="490.0" y="684.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#475569" text-anchor="middle">B</text>
+<rect x="565.0" y="322.5" width="70.0" height="327.5" rx="10.0" fill="#16a34a" stroke="none" stroke-width="1.0"/>
+<text x="600.0" y="310.5" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">10.7</text>
+<text x="600.0" y="684.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#475569" text-anchor="middle">C</text>
+<text x="875.0" y="185.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="24" font-weight="900" fill="#0f172a" text-anchor="start">PUT error rate</text>
+<line x1="875.0" y1="650.0" x2="1435.0" y2="650.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="863.0" y="655.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">0%</text>
+<line x1="875.0" y1="542.5" x2="1435.0" y2="542.5" stroke="#e2e8f0" stroke-width="1"/>
+<text x="863.0" y="547.5" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">2%</text>
+<line x1="875.0" y1="435.0" x2="1435.0" y2="435.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="863.0" y="440.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">4%</text>
+<line x1="875.0" y1="327.5" x2="1435.0" y2="327.5" stroke="#e2e8f0" stroke-width="1"/>
+<text x="863.0" y="332.5" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">6%</text>
+<line x1="875.0" y1="220.0" x2="1435.0" y2="220.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="863.0" y="225.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">8%</text>
+<line x1="875.0" y1="220.0" x2="875.0" y2="650.0" stroke="#94a3b8" stroke-width="1.5"/>
+<line x1="875.0" y1="650.0" x2="1435.0" y2="650.0" stroke="#94a3b8" stroke-width="1.5"/>
+<rect x="960.0" y="650.0" width="70.0" height="2.0" rx="10.0" fill="#64748b" stroke="none" stroke-width="1.0"/>
+<text x="995.0" y="638.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">0.0%</text>
+<text x="995.0" y="684.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#475569" text-anchor="middle">baseline</text>
+<rect x="1070.0" y="279.3" width="70.0" height="370.7" rx="10.0" fill="#dc2626" stroke="none" stroke-width="1.0"/>
+<text x="1105.0" y="267.3" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">6.9%</text>
+<text x="1105.0" y="684.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#475569" text-anchor="middle">A</text>
+<rect x="1180.0" y="650.0" width="70.0" height="2.0" rx="10.0" fill="#f97316" stroke="none" stroke-width="1.0"/>
+<text x="1215.0" y="638.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">0.0%</text>
+<text x="1215.0" y="684.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#475569" text-anchor="middle">B</text>
+<rect x="1290.0" y="650.0" width="70.0" height="2.0" rx="10.0" fill="#16a34a" stroke="none" stroke-width="1.0"/>
+<text x="1325.0" y="638.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">0.0%</text>
+<text x="1325.0" y="684.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#475569" text-anchor="middle">C</text>
+<rect x="150.0" y="735.0" width="1280.0" height="100.0" rx="18.0" fill="#ffffff" stroke="#bbf7d0" stroke-width="1.5"/>
+<text x="185.0" y="777.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="18" font-weight="800" fill="#14532d" text-anchor="start">Result: Pressure-aware keeps 10.7 rps overall throughput and 0% PUT errors under I/O pressure.</text>
+<text x="185.0" y="810.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="18" font-weight="800" fill="#14532d" text-anchor="start">Age-based drops to 3.0 rps and 6.9% PUT errors.</text>
+</svg>

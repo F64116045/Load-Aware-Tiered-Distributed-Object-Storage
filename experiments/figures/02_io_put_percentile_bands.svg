@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="940" viewBox="0 0 1600 940">
+<defs>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+<feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#0f172a" flood-opacity="0.10"/>
+</filter>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="70.0" y="70.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="38" font-weight="900" fill="#0f172a" text-anchor="start">I/O Pressure PUT Latency Percentile Bands</text>
+<text x="70.0" y="108.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="18" font-weight="500" fill="#475569" text-anchor="start">Summary percentile bands show how the write tail expands under I/O contention.</text>
+<rect x="890.0" y="95.0" width="18.0" height="18.0" rx="4.0" fill="#64748b" stroke="none" stroke-width="1.0"/>
+<text x="916.0" y="111.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="700" fill="#334155" text-anchor="start">Baseline</text>
+<rect x="1030.0" y="95.0" width="18.0" height="18.0" rx="4.0" fill="#2563eb" stroke="none" stroke-width="1.0"/>
+<text x="1056.0" y="111.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="700" fill="#334155" text-anchor="start">Age-based</text>
+<rect x="1170.0" y="95.0" width="18.0" height="18.0" rx="4.0" fill="#f97316" stroke="none" stroke-width="1.0"/>
+<text x="1196.0" y="111.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="700" fill="#334155" text-anchor="start">Throttled</text>
+<rect x="1310.0" y="95.0" width="18.0" height="18.0" rx="4.0" fill="#16a34a" stroke="none" stroke-width="1.0"/>
+<text x="1336.0" y="111.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="700" fill="#334155" text-anchor="start">Pressure-aware</text>
+<line x1="155.0" y1="685.0" x2="1055.0" y2="685.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="143.0" y="690.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">0</text>
+<line x1="155.0" y1="573.1" x2="1055.0" y2="573.1" stroke="#e2e8f0" stroke-width="1"/>
+<text x="143.0" y="578.1" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">1000</text>
+<line x1="155.0" y1="461.2" x2="1055.0" y2="461.2" stroke="#e2e8f0" stroke-width="1"/>
+<text x="143.0" y="466.2" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">2000</text>
+<line x1="155.0" y1="349.3" x2="1055.0" y2="349.3" stroke="#e2e8f0" stroke-width="1"/>
+<text x="143.0" y="354.3" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">3000</text>
+<line x1="155.0" y1="237.4" x2="1055.0" y2="237.4" stroke="#e2e8f0" stroke-width="1"/>
+<text x="143.0" y="242.4" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="end">4000</text>
+<line x1="155.0" y1="215.0" x2="155.0" y2="685.0" stroke="#94a3b8" stroke-width="1.5"/>
+<line x1="155.0" y1="685.0" x2="1055.0" y2="685.0" stroke="#94a3b8" stroke-width="1.5"/>
+<text transform="rotate(-90 55 450)" x="55.0" y="450.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="800" fill="#334155" text-anchor="middle">PUT latency (ms)</text>
+<line x1="267.5" y1="652.6" x2="267.5" y2="563.6" stroke="#64748b" stroke-width="10"/>
+<line x1="231.5" y1="588.9" x2="303.5" y2="588.9" stroke="#0f172a" stroke-width="3"/>
+<circle cx="267.5" cy="652.6" r="13.0" fill="#ffffff" stroke="#64748b" stroke-width="4.0"/>
+<circle cx="267.5" cy="563.6" r="15.0" fill="#64748b" stroke="#ffffff" stroke-width="3.0"/>
+<text x="267.5" y="729.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="18" font-weight="900" fill="#0f172a" text-anchor="middle">Baseline</text>
+<text x="267.5" y="541.6" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">1085</text>
+<line x1="492.5" y1="664.1" x2="492.5" y2="264.6" stroke="#2563eb" stroke-width="10"/>
+<line x1="456.5" y1="449.3" x2="528.5" y2="449.3" stroke="#0f172a" stroke-width="3"/>
+<circle cx="492.5" cy="664.1" r="13.0" fill="#ffffff" stroke="#2563eb" stroke-width="4.0"/>
+<circle cx="492.5" cy="264.6" r="15.0" fill="#2563eb" stroke="#ffffff" stroke-width="3.0"/>
+<text x="492.5" y="729.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="18" font-weight="900" fill="#0f172a" text-anchor="middle">Age-based</text>
+<text x="492.5" y="242.6" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">3757</text>
+<line x1="717.5" y1="619.8" x2="717.5" y2="357.5" stroke="#f97316" stroke-width="10"/>
+<line x1="681.5" y1="392.1" x2="753.5" y2="392.1" stroke="#0f172a" stroke-width="3"/>
+<circle cx="717.5" cy="619.8" r="13.0" fill="#ffffff" stroke="#f97316" stroke-width="4.0"/>
+<circle cx="717.5" cy="357.5" r="15.0" fill="#f97316" stroke="#ffffff" stroke-width="3.0"/>
+<text x="717.5" y="729.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="18" font-weight="900" fill="#0f172a" text-anchor="middle">Throttled</text>
+<text x="717.5" y="335.5" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">2926</text>
+<line x1="942.5" y1="666.0" x2="942.5" y2="511.3" stroke="#16a34a" stroke-width="10"/>
+<line x1="906.5" y1="587.9" x2="978.5" y2="587.9" stroke="#0f172a" stroke-width="3"/>
+<circle cx="942.5" cy="666.0" r="13.0" fill="#ffffff" stroke="#16a34a" stroke-width="4.0"/>
+<circle cx="942.5" cy="511.3" r="15.0" fill="#16a34a" stroke="#ffffff" stroke-width="3.0"/>
+<text x="942.5" y="729.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="18" font-weight="900" fill="#0f172a" text-anchor="middle">Pressure-aware</text>
+<text x="942.5" y="489.3" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="900" fill="#0f172a" text-anchor="middle">1552</text>
+<rect x="1090.0" y="180.0" width="465.0" height="330.0" rx="18.0" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.4"/>
+<text x="1115.0" y="225.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="22" font-weight="900" fill="#0f172a" text-anchor="start">I/O PUT percentiles</text>
+<text x="1115.0" y="265.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="900" fill="#64748b" text-anchor="start">Policy</text>
+<text x="1335.0" y="265.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="900" fill="#64748b" text-anchor="end">p50</text>
+<text x="1420.0" y="265.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="900" fill="#64748b" text-anchor="end">p95</text>
+<text x="1505.0" y="265.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="900" fill="#64748b" text-anchor="end">p99</text>
+<rect x="1105.0" y="276.0" width="420.0" height="36.0" rx="8.0" fill="#f8fafc" stroke="none" stroke-width="1.0"/>
+<rect x="1115.0" y="286.0" width="14.0" height="14.0" rx="3.0" fill="#64748b" stroke="none" stroke-width="1.0"/>
+<text x="1139.0" y="303.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="start">Baseline</text>
+<text x="1335.0" y="303.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="end">290</text>
+<text x="1420.0" y="303.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="end">859</text>
+<text x="1505.0" y="303.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="900" fill="#0f172a" text-anchor="end">1085</text>
+<rect x="1115.0" y="334.0" width="14.0" height="14.0" rx="3.0" fill="#2563eb" stroke="none" stroke-width="1.0"/>
+<text x="1139.0" y="351.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="start">Age-based</text>
+<text x="1335.0" y="351.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="end">187</text>
+<text x="1420.0" y="351.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="end">2107</text>
+<text x="1505.0" y="351.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="900" fill="#0f172a" text-anchor="end">3757</text>
+<rect x="1105.0" y="372.0" width="420.0" height="36.0" rx="8.0" fill="#f8fafc" stroke="none" stroke-width="1.0"/>
+<rect x="1115.0" y="382.0" width="14.0" height="14.0" rx="3.0" fill="#f97316" stroke="none" stroke-width="1.0"/>
+<text x="1139.0" y="399.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="start">Throttled</text>
+<text x="1335.0" y="399.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="end">582</text>
+<text x="1420.0" y="399.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="end">2617</text>
+<text x="1505.0" y="399.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="900" fill="#0f172a" text-anchor="end">2926</text>
+<rect x="1115.0" y="430.0" width="14.0" height="14.0" rx="3.0" fill="#16a34a" stroke="none" stroke-width="1.0"/>
+<text x="1139.0" y="447.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="start">Pressure-aware</text>
+<text x="1335.0" y="447.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="end">170</text>
+<text x="1420.0" y="447.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#334155" text-anchor="end">868</text>
+<text x="1505.0" y="447.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="900" fill="#0f172a" text-anchor="end">1552</text>
+<circle cx="180.0" cy="760.0" r="10.0" fill="#16a34a" stroke="none" stroke-width="1.0"/>
+<text x="205.0" y="765.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="700" fill="#475569" text-anchor="start">filled circle = p99</text>
+<line x1="380.0" y1="760.0" x2="445.0" y2="760.0" stroke="#0f172a" stroke-width="3"/>
+<text x="462.0" y="765.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="700" fill="#475569" text-anchor="start">black tick = p95</text>
+<circle cx="660.0" cy="760.0" r="9.0" fill="#ffffff" stroke="#16a34a" stroke-width="3.0"/>
+<text x="685.0" y="765.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="700" fill="#475569" text-anchor="start">open circle = p50</text>
+<text x="155.0" y="840.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="17" font-weight="700" fill="#334155" text-anchor="start">Takeaway: Strategy A/B have acceptable-looking medians but huge p95-p99 tails.</text>
+<text x="155.0" y="870.0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="17" font-weight="700" fill="#334155" text-anchor="start">Pressure-aware keeps the tail band lower while maintaining zero foreground errors.</text>
+</svg>
