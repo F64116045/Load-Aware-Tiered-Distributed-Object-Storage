@@ -38,12 +38,24 @@ type storageEngine struct {
 
 	// writeQueue buffers incoming write requests for background processing.
 	writeQueue          chan *WriteTask
+	ioWorkerCount       int
 	queuedWriteBytes    int64
 	maxQueuedWriteBytes int64
 }
 
 // newStorageEngine initializes the storage directory and the async engine.
 func newStorageEngine(port, nodeName, storageDir string) *storageEngine {
+	return newStorageEngineWithConfig(port, nodeName, storageDir, config.StorageMaxQueuedWriteBytes, config.StorageIOWorkers)
+}
+
+func normalizeStorageIOWorkers(count int) int {
+	if count < 1 {
+		return 1
+	}
+	return count
+}
+
+func newStorageEngineWithConfig(port, nodeName, storageDir string, maxQueuedWriteBytes int64, ioWorkers int) *storageEngine {
 	// Ensure the storage directory exists
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		log.Fatalf("Failed to create storage directory %s: %v", storageDir, err)
@@ -52,17 +64,20 @@ func newStorageEngine(port, nodeName, storageDir string) *storageEngine {
 	log.Printf("Storage Node (PID: %d, Port: %s) Started.", os.Getpid(), port)
 	log.Printf("Data persistence path: %s", storageDir)
 
+	ioWorkerCount := normalizeStorageIOWorkers(ioWorkers)
 	engine := &storageEngine{
 		storageDir:          storageDir,
 		port:                port,
 		nodeName:            nodeName,
-		maxQueuedWriteBytes: config.StorageMaxQueuedWriteBytes,
+		ioWorkerCount:       ioWorkerCount,
+		maxQueuedWriteBytes: maxQueuedWriteBytes,
 		// Initialize a buffered channel with a capacity of 5000 to handle burst traffic.
 		writeQueue: make(chan *WriteTask, 5000),
 	}
 
-	// Start the background I/O worker to consume tasks.
-	go engine.startIoWorker()
+	for workerID := 1; workerID <= ioWorkerCount; workerID++ {
+		go engine.startIoWorker(workerID)
+	}
 
 	return engine
 }
@@ -104,8 +119,8 @@ func writeFileDurably(path string, data []byte) (durableWriteTiming, error) {
 }
 
 // startIoWorker consumes write tasks from the queue and performs blocking durable disk I/O.
-func (s *storageEngine) startIoWorker() {
-	log.Println("[Async IO] Worker started. Waiting for tasks...")
+func (s *storageEngine) startIoWorker(workerID int) {
+	log.Printf("[Async IO] Worker %d/%d started. Waiting for tasks...", workerID, s.ioWorkerCount)
 	for task := range s.writeQueue {
 		taskSize := int64(len(task.Data))
 		queueWait := time.Duration(0)
@@ -128,7 +143,8 @@ func (s *storageEngine) startIoWorker() {
 			}
 		}
 		log.Printf(
-			"[Storage Phase] op=STORE key=%s size_bytes=%d queue_wait_ms=%d durable_write_ms=%d file_write_ms=%d fsync_ms=%d err=%v",
+			"[Storage Phase] op=STORE worker_id=%d key=%s size_bytes=%d queue_wait_ms=%d durable_write_ms=%d file_write_ms=%d fsync_ms=%d err=%v",
+			workerID,
 			task.Key,
 			len(task.Data),
 			queueWait.Milliseconds(),
@@ -308,6 +324,7 @@ func (s *storageEngine) getInfo() (map[string]interface{}, error) {
 		"storage_path":           s.storageDir,
 		"write_queue_depth":      len(s.writeQueue),
 		"write_queue_cap":        cap(s.writeQueue),
+		"io_workers":             s.ioWorkerCount,
 		"queued_write_bytes":     s.currentQueuedWriteBytes(),
 		"max_queued_write_bytes": atomic.LoadInt64(&s.maxQueuedWriteBytes),
 	}, nil

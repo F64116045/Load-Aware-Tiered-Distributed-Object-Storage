@@ -100,3 +100,34 @@ func TestStorageEngineInfoIncludesQueuedByteCapacity(t *testing.T) {
 		t.Fatalf("max_queued_write_bytes=%v want 12345", got)
 	}
 }
+
+func TestStorageEngineInfoIncludesConfiguredIOWorkers(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngineWithConfig("19006", "test-node", t.TempDir(), 12345, 3)
+
+	info, err := st.getInfo()
+	if err != nil {
+		t.Fatalf("getInfo failed: %v", err)
+	}
+	if got := info["io_workers"]; got != 3 {
+		t.Fatalf("io_workers=%v want 3", got)
+	}
+	if got := info["max_queued_write_bytes"]; got != int64(12345) {
+		t.Fatalf("max_queued_write_bytes=%v want 12345", got)
+	}
+}
+
+func TestStorageEngineNormalizesInvalidIOWorkerCount(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeStorageIOWorkers(0); got != 1 {
+		t.Fatalf("normalizeStorageIOWorkers(0)=%d want 1", got)
+	}
+	if got := normalizeStorageIOWorkers(-3); got != 1 {
+		t.Fatalf("normalizeStorageIOWorkers(-3)=%d want 1", got)
+	}
+	if got := normalizeStorageIOWorkers(4); got != 4 {
+		t.Fatalf("normalizeStorageIOWorkers(4)=%d want 4", got)
+	}
+}
