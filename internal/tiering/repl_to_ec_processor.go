@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"sync"
 	"time"
 
@@ -25,11 +26,12 @@ type ReplicationToECProcessor struct {
 	http  *http.Client
 	ec    interfaces.IEcDriver
 
-	throttleBytesPerSec int64
-	throttleMu          sync.Mutex
-	nextIOAt            time.Time
-	nowFn               func() time.Time
-	sleepFn             func(context.Context, time.Duration)
+	throttleBytesPerSec   int64
+	throttleMu            sync.Mutex
+	nextIOAt              time.Time
+	shardWriteParallelism int
+	nowFn                 func() time.Time
+	sleepFn               func(context.Context, time.Duration)
 }
 
 // NewReplicationToECProcessor constructs a processor implementation.
@@ -41,13 +43,21 @@ func NewReplicationToECProcessor(store meta.Repository, httpClient *http.Client,
 	}
 
 	return &ReplicationToECProcessor{
-		store:               store,
-		http:                httpClient,
-		ec:                  ecDriver,
-		throttleBytesPerSec: throttleBytesPerSec,
-		nowFn:               time.Now,
-		sleepFn:             sleepWithContext,
+		store:                 store,
+		http:                  httpClient,
+		ec:                    ecDriver,
+		throttleBytesPerSec:   throttleBytesPerSec,
+		shardWriteParallelism: normalizeECShardWriteParallelism(config.WorkerECShardWriteParallelism),
+		nowFn:                 time.Now,
+		sleepFn:               sleepWithContext,
 	}
+}
+
+func normalizeECShardWriteParallelism(parallelism int) int {
+	if parallelism < 1 {
+		return 1
+	}
+	return parallelism
 }
 
 // ProcessReplicationToEC migrates one replicated object version into EC shards.
@@ -223,40 +233,108 @@ func (p *ReplicationToECProcessor) writeShards(
 	if len(nodes) < maxWrites {
 		maxWrites = len(nodes)
 	}
-
-	success := 0
-	locations := make([]meta.ECShardLocation, 0, maxWrites)
-	for i := 0; i < maxWrites; i++ {
-		chunkKey := fmt.Sprintf("%s_cold_chunk_%d", objectID, i)
-		node := nodes[i]
-		endpoint := fmt.Sprintf("%s/store?key=%s", node, url.QueryEscape(chunkKey))
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(shards[i]))
-		if err != nil {
-			continue
-		}
-		p.throttle(ctx, int64(len(shards[i])))
-		req.Header.Set("Content-Type", "application/octet-stream")
-		resp, err := p.http.Do(req)
-		if err != nil {
-			continue
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			continue
-		}
-
-		success++
-		locations = append(locations, meta.ECShardLocation{
-			ShardIndex: i,
-			NodeID:     node,
-			Path:       chunkKey,
-			Status:     "ACTIVE",
-		})
+	if maxWrites <= 0 {
+		return 0, nil
 	}
 
-	log.Printf("[TieringWorker] object=%s version=%d ec_shards_written=%d/%d", objectID, version, success, len(shards))
+	parallelism := normalizeECShardWriteParallelism(p.shardWriteParallelism)
+	if parallelism > maxWrites {
+		parallelism = maxWrites
+	}
+
+	type shardWriteJob struct {
+		index int
+	}
+	type shardWriteResult struct {
+		location meta.ECShardLocation
+		ok       bool
+	}
+
+	jobs := make(chan shardWriteJob)
+	results := make(chan shardWriteResult, maxWrites)
+	var wg sync.WaitGroup
+
+	for workerID := 1; workerID <= parallelism; workerID++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for job := range jobs {
+				location, ok := p.writeSingleShard(ctx, nodes[job.index], objectID, version, job.index, shards[job.index])
+				if ok {
+					log.Printf("[TieringWorker] object=%s version=%d ec_shard=%d written worker_id=%d node=%s", objectID, version, job.index, workerID, location.NodeID)
+				}
+				results <- shardWriteResult{location: location, ok: ok}
+			}
+		}(workerID)
+	}
+
+scheduledLoop:
+	for i := 0; i < maxWrites; i++ {
+		select {
+		case <-ctx.Done():
+			break scheduledLoop
+		case jobs <- shardWriteJob{index: i}:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+
+	locations := make([]meta.ECShardLocation, 0, maxWrites)
+	for result := range results {
+		if result.ok {
+			locations = append(locations, result.location)
+		}
+	}
+	sort.Slice(locations, func(i, j int) bool {
+		return locations[i].ShardIndex < locations[j].ShardIndex
+	})
+
+	success := len(locations)
+	log.Printf("[TieringWorker] object=%s version=%d ec_shards_written=%d/%d parallelism=%d", objectID, version, success, len(shards), parallelism)
 	return success, locations
+}
+
+func (p *ReplicationToECProcessor) writeSingleShard(
+	ctx context.Context,
+	node string,
+	objectID string,
+	version int64,
+	shardIndex int,
+	payload []byte,
+) (meta.ECShardLocation, bool) {
+	location := meta.ECShardLocation{}
+	if node == "" {
+		return location, false
+	}
+
+	chunkKey := fmt.Sprintf("%s_cold_chunk_%d", objectID, shardIndex)
+	endpoint := fmt.Sprintf("%s/store?key=%s", node, url.QueryEscape(chunkKey))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return location, false
+	}
+	p.throttle(ctx, int64(len(payload)))
+	if err := ctx.Err(); err != nil {
+		return location, false
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return location, false
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return location, false
+	}
+
+	return meta.ECShardLocation{
+		ShardIndex: shardIndex,
+		NodeID:     node,
+		Path:       chunkKey,
+		Status:     "ACTIVE",
+	}, true
 }
 
 func (p *ReplicationToECProcessor) throttle(ctx context.Context, bytes int64) {

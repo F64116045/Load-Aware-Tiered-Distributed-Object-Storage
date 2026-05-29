@@ -57,5 +57,7 @@ spec:
               value: "42042"
             - name: TIERING_TASK_MAX_RETRY_COUNT
               value: "8"
+            - name: WORKER_EC_SHARD_WRITE_PARALLELISM
+              value: "2"
             - name: TIERING_WORKER_TASK_TYPE
               value: "ALL"

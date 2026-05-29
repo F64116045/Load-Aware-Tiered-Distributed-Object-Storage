@@ -149,6 +149,8 @@ var (
 	TieringLeaderStaleSec = getEnvInt("TIERING_LEADER_STALE_SEC", 10)
 	// WorkerBWLimitMBPS limits REPL->EC migration I/O bandwidth per worker; <=0 disables.
 	WorkerBWLimitMBPS = getEnvInt64("WORKER_BW_LIMIT_MBPS", 0)
+	// WorkerECShardWriteParallelism caps concurrent EC shard writes per REPL->EC task.
+	WorkerECShardWriteParallelism = getEnvInt("WORKER_EC_SHARD_WRITE_PARALLELISM", 2)
 )
 
 func init() {
