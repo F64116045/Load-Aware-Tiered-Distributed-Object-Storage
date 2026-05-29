@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -57,5 +59,44 @@ func TestStorageEngineStoreRetrieveDeleteRoundTrip(t *testing.T) {
 	}
 	if data != nil {
 		t.Fatalf("expected nil data after delete, got=%q", string(data))
+	}
+}
+
+func TestStorageEngineRejectsWhenQueuedBytesWouldExceedLimit(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngine("19004", "test-node", t.TempDir())
+	atomic.StoreInt64(&st.maxQueuedWriteBytes, 3)
+
+	_, err := st.store(context.Background(), "too-large", []byte("payload"))
+	if err == nil {
+		t.Fatalf("expected byte-aware queue limit error")
+	}
+	if !strings.Contains(err.Error(), "queued write bytes") {
+		t.Fatalf("expected queued byte limit error, got: %v", err)
+	}
+	if got := st.currentQueuedWriteBytes(); got != 0 {
+		t.Fatalf("queued bytes should be released after rejected store, got=%d", got)
+	}
+}
+
+func TestStorageEngineInfoIncludesQueuedByteCapacity(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngine("19005", "test-node", t.TempDir())
+	atomic.StoreInt64(&st.maxQueuedWriteBytes, 12345)
+
+	if _, err := st.store(context.Background(), "k1", []byte("payload")); err != nil {
+		t.Fatalf("store failed: %v", err)
+	}
+	info, err := st.getInfo()
+	if err != nil {
+		t.Fatalf("getInfo failed: %v", err)
+	}
+	if got := info["queued_write_bytes"]; got != int64(0) {
+		t.Fatalf("queued_write_bytes=%v want 0", got)
+	}
+	if got := info["max_queued_write_bytes"]; got != int64(12345) {
+		t.Fatalf("max_queued_write_bytes=%v want 12345", got)
 	}
 }

@@ -83,7 +83,7 @@ func (s *RPCServer) dispatch(ctx context.Context, req rpcRequest) (interface{}, 
 		if err := decodeRPCParams(req.Params, &a); err != nil {
 			return nil, err
 		}
-		return nil, s.repo.UpsertNodeHeartbeat(ctx, a.NodeID, a.FreeBytes, a.TotalBytes, a.IOQueueDepth, a.CPULoad, a.MemoryUsedPct, a.DiskIOWaitPct, a.Status)
+		return nil, s.repo.UpsertNodeHeartbeat(ctx, a.NodeID, a.FreeBytes, a.TotalBytes, a.IOQueueDepth, a.IOQueueBytes, a.CPULoad, a.MemoryUsedPct, a.DiskIOWaitPct, a.Status)
 	case rpcMethodListHealthyNodeIDs:
 		var a rpcListHealthyNodeIDsArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {

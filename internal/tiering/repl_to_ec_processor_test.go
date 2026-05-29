@@ -50,7 +50,7 @@ func TestReplicationToECProcessor_UsesVersionedReplicaPath(t *testing.T) {
 	serverURLs := make([]string, 0, len(servers))
 	for _, srv := range servers {
 		serverURLs = append(serverURLs, srv.URL)
-		if err := store.UpsertNodeHeartbeat(ctx, srv.URL, 100, 1000, 0, 0, 25, 0, "UP"); err != nil {
+		if err := store.UpsertNodeHeartbeat(ctx, srv.URL, 100, 1000, 0, 0, 0, 25, 0, "UP"); err != nil {
 			t.Fatalf("upsert node heartbeat failed: %v", err)
 		}
 	}

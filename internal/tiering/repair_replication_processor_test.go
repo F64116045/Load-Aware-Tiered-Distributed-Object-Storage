@@ -127,7 +127,7 @@ func TestReplicationRepairProcessor_RepairsMissingReplica(t *testing.T) {
 
 	ctx := context.Background()
 	for _, nodeURL := range []string{srvA.URL, srvB.URL, srvC.URL} {
-		if err := store.UpsertNodeHeartbeat(ctx, nodeURL, 100, 1000, 0, 0, 30, 0, "UP"); err != nil {
+		if err := store.UpsertNodeHeartbeat(ctx, nodeURL, 100, 1000, 0, 0, 0, 30, 0, "UP"); err != nil {
 			t.Fatalf("upsert node heartbeat failed: %v", err)
 		}
 	}
@@ -206,7 +206,7 @@ func TestReplicationRepairProcessor_RepairsMissingECShard(t *testing.T) {
 
 	ctx := context.Background()
 	for i, srv := range servers {
-		if err := store.UpsertNodeHeartbeat(ctx, srv.URL, 100, 1000, 0, 0, 30, 0, "UP"); err != nil {
+		if err := store.UpsertNodeHeartbeat(ctx, srv.URL, 100, 1000, 0, 0, 0, 30, 0, "UP"); err != nil {
 			t.Fatalf("upsert node heartbeat failed idx=%d: %v", i, err)
 		}
 	}

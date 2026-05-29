@@ -157,6 +157,7 @@ func registerAndHeartbeatMeta(ctx context.Context, metaStore meta.Repository, no
 			freeBytes,
 			totalBytes,
 			len(storage.writeQueue),
+			storage.currentQueuedWriteBytes(),
 			getCPULoad(),
 			getMemoryUsedPct(),
 			computeIOWaitPct(&prevCPUStat),

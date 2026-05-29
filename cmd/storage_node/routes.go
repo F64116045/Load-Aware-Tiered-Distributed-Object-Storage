@@ -76,10 +76,12 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 
 		info, _ := storage.getInfo()
 		c.JSON(http.StatusOK, gin.H{
-			"status":     "ok",
-			"key":        key,
-			"size":       size,
-			"total_keys": info["total_keys"],
+			"status":                 "ok",
+			"key":                    key,
+			"size":                   size,
+			"total_keys":             info["total_keys"],
+			"queued_write_bytes":     info["queued_write_bytes"],
+			"max_queued_write_bytes": info["max_queued_write_bytes"],
 			"phase_latency_ms": gin.H{
 				"body_read":  bodyReadDuration.Milliseconds(),
 				"store_wait": storeDuration.Milliseconds(),

@@ -71,6 +71,8 @@ var (
 	HotReplicaCount = getEnvInt("HOT_REPLICA_COUNT", 3)
 	// HotWriteQuorum is the minimum number of successful replica writes for ACK.
 	HotWriteQuorum = getEnvInt("HOT_WRITE_QUORUM", 2)
+	// StorageMaxQueuedWriteBytes caps bytes held by storage-node write queue/in-flight writes; <=0 disables byte limit.
+	StorageMaxQueuedWriteBytes = getEnvInt64("STORAGE_MAX_QUEUED_WRITE_BYTES", getEnvInt64("MAX_QUEUED_WRITE_BYTES", 512*1024*1024))
 	// AgeThresholdSec defines when HOT objects become eligible for tiering.
 	AgeThresholdSec = getEnvInt("AGE_THRESHOLD_SEC", 3600)
 	// TieringPeriodSec defines periodic policy scan interval.

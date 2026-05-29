@@ -215,6 +215,7 @@ func registerAdminMetadataRoutes(router gin.IRoutes, metaStore meta.Repository) 
 				"used_bytes":      usedBytes,
 				"used_pct":        usedPct,
 				"io_queue_depth":  n.IOQueueDepth,
+				"io_queue_bytes":  n.IOQueueBytes,
 				"cpu_load":        n.CPULoad,
 				"memory_used_pct": n.MemoryUsedPct,
 				"disk_iowait_pct": n.DiskIOWaitPct,

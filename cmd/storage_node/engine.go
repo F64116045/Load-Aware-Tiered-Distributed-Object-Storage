@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"hybrid_distributed_store/internal/config"
 )
 
 // WriteTask represents an asynchronous write operation payload.
@@ -34,7 +37,9 @@ type storageEngine struct {
 	lock            sync.RWMutex
 
 	// writeQueue buffers incoming write requests for background processing.
-	writeQueue chan *WriteTask
+	writeQueue          chan *WriteTask
+	queuedWriteBytes    int64
+	maxQueuedWriteBytes int64
 }
 
 // newStorageEngine initializes the storage directory and the async engine.
@@ -48,9 +53,10 @@ func newStorageEngine(port, nodeName, storageDir string) *storageEngine {
 	log.Printf("Data persistence path: %s", storageDir)
 
 	engine := &storageEngine{
-		storageDir: storageDir,
-		port:       port,
-		nodeName:   nodeName,
+		storageDir:          storageDir,
+		port:                port,
+		nodeName:            nodeName,
+		maxQueuedWriteBytes: config.StorageMaxQueuedWriteBytes,
 		// Initialize a buffered channel with a capacity of 5000 to handle burst traffic.
 		writeQueue: make(chan *WriteTask, 5000),
 	}
@@ -101,6 +107,7 @@ func writeFileDurably(path string, data []byte) (durableWriteTiming, error) {
 func (s *storageEngine) startIoWorker() {
 	log.Println("[Async IO] Worker started. Waiting for tasks...")
 	for task := range s.writeQueue {
+		taskSize := int64(len(task.Data))
 		queueWait := time.Duration(0)
 		if !task.EnqueuedAt.IsZero() {
 			queueWait = time.Since(task.EnqueuedAt)
@@ -136,10 +143,46 @@ func (s *storageEngine) startIoWorker() {
 		s.totalOperations++
 		s.lock.Unlock()
 
+		s.releaseQueuedWriteBytes(taskSize)
 		if task.Done != nil {
 			task.Done <- writeErr
 			close(task.Done)
 		}
+	}
+}
+
+func (s *storageEngine) currentQueuedWriteBytes() int64 {
+	return atomic.LoadInt64(&s.queuedWriteBytes)
+}
+
+func (s *storageEngine) reserveQueuedWriteBytes(bytes int64) bool {
+	if bytes < 0 {
+		bytes = 0
+	}
+	limit := atomic.LoadInt64(&s.maxQueuedWriteBytes)
+	if limit <= 0 {
+		atomic.AddInt64(&s.queuedWriteBytes, bytes)
+		return true
+	}
+	for {
+		current := atomic.LoadInt64(&s.queuedWriteBytes)
+		next := current + bytes
+		if next > limit {
+			return false
+		}
+		if atomic.CompareAndSwapInt64(&s.queuedWriteBytes, current, next) {
+			return true
+		}
+	}
+}
+
+func (s *storageEngine) releaseQueuedWriteBytes(bytes int64) {
+	if bytes <= 0 {
+		return
+	}
+	next := atomic.AddInt64(&s.queuedWriteBytes, -bytes)
+	if next < 0 {
+		atomic.StoreInt64(&s.queuedWriteBytes, 0)
 	}
 }
 
@@ -157,6 +200,15 @@ func (s *storageEngine) store(ctx context.Context, key string, data []byte) (int
 	_, err := s._getSafePath(key)
 	if err != nil {
 		return 0, err
+	}
+	dataBytes := int64(len(data))
+	if !s.reserveQueuedWriteBytes(dataBytes) {
+		return 0, fmt.Errorf(
+			"storage node overloaded (queued write bytes %d + request bytes %d exceeds limit %d)",
+			s.currentQueuedWriteBytes(),
+			dataBytes,
+			atomic.LoadInt64(&s.maxQueuedWriteBytes),
+		)
 	}
 
 	task := &WriteTask{
@@ -180,6 +232,7 @@ func (s *storageEngine) store(ctx context.Context, key string, data []byte) (int
 			return 0, ctx.Err()
 		}
 	default:
+		s.releaseQueuedWriteBytes(dataBytes)
 		log.Printf("[Async IO] Queue Full! Dropping request for key: %s", key)
 		return 0, fmt.Errorf("storage node overloaded (queue full)")
 	}
@@ -249,11 +302,13 @@ func (s *storageEngine) getInfo() (map[string]interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		"total_keys":        totalKeys,
-		"total_size":        totalSize,
-		"total_operations":  ops,
-		"storage_path":      s.storageDir,
-		"write_queue_depth": len(s.writeQueue),
-		"write_queue_cap":   cap(s.writeQueue),
+		"total_keys":             totalKeys,
+		"total_size":             totalSize,
+		"total_operations":       ops,
+		"storage_path":           s.storageDir,
+		"write_queue_depth":      len(s.writeQueue),
+		"write_queue_cap":        cap(s.writeQueue),
+		"queued_write_bytes":     s.currentQueuedWriteBytes(),
+		"max_queued_write_bytes": atomic.LoadInt64(&s.maxQueuedWriteBytes),
 	}, nil
 }
