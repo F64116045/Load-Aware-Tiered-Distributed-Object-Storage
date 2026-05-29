@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,23 +42,37 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 	})
 
 	router.POST("/store", func(c *gin.Context) {
+		start := time.Now()
 		key := c.Query("key")
 		if key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing 'key' query parameter"})
 			return
 		}
 
+		bodyReadStart := time.Now()
 		data, err := io.ReadAll(c.Request.Body)
+		bodyReadDuration := time.Since(bodyReadStart)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read body"})
 			return
 		}
 
+		storeStart := time.Now()
 		size, err := storage.store(c.Request.Context(), key, data)
+		storeDuration := time.Since(storeStart)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return
 		}
+		totalDuration := time.Since(start)
+		log.Printf(
+			"[Storage Route Phase] op=STORE key=%s size_bytes=%d body_read_ms=%d store_wait_ms=%d total_ms=%d",
+			key,
+			len(data),
+			bodyReadDuration.Milliseconds(),
+			storeDuration.Milliseconds(),
+			totalDuration.Milliseconds(),
+		)
 
 		info, _ := storage.getInfo()
 		c.JSON(http.StatusOK, gin.H{
@@ -64,6 +80,11 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 			"key":        key,
 			"size":       size,
 			"total_keys": info["total_keys"],
+			"phase_latency_ms": gin.H{
+				"body_read":  bodyReadDuration.Milliseconds(),
+				"store_wait": storeDuration.Milliseconds(),
+				"total":      totalDuration.Milliseconds(),
+			},
 		})
 	})
 

@@ -108,6 +108,7 @@ func (s *Service) writeReplication(
 	value []byte,
 	extraMeta map[string]interface{},
 ) (map[string]interface{}, error) {
+	totalStart := time.Now()
 	if len(replicaNodes) == 0 {
 		return nil, fmt.Errorf("replication failed: no replica nodes available")
 	}
@@ -123,11 +124,14 @@ func (s *Service) writeReplication(
 	success := 0
 	// 用來記錄哪些節點寫入成功，方便 Healer 除錯或 API 回傳
 	writtenNodes := []string{}
+	replicaWriteMS := make(map[string]int64, len(replicaNodes))
+	replicaWriteStart := time.Now()
 
 	for _, nodeURL := range replicaNodes {
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()
+			nodeStart := time.Now()
 			req, _ := http.NewRequestWithContext(ctx, "POST",
 				fmt.Sprintf("%s/store?key=%s", n, neturl.QueryEscape(hotReplicaPath)),
 				bytes.NewReader(value),
@@ -138,6 +142,10 @@ func (s *Service) writeReplication(
 			if err == nil {
 				_ = resp.Body.Close()
 			}
+			nodeDurationMS := time.Since(nodeStart).Milliseconds()
+			mu.Lock()
+			replicaWriteMS[n] = nodeDurationMS
+			mu.Unlock()
 			if err == nil && resp.StatusCode == http.StatusOK {
 				mu.Lock()
 				success++
@@ -149,6 +157,7 @@ func (s *Service) writeReplication(
 		}(nodeURL)
 	}
 	wg.Wait()
+	replicaWriteDuration := time.Since(replicaWriteStart)
 
 	requiredQuorum := resolveHotWriteQuorum(len(replicaNodes))
 	if success < requiredQuorum {
@@ -177,9 +186,23 @@ func (s *Service) writeReplication(
 		log.Printf("[PartialWrite] Key=%s marked dirty. %d/%d replicas written.", key, success, len(replicaNodes))
 	}
 
+	metadataStart := time.Now()
 	if err := s.finalizeMetadata(ctx, key, finalMeta); err != nil {
 		return nil, err
 	}
+	metadataDuration := time.Since(metadataStart)
+	totalDuration := time.Since(totalStart)
+	log.Printf(
+		"[WriteReplication Phase] key=%s size_bytes=%d replicas=%d success=%d quorum=%d replica_write_ms=%d metadata_ms=%d total_ms=%d",
+		key,
+		len(value),
+		len(replicaNodes),
+		success,
+		requiredQuorum,
+		replicaWriteDuration.Milliseconds(),
+		metadataDuration.Milliseconds(),
+		totalDuration.Milliseconds(),
+	)
 
 	return map[string]interface{}{
 		"nodes_written":  writtenNodes,
@@ -187,6 +210,12 @@ func (s *Service) writeReplication(
 		"partial":        isDirty,
 		"write_quorum":   fmt.Sprintf("%d/%d", requiredQuorum, len(replicaNodes)),
 		"writes_success": success,
+		"phase_latency_ms": map[string]interface{}{
+			"replica_write": replicaWriteDuration.Milliseconds(),
+			"metadata":      metadataDuration.Milliseconds(),
+			"total":         totalDuration.Milliseconds(),
+		},
+		"replica_write_ms": replicaWriteMS,
 	}, nil
 }
 

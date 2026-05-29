@@ -8,13 +8,21 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // WriteTask represents an asynchronous write operation payload.
 type WriteTask struct {
-	Key  string
-	Data []byte
-	Done chan error
+	Key        string
+	Data       []byte
+	EnqueuedAt time.Time
+	Done       chan error
+}
+
+type durableWriteTiming struct {
+	Total time.Duration
+	Write time.Duration
+	Sync  time.Duration
 }
 
 // storageEngine handles raw file I/O operations with asynchronous write support.
@@ -53,32 +61,52 @@ func newStorageEngine(port, nodeName, storageDir string) *storageEngine {
 	return engine
 }
 
-func writeFileDurably(path string, data []byte) error {
+func writeFileDurably(path string, data []byte) (durableWriteTiming, error) {
+	start := time.Now()
+	timing := durableWriteTiming{}
+
 	// Ensure parent directories exist for nested keys.
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
+		timing.Total = time.Since(start)
+		return timing, err
 	}
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return err
+		timing.Total = time.Since(start)
+		return timing, err
 	}
 	defer func() { _ = f.Close() }()
 
+	writeStart := time.Now()
 	if _, err := f.Write(data); err != nil {
-		return err
+		timing.Write = time.Since(writeStart)
+		timing.Total = time.Since(start)
+		return timing, err
 	}
+	timing.Write = time.Since(writeStart)
+
+	syncStart := time.Now()
 	if err := f.Sync(); err != nil {
-		return err
+		timing.Sync = time.Since(syncStart)
+		timing.Total = time.Since(start)
+		return timing, err
 	}
-	return nil
+	timing.Sync = time.Since(syncStart)
+	timing.Total = time.Since(start)
+	return timing, nil
 }
 
 // startIoWorker consumes write tasks from the queue and performs blocking durable disk I/O.
 func (s *storageEngine) startIoWorker() {
 	log.Println("[Async IO] Worker started. Waiting for tasks...")
 	for task := range s.writeQueue {
+		queueWait := time.Duration(0)
+		if !task.EnqueuedAt.IsZero() {
+			queueWait = time.Since(task.EnqueuedAt)
+		}
 		writeErr := error(nil)
+		timing := durableWriteTiming{}
 
 		filePath, err := s._getSafePath(task.Key)
 		if err != nil {
@@ -86,11 +114,22 @@ func (s *storageEngine) startIoWorker() {
 			writeErr = err
 		} else {
 			// Perform the blocking disk write operation with fsync before ACK.
-			if err := writeFileDurably(filePath, task.Data); err != nil {
+			timing, err = writeFileDurably(filePath, task.Data)
+			if err != nil {
 				log.Printf("[Async IO] Disk Write Failed for %s: %v", filePath, err)
 				writeErr = err
 			}
 		}
+		log.Printf(
+			"[Storage Phase] op=STORE key=%s size_bytes=%d queue_wait_ms=%d durable_write_ms=%d file_write_ms=%d fsync_ms=%d err=%v",
+			task.Key,
+			len(task.Data),
+			queueWait.Milliseconds(),
+			timing.Total.Milliseconds(),
+			timing.Write.Milliseconds(),
+			timing.Sync.Milliseconds(),
+			writeErr,
+		)
 
 		// Update metrics (attempt count)
 		s.lock.Lock()
@@ -121,9 +160,10 @@ func (s *storageEngine) store(ctx context.Context, key string, data []byte) (int
 	}
 
 	task := &WriteTask{
-		Key:  key,
-		Data: data,
-		Done: make(chan error, 1),
+		Key:        key,
+		Data:       data,
+		EnqueuedAt: time.Now(),
+		Done:       make(chan error, 1),
 	}
 
 	// Non-blocking enqueue

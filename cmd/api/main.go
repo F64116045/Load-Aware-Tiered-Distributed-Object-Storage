@@ -340,12 +340,16 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			return
 		}
 
+		nodeSelectStart := nowFn()
 		replicaNodes, _, err := deps.getDynamicNodes(c, objectID)
+		nodeSelectDuration := nowFn().Sub(nodeSelectStart)
 		if err != nil {
 			return
 		}
 
+		bodyReadStart := nowFn()
 		bodyBytes, err := io.ReadAll(c.Request.Body)
+		bodyReadDuration := nowFn().Sub(bodyReadStart)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 			return
@@ -355,6 +359,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			contentType = "application/octet-stream"
 		}
 
+		writeStart := nowFn()
 		opResult, opErr := deps.writeReplicationWithMetadata(
 			c.Request.Context(),
 			replicaNodes,
@@ -364,6 +369,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 				"content_type": contentType,
 			},
 		)
+		writeDuration := nowFn().Sub(writeStart)
 		if opErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": opErr.Error()})
 			return
@@ -378,23 +384,45 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 		opResult["strategy"] = string(config.StrategyReplication)
 		opResult["size_bytes"] = len(bodyBytes)
 		opResult["content_type"] = contentType
-		opResult["latency_ms"] = nowFn().Sub(start).Milliseconds()
+		totalDuration := nowFn().Sub(start)
+		opResult["latency_ms"] = totalDuration.Milliseconds()
+		opResult["api_phase_latency_ms"] = gin.H{
+			"node_select":  nodeSelectDuration.Milliseconds(),
+			"body_read":    bodyReadDuration.Milliseconds(),
+			"write_commit": writeDuration.Milliseconds(),
+			"total":        totalDuration.Milliseconds(),
+		}
+		log.Printf(
+			"[API Phase] op=PUT object=%s size_bytes=%d nodes=%d node_select_ms=%d body_read_ms=%d write_commit_ms=%d total_ms=%d",
+			objectID,
+			len(bodyBytes),
+			len(replicaNodes),
+			nodeSelectDuration.Milliseconds(),
+			bodyReadDuration.Milliseconds(),
+			writeDuration.Milliseconds(),
+			totalDuration.Milliseconds(),
+		)
 		c.JSON(http.StatusCreated, opResult)
 	})
 
 	router.GET("/v2/objects/:id", func(c *gin.Context) {
+		start := nowFn()
 		objectID := strings.TrimSpace(c.Param("id"))
 		if objectID == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
 			return
 		}
 
+		nodeSelectStart := nowFn()
 		replicaNodes, ecNodes, err := deps.getDynamicNodes(c, objectID)
+		nodeSelectDuration := nowFn().Sub(nodeSelectStart)
 		if err != nil {
 			return
 		}
 
+		metadataStart := nowFn()
 		metadata, _, err := deps.loadMetadata(c.Request.Context(), objectID)
+		metadataDuration := nowFn().Sub(metadataStart)
 		if err != nil {
 			if errors.Is(err, errMetadataNotFound) {
 				c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("Metadata not found for key '%s'", objectID)})
@@ -406,6 +434,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 
 		strategyStr, _ := metadata["strategy"].(string)
 		var dataBytes []byte
+		readStart := nowFn()
 		switch config.StorageStrategy(strategyStr) {
 		case config.StrategyReplication:
 			replicaNodes = preferMetadataReplicaNodes(metadata, replicaNodes)
@@ -423,6 +452,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			})
 			return
 		}
+		readDuration := nowFn().Sub(readStart)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"detail": err.Error()})
 			return
@@ -432,6 +462,22 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 		if ct, ok := metadata["content_type"].(string); ok && strings.TrimSpace(ct) != "" {
 			contentType = strings.TrimSpace(ct)
 		}
+		totalDuration := nowFn().Sub(start)
+		c.Header("X-Rec-Latency-Ms", strconv.FormatInt(totalDuration.Milliseconds(), 10))
+		c.Header("X-Rec-Phase-Node-Select-Ms", strconv.FormatInt(nodeSelectDuration.Milliseconds(), 10))
+		c.Header("X-Rec-Phase-Metadata-Ms", strconv.FormatInt(metadataDuration.Milliseconds(), 10))
+		c.Header("X-Rec-Phase-Read-Ms", strconv.FormatInt(readDuration.Milliseconds(), 10))
+		c.Header("X-Rec-Tier", strategyStr)
+		log.Printf(
+			"[API Phase] op=GET object=%s strategy=%s size_bytes=%d node_select_ms=%d metadata_ms=%d read_ms=%d total_ms=%d",
+			objectID,
+			strategyStr,
+			len(dataBytes),
+			nodeSelectDuration.Milliseconds(),
+			metadataDuration.Milliseconds(),
+			readDuration.Milliseconds(),
+			totalDuration.Milliseconds(),
+		)
 		c.Data(http.StatusOK, contentType, dataBytes)
 	})
 
