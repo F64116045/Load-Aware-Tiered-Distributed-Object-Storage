@@ -71,6 +71,8 @@ var (
 	HotReplicaCount = getEnvInt("HOT_REPLICA_COUNT", 3)
 	// HotWriteQuorum is the minimum number of successful replica writes for ACK.
 	HotWriteQuorum = getEnvInt("HOT_WRITE_QUORUM", 2)
+	// HotReplicaLoadAware enables load-aware ordering for foreground HOT replica writes.
+	HotReplicaLoadAware = getEnvBool("HOT_REPLICA_LOAD_AWARE", true)
 	// StorageMaxQueuedWriteBytes caps bytes held by storage-node write queue/in-flight writes; <=0 disables byte limit.
 	StorageMaxQueuedWriteBytes = getEnvInt64("STORAGE_MAX_QUEUED_WRITE_BYTES", getEnvInt64("MAX_QUEUED_WRITE_BYTES", 512*1024*1024))
 	// StorageIOWorkers controls concurrent durable write workers per storage node.

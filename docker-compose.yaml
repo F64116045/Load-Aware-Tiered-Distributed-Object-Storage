@@ -186,6 +186,7 @@ services:
       - META_DSN=${META_DSN:-}
       - HOT_REPLICA_COUNT=3
       - HOT_WRITE_QUORUM=2
+      - HOT_REPLICA_LOAD_AWARE=${HOT_REPLICA_LOAD_AWARE:-true}
       - NODE_HEARTBEAT_STALE_SEC=15
       - TIERING_LEADER_STALE_SEC=10
     depends_on:
