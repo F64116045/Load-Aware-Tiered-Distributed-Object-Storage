@@ -229,6 +229,7 @@ services:
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
+      - STORAGE_IO_WORKERS=${STORAGE_IO_WORKERS:-2}
       - STORAGE_DURABILITY_MODE=${STORAGE_DURABILITY_MODE:-sync}
     volumes:
       - storage_data_1:/data/node1
@@ -254,6 +255,7 @@ services:
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
+      - STORAGE_IO_WORKERS=${STORAGE_IO_WORKERS:-2}
       - STORAGE_DURABILITY_MODE=${STORAGE_DURABILITY_MODE:-sync}
     volumes:
       - storage_data_2:/data/node2
@@ -279,6 +281,7 @@ services:
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
+      - STORAGE_IO_WORKERS=${STORAGE_IO_WORKERS:-2}
       - STORAGE_DURABILITY_MODE=${STORAGE_DURABILITY_MODE:-sync}
     volumes:
       - storage_data_3:/data/node3
@@ -304,6 +307,7 @@ services:
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
+      - STORAGE_IO_WORKERS=${STORAGE_IO_WORKERS:-2}
       - STORAGE_DURABILITY_MODE=${STORAGE_DURABILITY_MODE:-sync}
     volumes:
       - storage_data_4:/data/node4
@@ -329,6 +333,7 @@ services:
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
+      - STORAGE_IO_WORKERS=${STORAGE_IO_WORKERS:-2}
       - STORAGE_DURABILITY_MODE=${STORAGE_DURABILITY_MODE:-sync}
     volumes:
       - storage_data_5:/data/node5
@@ -354,6 +359,7 @@ services:
       - META_RPC_AUTH_TOKEN=dev-meta-token
       - META_DSN=${META_DSN:-}
       - NODE_HEARTBEAT_INTERVAL_SEC=3
+      - STORAGE_IO_WORKERS=${STORAGE_IO_WORKERS:-2}
       - STORAGE_DURABILITY_MODE=${STORAGE_DURABILITY_MODE:-sync}
     volumes:
       - storage_data_6:/data/node6
