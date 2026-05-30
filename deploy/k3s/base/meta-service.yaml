@@ -53,6 +53,8 @@ spec:
               value: "15"
             - name: META_HEALTH_PING_TIMEOUT_SEC
               value: "5"
+            - name: TIERING_DUE_INDEX_COMMIT_MODE
+              value: "async"
             - name: META_RPC_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:

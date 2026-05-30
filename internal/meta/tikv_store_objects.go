@@ -3,9 +3,11 @@ package meta
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
+	"hybrid_distributed_store/internal/config"
 	kvstore "hybrid_distributed_store/internal/meta/kvstore"
 )
 
@@ -25,10 +27,11 @@ func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID strin
 	contentType := toNullableString(metadata["content_type"])
 	encodingK := toNullableInt(metadata["k"])
 	encodingM := toNullableInt(metadata["m"])
+	dueIndexAsync := tier == "HOT" && config.TieringDueIndexCommitMode == config.TieringDueIndexCommitAsync
 
 	now := time.Now()
 
-	return s.kv.RunInTxn(ctx, func(txn *kvstore.Txn) error {
+	if err := s.kv.RunInTxn(ctx, func(txn *kvstore.Txn) error {
 		objKey := tiKVObjectKey(objectID)
 		obj := &tiKVObjectRecord{}
 		found, err := s.txnGetJSON(ctx, txn, objKey, obj)
@@ -101,11 +104,49 @@ func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID strin
 				}
 			}
 		}
-		if err := s.upsertTieringDueIndexTxn(ctx, txn, objectID, version, tier, sizeBytes, now); err != nil {
-			return err
+		if !dueIndexAsync {
+			if err := s.upsertTieringDueIndexTxn(ctx, txn, objectID, version, tier, sizeBytes, now); err != nil {
+				return err
+			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	if dueIndexAsync {
+		s.upsertTieringDueIndexAsync(objectID, version, tier, sizeBytes, now)
+	}
+	return nil
+}
+
+func (s *TiKVStore) upsertTieringDueIndexAsync(objectID string, version int64, tier string, sizeBytes int64, now time.Time) {
+	go func() {
+		if err := s.upsertTieringDueIndexDetached(objectID, version, tier, sizeBytes, now); err != nil {
+			log.Printf(
+				"[Meta] async due-index upsert failed object=%s version=%d tier=%s err=%v",
+				objectID,
+				version,
+				tier,
+				err,
+			)
+		}
+	}()
+}
+
+func (s *TiKVStore) upsertTieringDueIndexDetached(objectID string, version int64, tier string, sizeBytes int64, now time.Time) error {
+	if s == nil || s.kv == nil {
+		return nil
+	}
+	b := s.kv.NewBatch()
+	defer b.Close()
+	if err := s.upsertTieringDueIndex(b, objectID, version, tier, sizeBytes, now); err != nil {
+		return err
+	}
+	if err := b.Commit(kvstore.NoSync); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *TiKVStore) GetNormalizedMetadata(ctx context.Context, objectID string) (map[string]interface{}, error) {

@@ -49,6 +49,11 @@ const (
 	TieringTriggerHybrid    TieringTriggerMode = "hybrid"
 )
 
+const (
+	TieringDueIndexCommitSync  = "sync"
+	TieringDueIndexCommitAsync = "async"
+)
+
 // ExpectedNodeNames stores the set of valid storage node identifiers
 var ExpectedNodeNames = map[string]bool{}
 
@@ -93,6 +98,8 @@ var (
 	TieringTriggerModeSetting = normalizeTieringTriggerMode(getEnv("TIERING_TRIGGER_MODE", string(TieringTriggerPeriodic)))
 	// TieringThresholdCheckSec is threshold trigger sampling interval.
 	TieringThresholdCheckSec = getEnvInt("TIERING_THRESHOLD_CHECK_SEC", 10)
+	// TieringDueIndexCommitMode controls whether foreground metadata writes also wait for due-index maintenance.
+	TieringDueIndexCommitMode = normalizeTieringDueIndexCommitMode(getEnv("TIERING_DUE_INDEX_COMMIT_MODE", TieringDueIndexCommitSync))
 	// TieringThresholdCooldownSec prevents threshold-trigger storms.
 	TieringThresholdCooldownSec = getEnvInt("TIERING_THRESHOLD_COOLDOWN_SEC", getEnvInt("THRESHOLD_COOLDOWN_SEC", 60))
 	// TieringIdleStableRounds requires N consecutive idle samples before threshold-trigger enqueue.
@@ -249,6 +256,15 @@ func normalizeTieringTriggerMode(raw string) TieringTriggerMode {
 		return TieringTriggerMode(v)
 	default:
 		return TieringTriggerPeriodic
+	}
+}
+
+func normalizeTieringDueIndexCommitMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case TieringDueIndexCommitAsync:
+		return TieringDueIndexCommitAsync
+	default:
+		return TieringDueIndexCommitSync
 	}
 }
 

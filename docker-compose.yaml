@@ -33,6 +33,7 @@ services:
       - META_STARTUP_RETRY_INTERVAL_SEC=2
       - META_STARTUP_MAX_RETRY_INTERVAL_SEC=15
       - META_HEALTH_PING_TIMEOUT_SEC=5
+      - TIERING_DUE_INDEX_COMMIT_MODE=${TIERING_DUE_INDEX_COMMIT_MODE:-async}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
       interval: 10s
@@ -64,6 +65,7 @@ services:
       - META_STARTUP_RETRY_INTERVAL_SEC=2
       - META_STARTUP_MAX_RETRY_INTERVAL_SEC=15
       - META_HEALTH_PING_TIMEOUT_SEC=5
+      - TIERING_DUE_INDEX_COMMIT_MODE=${TIERING_DUE_INDEX_COMMIT_MODE:-async}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
       interval: 10s
@@ -95,6 +97,7 @@ services:
       - META_STARTUP_RETRY_INTERVAL_SEC=2
       - META_STARTUP_MAX_RETRY_INTERVAL_SEC=15
       - META_HEALTH_PING_TIMEOUT_SEC=5
+      - TIERING_DUE_INDEX_COMMIT_MODE=${TIERING_DUE_INDEX_COMMIT_MODE:-async}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
       interval: 10s
