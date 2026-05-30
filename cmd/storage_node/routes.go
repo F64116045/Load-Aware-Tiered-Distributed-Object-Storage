@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -49,16 +48,8 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 			return
 		}
 
-		bodyReadStart := time.Now()
-		data, err := io.ReadAll(c.Request.Body)
-		bodyReadDuration := time.Since(bodyReadStart)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read body"})
-			return
-		}
-
 		storeStart := time.Now()
-		size, err := storage.store(c.Request.Context(), key, data)
+		size, err := storage.storeStream(c.Request.Context(), key, c.Request.Body, c.Request.ContentLength)
 		storeDuration := time.Since(storeStart)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
@@ -68,8 +59,8 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 		log.Printf(
 			"[Storage Route Phase] op=STORE key=%s size_bytes=%d body_read_ms=%d store_wait_ms=%d total_ms=%d",
 			key,
-			len(data),
-			bodyReadDuration.Milliseconds(),
+			size,
+			0,
 			storeDuration.Milliseconds(),
 			totalDuration.Milliseconds(),
 		)
@@ -85,7 +76,7 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 			"queued_write_bytes":     info["queued_write_bytes"],
 			"max_queued_write_bytes": info["max_queued_write_bytes"],
 			"phase_latency_ms": gin.H{
-				"body_read":  bodyReadDuration.Milliseconds(),
+				"body_read":  int64(0),
 				"store_wait": storeDuration.Milliseconds(),
 				"total":      totalDuration.Milliseconds(),
 			},

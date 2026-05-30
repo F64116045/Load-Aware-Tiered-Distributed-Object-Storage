@@ -64,6 +64,30 @@ func TestStorageEngineStoreRetrieveDeleteRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStorageEngineStoreStreamRetrieveRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngine("19008", "test-node", t.TempDir())
+	ctx := context.Background()
+
+	payload := "streamed-payload"
+	size, err := st.storeStream(ctx, "stream-key", strings.NewReader(payload), int64(len(payload)))
+	if err != nil {
+		t.Fatalf("storeStream failed: %v", err)
+	}
+	if size != int64(len(payload)) {
+		t.Fatalf("storeStream size mismatch: got=%d", size)
+	}
+
+	data, err := st.retrieve("stream-key")
+	if err != nil {
+		t.Fatalf("retrieve failed: %v", err)
+	}
+	if string(data) != payload {
+		t.Fatalf("retrieve payload mismatch: got=%q", string(data))
+	}
+}
+
 func TestStorageEngineRejectsWhenQueuedBytesWouldExceedLimit(t *testing.T) {
 	t.Parallel()
 
