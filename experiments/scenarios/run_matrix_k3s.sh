@@ -76,6 +76,7 @@ run_one strategy-c strategy_c_pressure_aware \
 comparison_file="${RESULT_ROOT:-${SCRIPT_DIR}/../results}/matrix-${RUN_ID_ROOT}-comparison.csv"
 migration_file="${RESULT_ROOT:-${SCRIPT_DIR}/../results}/matrix-${RUN_ID_ROOT}-migration.csv"
 fairness_file="${RESULT_ROOT:-${SCRIPT_DIR}/../results}/matrix-${RUN_ID_ROOT}-fairness.txt"
+phase_file="${RESULT_ROOT:-${SCRIPT_DIR}/../results}/matrix-${RUN_ID_ROOT}-phase-latency.csv"
 if ! python3 "${SCRIPT_DIR}/../collect/verify_matrix_fairness.py" \
   --result-root "${RESULT_ROOT:-${SCRIPT_DIR}/../results}" \
   --run-id-root "${RUN_ID_ROOT}" \
@@ -93,6 +94,10 @@ python3 "${SCRIPT_DIR}/../collect/summarize_migration.py" \
   --result-root "${RESULT_ROOT:-${SCRIPT_DIR}/../results}" \
   --run-id-root "${RUN_ID_ROOT}" \
   --out "${migration_file}"
+python3 "${SCRIPT_DIR}/../collect/analyze_phase_latency.py" \
+  --result-root "${RESULT_ROOT:-${SCRIPT_DIR}/../results}" \
+  --run-id-root "${RUN_ID_ROOT}" \
+  --out "${phase_file}"
 
 echo "=== fairness check ==="
 cat "${fairness_file}"
@@ -105,3 +110,7 @@ echo "Comparison CSV: ${comparison_file}"
 echo "=== migration summary ==="
 cat "${migration_file}"
 echo "Migration CSV: ${migration_file}"
+
+echo "=== phase latency summary ==="
+cat "${phase_file}"
+echo "Phase latency CSV: ${phase_file}"

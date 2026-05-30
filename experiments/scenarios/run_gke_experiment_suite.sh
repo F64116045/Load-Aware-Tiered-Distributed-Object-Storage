@@ -27,11 +27,13 @@ common_env=(
 suite_index="${RESULT_ROOT}/suite-${SUITE_RUN_ID_ROOT}-index.csv"
 combined_latency="${RESULT_ROOT}/suite-${SUITE_RUN_ID_ROOT}-latency.csv"
 combined_migration="${RESULT_ROOT}/suite-${SUITE_RUN_ID_ROOT}-migration.csv"
+combined_phase_latency="${RESULT_ROOT}/suite-${SUITE_RUN_ID_ROOT}-phase-latency.csv"
 
 mkdir -p "${RESULT_ROOT}"
-printf 'profile,run_id_root,fairness_csv,comparison_csv,migration_csv\n' >"${suite_index}"
+printf 'profile,run_id_root,fairness_csv,comparison_csv,migration_csv,phase_latency_csv\n' >"${suite_index}"
 : >"${combined_latency}"
 : >"${combined_migration}"
+: >"${combined_phase_latency}"
 
 append_csv_with_profile() {
   local profile="$1"
@@ -54,6 +56,7 @@ run_profile() {
   local fairness_file="${RESULT_ROOT}/matrix-${run_id_root}-fairness.txt"
   local comparison_file="${RESULT_ROOT}/matrix-${run_id_root}-comparison.csv"
   local migration_file="${RESULT_ROOT}/matrix-${run_id_root}-migration.csv"
+  local phase_file="${RESULT_ROOT}/matrix-${run_id_root}-phase-latency.csv"
 
   echo "=== GKE suite profile: ${profile} ==="
   case "${profile}" in
@@ -90,9 +93,10 @@ run_profile() {
       ;;
   esac
 
-  printf '%s,%s,%s,%s,%s\n' "${profile}" "${run_id_root}" "${fairness_file}" "${comparison_file}" "${migration_file}" >>"${suite_index}"
+  printf '%s,%s,%s,%s,%s,%s\n' "${profile}" "${run_id_root}" "${fairness_file}" "${comparison_file}" "${migration_file}" "${phase_file}" >>"${suite_index}"
   append_csv_with_profile "${profile}" "${comparison_file}" "${combined_latency}"
   append_csv_with_profile "${profile}" "${migration_file}" "${combined_migration}"
+  append_csv_with_profile "${profile}" "${phase_file}" "${combined_phase_latency}"
 }
 
 for profile in ${GKE_SUITE_PROFILES}; do
@@ -103,9 +107,13 @@ echo "=== GKE suite complete ==="
 echo "Suite index: ${suite_index}"
 echo "Combined latency CSV: ${combined_latency}"
 echo "Combined migration CSV: ${combined_migration}"
+echo "Combined phase latency CSV: ${combined_phase_latency}"
 echo
 echo "=== Combined latency ==="
 cat "${combined_latency}"
 echo
 echo "=== Combined migration ==="
 cat "${combined_migration}"
+echo
+echo "=== Combined phase latency ==="
+cat "${combined_phase_latency}"

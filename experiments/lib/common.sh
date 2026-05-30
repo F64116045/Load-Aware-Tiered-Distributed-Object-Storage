@@ -120,6 +120,55 @@ stop_stack() {
   dc down --remove-orphans
 }
 
+collect_compose_logs() {
+  check_docker_available || return 0
+  ensure_result_dir >/dev/null
+  local log_dir="${RESULT_DIR}/logs"
+  mkdir -p "${log_dir}"
+  exp_log "Collect docker compose logs: ${log_dir}/docker-compose.log"
+  if ! dc logs --no-color --timestamps >"${log_dir}/docker-compose.log" 2>"${log_dir}/docker-compose.err"; then
+    exp_log "WARN: docker compose log collection failed"
+  fi
+}
+
+collect_k8s_logs() {
+  local namespace="${1:-${K8S_NAMESPACE:-rec-store}}"
+  ensure_result_dir >/dev/null
+  local log_dir="${RESULT_DIR}/logs/k8s"
+  mkdir -p "${log_dir}"
+
+  exp_log "Collect Kubernetes pod logs: namespace=${namespace} dir=${log_dir}"
+  if ! kubectl -n "${namespace}" get pods -o name >"${log_dir}/pods.txt" 2>"${log_dir}/pods.err"; then
+    exp_log "WARN: kubectl pod listing failed during log collection"
+    return 0
+  fi
+  kubectl -n "${namespace}" get pods -o wide >"${log_dir}/pods-wide.txt" 2>&1 || true
+  kubectl -n "${namespace}" get events --sort-by=.lastTimestamp >"${log_dir}/events.txt" 2>&1 || true
+
+  local pod safe_name
+  while IFS= read -r pod; do
+    [[ -n "${pod}" ]] || continue
+    safe_name="${pod//\//_}"
+    kubectl -n "${namespace}" logs "${pod}" --all-containers --timestamps --prefix --tail=-1 \
+      >"${log_dir}/${safe_name}.log" 2>"${log_dir}/${safe_name}.err" || true
+  done <"${log_dir}/pods.txt"
+}
+
+analyze_phase_latency_dir() {
+  ensure_result_dir >/dev/null
+  local analyzer="${REPO_ROOT}/experiments/collect/analyze_phase_latency.py"
+  local out_file="${RESULT_DIR}/phase_latency.csv"
+  if [[ ! -x "${analyzer}" && ! -f "${analyzer}" ]]; then
+    exp_log "WARN: phase latency analyzer not found: ${analyzer}"
+    return 0
+  fi
+  if python3 "${analyzer}" --result-dir "${RESULT_DIR}" --out "${out_file}" >/dev/null; then
+    exp_log "Phase latency CSV: ${out_file}"
+  else
+    exp_log "WARN: phase latency analysis failed"
+  fi
+}
+
 wait_api_health() {
   local deadline=$((SECONDS + TIMEOUT_SEC))
   exp_log "Wait API health at ${API_BASE}/health"
