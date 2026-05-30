@@ -23,8 +23,8 @@ func GetClient() *http.Client {
 				Timeout:   5 * time.Second,  // Connection timeout
 				KeepAlive: 30 * time.Second, // TCP KeepAlive
 			}).DialContext,
-			MaxIdleConns:        100,              // Total max idle connections
-			MaxIdleConnsPerHost: 20,               // Max idle connections per host (e.g., node_1)
+			MaxIdleConns:        512,              // Total max idle connections
+			MaxIdleConnsPerHost: 64,               // Max idle connections per host (e.g., node_1)
 			IdleConnTimeout:     90 * time.Second, // How long to keep idle connections alive
 		}
 
@@ -35,4 +35,3 @@ func GetClient() *http.Client {
 	})
 	return _client
 }
-

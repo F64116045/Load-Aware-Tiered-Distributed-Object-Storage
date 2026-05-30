@@ -60,6 +60,52 @@ func (s *TiKVStore) upsertTieringDueIndex(
 	return nil
 }
 
+func (s *TiKVStore) upsertTieringDueIndexTxn(
+	ctx context.Context,
+	t *kvstore.Txn,
+	objectID string,
+	version int64,
+	tier string,
+	sizeBytes int64,
+	now time.Time,
+) error {
+	if t == nil {
+		return fmt.Errorf("nil transaction for due-index upsert")
+	}
+	if err := s.removeTieringDueIndexByVersionTxn(ctx, t, objectID, version); err != nil {
+		return err
+	}
+	if tier != "HOT" {
+		return nil
+	}
+
+	eligibleAt := now.Add(time.Duration(config.AgeThresholdSec) * time.Second)
+	dueKey := tiKVTierDueKey(eligibleAt, objectID, version)
+	dueRecord := &tiKVTierDueRecord{
+		ObjectID:   objectID,
+		Version:    version,
+		EligibleAt: eligibleAt,
+		SizeBytes:  sizeBytes,
+		CreatedAt:  now,
+	}
+	if err := s.txnPutJSON(t, dueKey, dueRecord); err != nil {
+		return err
+	}
+
+	refKey := tiKVTierDueRefKey(objectID, version)
+	refRecord := &tiKVTierDueRefRecord{
+		ObjectID:   objectID,
+		Version:    version,
+		DueKey:     dueKey,
+		EligibleAt: eligibleAt,
+		UpdatedAt:  now,
+	}
+	if err := s.txnPutJSON(t, refKey, refRecord); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *TiKVStore) removeTieringDueIndexByVersionInBatch(b *kvstore.Batch, objectID string, version int64) error {
 	if b == nil {
 		return fmt.Errorf("nil batch for due-index delete")
@@ -77,6 +123,27 @@ func (s *TiKVStore) removeTieringDueIndexByVersionInBatch(b *kvstore.Batch, obje
 	}
 	if err := b.Delete([]byte(refKey), kvstore.NoSync); err != nil {
 		return fmt.Errorf("delete due-index ref failed: %w", err)
+	}
+	return nil
+}
+
+func (s *TiKVStore) removeTieringDueIndexByVersionTxn(ctx context.Context, t *kvstore.Txn, objectID string, version int64) error {
+	if t == nil {
+		return fmt.Errorf("nil transaction for due-index delete")
+	}
+	refKey := tiKVTierDueRefKey(objectID, version)
+	refRecord := &tiKVTierDueRefRecord{}
+	found, err := s.txnGetJSON(ctx, t, refKey, refRecord)
+	if err != nil {
+		return err
+	}
+	if found && refRecord.DueKey != "" {
+		if err := t.Delete([]byte(refRecord.DueKey)); err != nil {
+			return fmt.Errorf("transaction delete due-index key failed: %w", err)
+		}
+	}
+	if err := t.Delete([]byte(refKey)); err != nil {
+		return fmt.Errorf("transaction delete due-index ref failed: %w", err)
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -195,6 +196,31 @@ func (s *TiKVStore) getJSON(key string, out interface{}) (bool, error) {
 		return false, fmt.Errorf("unmarshal key=%s failed: %w", key, err)
 	}
 	return true, nil
+}
+
+func (s *TiKVStore) txnGetJSON(ctx context.Context, t *kvstore.Txn, key string, out interface{}) (bool, error) {
+	v, err := t.Get(ctx, []byte(key))
+	if err != nil {
+		if errors.Is(err, kvstore.ErrNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("transaction get key=%s failed: %w", key, err)
+	}
+	if err := json.Unmarshal(v, out); err != nil {
+		return false, fmt.Errorf("transaction unmarshal key=%s failed: %w", key, err)
+	}
+	return true, nil
+}
+
+func (s *TiKVStore) txnPutJSON(t *kvstore.Txn, key string, value interface{}) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal transaction value for key=%s failed: %w", key, err)
+	}
+	if err := t.Set([]byte(key), data); err != nil {
+		return fmt.Errorf("transaction set key=%s failed: %w", key, err)
+	}
+	return nil
 }
 
 func (s *TiKVStore) batchPutJSON(b *kvstore.Batch, key string, value interface{}) error {

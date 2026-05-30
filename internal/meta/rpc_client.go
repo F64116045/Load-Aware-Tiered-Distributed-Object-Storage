@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -22,10 +23,26 @@ var _ Repository = (*RPCClient)(nil)
 func NewRPCClient(endpoint, authToken string) *RPCClient {
 	base := strings.TrimSpace(strings.TrimRight(endpoint, "/"))
 	return &RPCClient{
-		baseURL:   base,
-		authToken: strings.TrimSpace(authToken),
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+		baseURL:    base,
+		authToken:  strings.TrimSpace(authToken),
+		httpClient: newRPCHTTPClient(),
+	}
+}
+
+func newRPCHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   5 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          256,
+			MaxIdleConnsPerHost:   64,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
 }

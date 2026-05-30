@@ -16,12 +16,14 @@ suite_index="${RESULT_ROOT}/durability-${DURABILITY_SUITE_RUN_ID_ROOT}-index.csv
 combined_latency="${RESULT_ROOT}/durability-${DURABILITY_SUITE_RUN_ID_ROOT}-latency.csv"
 combined_migration="${RESULT_ROOT}/durability-${DURABILITY_SUITE_RUN_ID_ROOT}-migration.csv"
 combined_phase_latency="${RESULT_ROOT}/durability-${DURABILITY_SUITE_RUN_ID_ROOT}-phase-latency.csv"
+combined_phase_bottlenecks="${RESULT_ROOT}/durability-${DURABILITY_SUITE_RUN_ID_ROOT}-phase-bottlenecks.csv"
 
 mkdir -p "${RESULT_ROOT}"
-printf 'durability_mode,suite_run_id_root,index_csv,latency_csv,migration_csv,phase_latency_csv\n' >"${suite_index}"
+printf 'durability_mode,suite_run_id_root,index_csv,latency_csv,migration_csv,phase_latency_csv,phase_bottleneck_csv\n' >"${suite_index}"
 : >"${combined_latency}"
 : >"${combined_migration}"
 : >"${combined_phase_latency}"
+: >"${combined_phase_bottlenecks}"
 
 append_csv_with_mode() {
   local mode="$1"
@@ -54,6 +56,7 @@ run_mode() {
   local latency_file="${RESULT_ROOT}/suite-${suite_run_id_root}-latency.csv"
   local migration_file="${RESULT_ROOT}/suite-${suite_run_id_root}-migration.csv"
   local phase_file="${RESULT_ROOT}/suite-${suite_run_id_root}-phase-latency.csv"
+  local bottleneck_file="${RESULT_ROOT}/suite-${suite_run_id_root}-phase-bottlenecks.csv"
 
   echo "=== GKE durability suite: mode=${mode} ==="
   env \
@@ -63,10 +66,11 @@ run_mode() {
     "STORAGE_DURABILITY_MODE=${mode}" \
     "${SCRIPT_DIR}/run_gke_experiment_suite.sh"
 
-  printf '%s,%s,%s,%s,%s,%s\n' "${mode}" "${suite_run_id_root}" "${index_file}" "${latency_file}" "${migration_file}" "${phase_file}" >>"${suite_index}"
+  printf '%s,%s,%s,%s,%s,%s,%s\n' "${mode}" "${suite_run_id_root}" "${index_file}" "${latency_file}" "${migration_file}" "${phase_file}" "${bottleneck_file}" >>"${suite_index}"
   append_csv_with_mode "${mode}" "${latency_file}" "${combined_latency}"
   append_csv_with_mode "${mode}" "${migration_file}" "${combined_migration}"
   append_csv_with_mode "${mode}" "${phase_file}" "${combined_phase_latency}"
+  append_csv_with_mode "${mode}" "${bottleneck_file}" "${combined_phase_bottlenecks}"
 }
 
 for mode in ${DURABILITY_MODES}; do
@@ -78,9 +82,13 @@ echo "Durability index: ${suite_index}"
 echo "Combined latency CSV: ${combined_latency}"
 echo "Combined migration CSV: ${combined_migration}"
 echo "Combined phase latency CSV: ${combined_phase_latency}"
+echo "Combined phase bottleneck CSV: ${combined_phase_bottlenecks}"
 echo
 echo "=== Combined latency by durability mode ==="
 cat "${combined_latency}"
 echo
 echo "=== Combined phase latency by durability mode ==="
 cat "${combined_phase_latency}"
+echo
+echo "=== Combined PUT phase bottlenecks by durability mode ==="
+cat "${combined_phase_bottlenecks}"
