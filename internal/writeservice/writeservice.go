@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	neturl "net/url"
@@ -114,7 +115,10 @@ func (s *Service) writeSingleHotReplica(
 	resp, err := s.http.Do(req)
 	if resp != nil {
 		result.status = resp.StatusCode
-		_ = resp.Body.Close()
+		if resp.Body != nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
 	}
 	if err != nil {
 		result.err = err

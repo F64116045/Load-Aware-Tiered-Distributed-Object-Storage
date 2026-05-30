@@ -255,6 +255,15 @@ func (s *storageEngine) releaseQueuedWriteBytes(bytes int64) {
 	}
 }
 
+func (s *storageEngine) writeAckInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"io_workers":             s.ioWorkerCount,
+		"durability_mode":        s.durabilityMode,
+		"queued_write_bytes":     s.currentQueuedWriteBytes(),
+		"max_queued_write_bytes": atomic.LoadInt64(&s.maxQueuedWriteBytes),
+	}
+}
+
 // _getSafePath prevents directory traversal attacks.
 func (s *storageEngine) _getSafePath(key string) (string, error) {
 	safeKey := filepath.Clean(key)
