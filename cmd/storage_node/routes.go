@@ -81,6 +81,7 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 			"size":                   size,
 			"total_keys":             info["total_keys"],
 			"io_workers":             info["io_workers"],
+			"durability_mode":        info["durability_mode"],
 			"queued_write_bytes":     info["queued_write_bytes"],
 			"max_queued_write_bytes": info["max_queued_write_bytes"],
 			"phase_latency_ms": gin.H{

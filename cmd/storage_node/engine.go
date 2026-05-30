@@ -28,6 +28,11 @@ type durableWriteTiming struct {
 	Sync  time.Duration
 }
 
+const (
+	storageDurabilitySync  = "sync"
+	storageDurabilityWrite = "write"
+)
+
 // storageEngine handles raw file I/O operations with asynchronous write support.
 type storageEngine struct {
 	storageDir      string
@@ -39,13 +44,14 @@ type storageEngine struct {
 	// writeQueue buffers incoming write requests for background processing.
 	writeQueue          chan *WriteTask
 	ioWorkerCount       int
+	durabilityMode      string
 	queuedWriteBytes    int64
 	maxQueuedWriteBytes int64
 }
 
 // newStorageEngine initializes the storage directory and the async engine.
 func newStorageEngine(port, nodeName, storageDir string) *storageEngine {
-	return newStorageEngineWithConfig(port, nodeName, storageDir, config.StorageMaxQueuedWriteBytes, config.StorageIOWorkers)
+	return newStorageEngineWithDurability(port, nodeName, storageDir, config.StorageMaxQueuedWriteBytes, config.StorageIOWorkers, config.StorageDurabilityMode)
 }
 
 func normalizeStorageIOWorkers(count int) int {
@@ -56,6 +62,19 @@ func normalizeStorageIOWorkers(count int) int {
 }
 
 func newStorageEngineWithConfig(port, nodeName, storageDir string, maxQueuedWriteBytes int64, ioWorkers int) *storageEngine {
+	return newStorageEngineWithDurability(port, nodeName, storageDir, maxQueuedWriteBytes, ioWorkers, config.StorageDurabilityMode)
+}
+
+func normalizeStorageDurabilityMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case storageDurabilityWrite:
+		return storageDurabilityWrite
+	default:
+		return storageDurabilitySync
+	}
+}
+
+func newStorageEngineWithDurability(port, nodeName, storageDir string, maxQueuedWriteBytes int64, ioWorkers int, durabilityMode string) *storageEngine {
 	// Ensure the storage directory exists
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		log.Fatalf("Failed to create storage directory %s: %v", storageDir, err)
@@ -65,11 +84,13 @@ func newStorageEngineWithConfig(port, nodeName, storageDir string, maxQueuedWrit
 	log.Printf("Data persistence path: %s", storageDir)
 
 	ioWorkerCount := normalizeStorageIOWorkers(ioWorkers)
+	normalizedDurabilityMode := normalizeStorageDurabilityMode(durabilityMode)
 	engine := &storageEngine{
 		storageDir:          storageDir,
 		port:                port,
 		nodeName:            nodeName,
 		ioWorkerCount:       ioWorkerCount,
+		durabilityMode:      normalizedDurabilityMode,
 		maxQueuedWriteBytes: maxQueuedWriteBytes,
 		// Initialize a buffered channel with a capacity of 5000 to handle burst traffic.
 		writeQueue: make(chan *WriteTask, 5000),
@@ -83,8 +104,13 @@ func newStorageEngineWithConfig(port, nodeName, storageDir string, maxQueuedWrit
 }
 
 func writeFileDurably(path string, data []byte) (durableWriteTiming, error) {
+	return writeFileWithDurability(path, data, storageDurabilitySync)
+}
+
+func writeFileWithDurability(path string, data []byte, durabilityMode string) (durableWriteTiming, error) {
 	start := time.Now()
 	timing := durableWriteTiming{}
+	durabilityMode = normalizeStorageDurabilityMode(durabilityMode)
 
 	// Ensure parent directories exist for nested keys.
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -107,13 +133,15 @@ func writeFileDurably(path string, data []byte) (durableWriteTiming, error) {
 	}
 	timing.Write = time.Since(writeStart)
 
-	syncStart := time.Now()
-	if err := f.Sync(); err != nil {
+	if durabilityMode == storageDurabilitySync {
+		syncStart := time.Now()
+		if err := f.Sync(); err != nil {
+			timing.Sync = time.Since(syncStart)
+			timing.Total = time.Since(start)
+			return timing, err
+		}
 		timing.Sync = time.Since(syncStart)
-		timing.Total = time.Since(start)
-		return timing, err
 	}
-	timing.Sync = time.Since(syncStart)
 	timing.Total = time.Since(start)
 	return timing, nil
 }
@@ -135,16 +163,17 @@ func (s *storageEngine) startIoWorker(workerID int) {
 			log.Printf("[Async IO] Error resolving path for key %s: %v", task.Key, err)
 			writeErr = err
 		} else {
-			// Perform the blocking disk write operation with fsync before ACK.
-			timing, err = writeFileDurably(filePath, task.Data)
+			// Perform the blocking disk write operation according to the configured durability mode.
+			timing, err = writeFileWithDurability(filePath, task.Data, s.durabilityMode)
 			if err != nil {
 				log.Printf("[Async IO] Disk Write Failed for %s: %v", filePath, err)
 				writeErr = err
 			}
 		}
 		log.Printf(
-			"[Storage Phase] op=STORE worker_id=%d key=%s size_bytes=%d queue_wait_ms=%d durable_write_ms=%d file_write_ms=%d fsync_ms=%d err=%v",
+			"[Storage Phase] op=STORE worker_id=%d durability_mode=%s key=%s size_bytes=%d queue_wait_ms=%d durable_write_ms=%d file_write_ms=%d fsync_ms=%d err=%v",
 			workerID,
+			s.durabilityMode,
 			task.Key,
 			len(task.Data),
 			queueWait.Milliseconds(),
@@ -325,6 +354,7 @@ func (s *storageEngine) getInfo() (map[string]interface{}, error) {
 		"write_queue_depth":      len(s.writeQueue),
 		"write_queue_cap":        cap(s.writeQueue),
 		"io_workers":             s.ioWorkerCount,
+		"durability_mode":        s.durabilityMode,
 		"queued_write_bytes":     s.currentQueuedWriteBytes(),
 		"max_queued_write_bytes": atomic.LoadInt64(&s.maxQueuedWriteBytes),
 	}, nil

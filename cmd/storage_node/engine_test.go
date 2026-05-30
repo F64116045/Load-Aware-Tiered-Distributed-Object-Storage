@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -118,6 +120,20 @@ func TestStorageEngineInfoIncludesConfiguredIOWorkers(t *testing.T) {
 	}
 }
 
+func TestStorageEngineInfoIncludesDurabilityMode(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngineWithDurability("19007", "test-node", t.TempDir(), 12345, 1, storageDurabilityWrite)
+
+	info, err := st.getInfo()
+	if err != nil {
+		t.Fatalf("getInfo failed: %v", err)
+	}
+	if got := info["durability_mode"]; got != storageDurabilityWrite {
+		t.Fatalf("durability_mode=%v want %s", got, storageDurabilityWrite)
+	}
+}
+
 func TestStorageEngineNormalizesInvalidIOWorkerCount(t *testing.T) {
 	t.Parallel()
 
@@ -129,5 +145,38 @@ func TestStorageEngineNormalizesInvalidIOWorkerCount(t *testing.T) {
 	}
 	if got := normalizeStorageIOWorkers(4); got != 4 {
 		t.Fatalf("normalizeStorageIOWorkers(4)=%d want 4", got)
+	}
+}
+
+func TestStorageEngineNormalizesDurabilityMode(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeStorageDurabilityMode("write"); got != storageDurabilityWrite {
+		t.Fatalf("normalizeStorageDurabilityMode(write)=%s want %s", got, storageDurabilityWrite)
+	}
+	if got := normalizeStorageDurabilityMode(" WRITE "); got != storageDurabilityWrite {
+		t.Fatalf("normalizeStorageDurabilityMode(WRITE)=%s want %s", got, storageDurabilityWrite)
+	}
+	if got := normalizeStorageDurabilityMode("sync"); got != storageDurabilitySync {
+		t.Fatalf("normalizeStorageDurabilityMode(sync)=%s want %s", got, storageDurabilitySync)
+	}
+	if got := normalizeStorageDurabilityMode("unknown"); got != storageDurabilitySync {
+		t.Fatalf("normalizeStorageDurabilityMode(unknown)=%s want %s", got, storageDurabilitySync)
+	}
+}
+
+func TestWriteFileWithDurabilityWriteModeWritesPayload(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "nested", "payload.bin")
+	if _, err := writeFileWithDurability(path, []byte("payload"), storageDurabilityWrite); err != nil {
+		t.Fatalf("writeFileWithDurability failed: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read payload failed: %v", err)
+	}
+	if string(got) != "payload" {
+		t.Fatalf("payload mismatch: got=%q", string(got))
 	}
 }

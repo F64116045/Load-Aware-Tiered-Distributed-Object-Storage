@@ -65,18 +65,32 @@ deploy_k8s_stack() {
 }
 
 configure_k8s_experiment_env() {
-  if [[ -z "${AGE_THRESHOLD_SEC:-}" ]]; then
-    return 0
+  local changed_deployments=false
+  local changed_storage=false
+
+  if [[ -n "${AGE_THRESHOLD_SEC:-}" ]]; then
+    exp_log "Configure k8s experiment env: AGE_THRESHOLD_SEC=${AGE_THRESHOLD_SEC}"
+    kubectl -n "${K8S_NAMESPACE}" set env deployment/meta-service deployment/api \
+      AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
+    kubectl -n "${K8S_NAMESPACE}" set env deployment/tiering-worker \
+      AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
+    changed_deployments=true
   fi
 
-  exp_log "Configure k8s experiment env: AGE_THRESHOLD_SEC=${AGE_THRESHOLD_SEC}"
-  kubectl -n "${K8S_NAMESPACE}" set env deployment/meta-service deployment/api \
-    AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
-  kubectl -n "${K8S_NAMESPACE}" set env deployment/tiering-worker \
-    AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
+  if [[ -n "${STORAGE_DURABILITY_MODE:-}" ]]; then
+    exp_log "Configure storage durability mode: STORAGE_DURABILITY_MODE=${STORAGE_DURABILITY_MODE}"
+    kubectl -n "${K8S_NAMESPACE}" set env statefulset/storage-node \
+      STORAGE_DURABILITY_MODE="${STORAGE_DURABILITY_MODE}" >/dev/null
+    changed_storage=true
+  fi
 
-  kubectl -n "${K8S_NAMESPACE}" rollout status deployment/meta-service --timeout=180s
-  kubectl -n "${K8S_NAMESPACE}" rollout status deployment/api --timeout=180s
+  if [[ "${changed_deployments}" == "true" ]]; then
+    kubectl -n "${K8S_NAMESPACE}" rollout status deployment/meta-service --timeout=180s
+    kubectl -n "${K8S_NAMESPACE}" rollout status deployment/api --timeout=180s
+  fi
+  if [[ "${changed_storage}" == "true" ]]; then
+    kubectl -n "${K8S_NAMESPACE}" rollout status statefulset/storage-node --timeout=300s
+  fi
 }
 
 discover_k8s_api_base() {
