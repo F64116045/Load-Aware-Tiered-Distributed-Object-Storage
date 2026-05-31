@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -423,7 +422,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 		}
 
 		bodyReadStart := nowFn()
-		bodyBytes, err := io.ReadAll(c.Request.Body)
+		bodyBytes, err := readAPIRequestBody(c.Request)
 		bodyReadDuration := nowFn().Sub(bodyReadStart)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
