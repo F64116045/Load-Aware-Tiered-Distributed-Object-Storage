@@ -40,6 +40,7 @@ type durableWriteTiming struct {
 
 const (
 	storageDurabilitySync      = "sync"
+	storageDurabilityDataSync  = "data_sync"
 	storageDurabilityGroupSync = "group_sync"
 	storageDurabilityWrite     = "write"
 )
@@ -94,6 +95,8 @@ func newStorageEngineWithConfig(port, nodeName, storageDir string, maxQueuedWrit
 
 func normalizeStorageDurabilityMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case storageDurabilityDataSync:
+		return storageDurabilityDataSync
 	case storageDurabilityGroupSync:
 		return storageDurabilityGroupSync
 	case storageDurabilityWrite:
@@ -257,11 +260,13 @@ func writeReaderWithSyncer(path string, reader io.Reader, durabilityMode string,
 	}
 	timing.Write = time.Since(writeStart)
 
-	if durabilityMode == storageDurabilitySync || durabilityMode == storageDurabilityGroupSync {
+	if durabilityMode == storageDurabilitySync || durabilityMode == storageDurabilityDataSync || durabilityMode == storageDurabilityGroupSync {
 		syncStart := time.Now()
 		syncErr := error(nil)
 		if durabilityMode == storageDurabilityGroupSync {
 			syncErr = syncer.sync(f)
+		} else if durabilityMode == storageDurabilityDataSync {
+			syncErr = syncFileDataOnly(f)
 		} else {
 			syncErr = f.Sync()
 		}

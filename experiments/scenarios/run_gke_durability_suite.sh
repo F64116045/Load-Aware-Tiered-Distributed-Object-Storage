@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULT_ROOT="${RESULT_ROOT:-${SCRIPT_DIR}/../results}"
 DURABILITY_SUITE_RUN_ID_ROOT="${DURABILITY_SUITE_RUN_ID_ROOT:-$(date -u +%Y%m%dT%H%M%SZ)-gke-durability}"
-DURABILITY_MODES="${DURABILITY_MODES:-sync write}"
+DURABILITY_MODES="${DURABILITY_MODES:-sync data_sync}"
 
 if [[ -z "${IMAGE:-}" ]]; then
   echo "ERROR: IMAGE is required, for example IMAGE=asia-east1-docker.pkg.dev/<project>/<repo>/rec-store:gke-exp-001" >&2
@@ -43,10 +43,10 @@ append_csv_with_mode() {
 run_mode() {
   local mode="$1"
   case "${mode}" in
-    sync|group_sync|write)
+    sync|data_sync|group_sync|write)
       ;;
     *)
-      echo "ERROR: unsupported STORAGE_DURABILITY_MODE=${mode}; expected sync, group_sync, or write" >&2
+      echo "ERROR: unsupported STORAGE_DURABILITY_MODE=${mode}; expected sync, data_sync, group_sync, or write" >&2
       return 1
       ;;
   esac

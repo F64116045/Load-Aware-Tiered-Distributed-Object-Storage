@@ -192,6 +192,12 @@ func TestStorageEngineNormalizesDurabilityMode(t *testing.T) {
 	if got := normalizeStorageDurabilityMode(" WRITE "); got != storageDurabilityWrite {
 		t.Fatalf("normalizeStorageDurabilityMode(WRITE)=%s want %s", got, storageDurabilityWrite)
 	}
+	if got := normalizeStorageDurabilityMode("data_sync"); got != storageDurabilityDataSync {
+		t.Fatalf("normalizeStorageDurabilityMode(data_sync)=%s want %s", got, storageDurabilityDataSync)
+	}
+	if got := normalizeStorageDurabilityMode(" DATA_SYNC "); got != storageDurabilityDataSync {
+		t.Fatalf("normalizeStorageDurabilityMode(DATA_SYNC)=%s want %s", got, storageDurabilityDataSync)
+	}
 	if got := normalizeStorageDurabilityMode("group_sync"); got != storageDurabilityGroupSync {
 		t.Fatalf("normalizeStorageDurabilityMode(group_sync)=%s want %s", got, storageDurabilityGroupSync)
 	}
@@ -203,6 +209,29 @@ func TestStorageEngineNormalizesDurabilityMode(t *testing.T) {
 	}
 	if got := normalizeStorageDurabilityMode("unknown"); got != storageDurabilitySync {
 		t.Fatalf("normalizeStorageDurabilityMode(unknown)=%s want %s", got, storageDurabilitySync)
+	}
+}
+
+func TestStorageEngineDataSyncDurabilityMode(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngineWithDurability("19010", "test-node", t.TempDir(), 1024*1024, 1, storageDurabilityDataSync)
+	if _, err := st.store(context.Background(), "k1", []byte("payload")); err != nil {
+		t.Fatalf("store with data_sync failed: %v", err)
+	}
+	info, err := st.getInfo()
+	if err != nil {
+		t.Fatalf("getInfo failed: %v", err)
+	}
+	if got := info["durability_mode"]; got != storageDurabilityDataSync {
+		t.Fatalf("durability_mode=%v want %s", got, storageDurabilityDataSync)
+	}
+	data, err := st.retrieve("k1")
+	if err != nil {
+		t.Fatalf("retrieve failed: %v", err)
+	}
+	if string(data) != "payload" {
+		t.Fatalf("retrieve payload mismatch: got=%q", string(data))
 	}
 }
 
