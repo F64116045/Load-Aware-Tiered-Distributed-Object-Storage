@@ -88,6 +88,13 @@ func (c *RPCClient) call(ctx context.Context, method string, params interface{},
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNoContent {
+		if out != nil {
+			return fmt.Errorf("rpc %s returned no content for result-bearing call", method)
+		}
+		return nil
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read rpc response failed: %w", err)

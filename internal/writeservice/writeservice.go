@@ -88,6 +88,10 @@ type replicaWriteResult struct {
 	succeeded bool
 }
 
+func isStoreSuccessStatus(status int) bool {
+	return status == http.StatusOK || status == http.StatusNoContent
+}
+
 func (s *Service) writeSingleHotReplica(
 	ctx context.Context,
 	nodeURL string,
@@ -128,7 +132,7 @@ func (s *Service) writeSingleHotReplica(
 		result.err = fmt.Errorf("nil response")
 		return result
 	}
-	if resp.StatusCode != http.StatusOK {
+	if !isStoreSuccessStatus(resp.StatusCode) {
 		result.err = fmt.Errorf("unexpected status: %d", resp.StatusCode)
 		return result
 	}
@@ -420,7 +424,7 @@ func (s *Service) WriteEC(
 			if err == nil {
 				_ = resp.Body.Close()
 			}
-			if err == nil && resp.StatusCode == http.StatusOK {
+			if err == nil && resp != nil && isStoreSuccessStatus(resp.StatusCode) {
 				mu.Lock()
 				success++
 				mu.Unlock()

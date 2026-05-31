@@ -355,7 +355,7 @@ func (p *ReplicationRepairProcessor) writeSingleBlob(ctx context.Context, nodeID
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("status=%d", resp.StatusCode)
 	}
 	return nil

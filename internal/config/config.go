@@ -82,8 +82,12 @@ var (
 	StorageMaxQueuedWriteBytes = getEnvInt64("STORAGE_MAX_QUEUED_WRITE_BYTES", getEnvInt64("MAX_QUEUED_WRITE_BYTES", 512*1024*1024))
 	// StorageIOWorkers controls concurrent durable write workers per storage node.
 	StorageIOWorkers = getEnvInt("STORAGE_IO_WORKERS", 2)
-	// StorageDurabilityMode controls whether storage-node writes fsync before ACK ("sync") or only write to OS buffers ("write").
+	// StorageDurabilityMode controls whether storage-node writes fsync before ACK ("sync"), batches fsync before ACK ("group_sync"), or only write to OS buffers ("write").
 	StorageDurabilityMode = getEnv("STORAGE_DURABILITY_MODE", "sync")
+	// StorageGroupSyncIntervalMs is the short batching window for STORAGE_DURABILITY_MODE=group_sync.
+	StorageGroupSyncIntervalMs = getEnvInt("STORAGE_GROUP_SYNC_INTERVAL_MS", 5)
+	// StorageGroupSyncMaxBatch caps files flushed in one group-sync batch.
+	StorageGroupSyncMaxBatch = getEnvInt("STORAGE_GROUP_SYNC_MAX_BATCH", 32)
 	// AgeThresholdSec defines when HOT objects become eligible for tiering.
 	AgeThresholdSec = getEnvInt("AGE_THRESHOLD_SEC", 3600)
 	// TieringPeriodSec defines periodic policy scan interval.

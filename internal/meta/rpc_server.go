@@ -358,16 +358,18 @@ func decodeRPCParams(raw json.RawMessage, out interface{}) error {
 }
 
 func writeRPCResult(w http.ResponseWriter, result interface{}) {
+	if result == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	resp := rpcResponse{OK: true}
-	if result != nil {
-		raw, err := json.Marshal(result)
-		if err != nil {
-			writeRPCError(w, fmt.Errorf("encode result failed: %w", err))
-			return
-		}
-		resp.Result = raw
+	raw, err := json.Marshal(result)
+	if err != nil {
+		writeRPCError(w, fmt.Errorf("encode result failed: %w", err))
+		return
 	}
+	resp.Result = raw
 	_ = json.NewEncoder(w).Encode(resp)
 }
 

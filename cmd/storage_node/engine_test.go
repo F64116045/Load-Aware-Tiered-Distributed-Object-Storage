@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestStorageEngineSafePath(t *testing.T) {
@@ -181,11 +182,34 @@ func TestStorageEngineNormalizesDurabilityMode(t *testing.T) {
 	if got := normalizeStorageDurabilityMode(" WRITE "); got != storageDurabilityWrite {
 		t.Fatalf("normalizeStorageDurabilityMode(WRITE)=%s want %s", got, storageDurabilityWrite)
 	}
+	if got := normalizeStorageDurabilityMode("group_sync"); got != storageDurabilityGroupSync {
+		t.Fatalf("normalizeStorageDurabilityMode(group_sync)=%s want %s", got, storageDurabilityGroupSync)
+	}
+	if got := normalizeStorageDurabilityMode(" GROUP_SYNC "); got != storageDurabilityGroupSync {
+		t.Fatalf("normalizeStorageDurabilityMode(GROUP_SYNC)=%s want %s", got, storageDurabilityGroupSync)
+	}
 	if got := normalizeStorageDurabilityMode("sync"); got != storageDurabilitySync {
 		t.Fatalf("normalizeStorageDurabilityMode(sync)=%s want %s", got, storageDurabilitySync)
 	}
 	if got := normalizeStorageDurabilityMode("unknown"); got != storageDurabilitySync {
 		t.Fatalf("normalizeStorageDurabilityMode(unknown)=%s want %s", got, storageDurabilitySync)
+	}
+}
+
+func TestStorageEngineNormalizesGroupSyncSettings(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeStorageGroupSyncInterval(-1); got != 0 {
+		t.Fatalf("normalizeStorageGroupSyncInterval(-1)=%s want 0", got)
+	}
+	if got := normalizeStorageGroupSyncInterval(7); got != 7*time.Millisecond {
+		t.Fatalf("normalizeStorageGroupSyncInterval(7)=%s want 7ms", got)
+	}
+	if got := normalizeStorageGroupSyncMaxBatch(0); got != 1 {
+		t.Fatalf("normalizeStorageGroupSyncMaxBatch(0)=%d want 1", got)
+	}
+	if got := normalizeStorageGroupSyncMaxBatch(12); got != 12 {
+		t.Fatalf("normalizeStorageGroupSyncMaxBatch(12)=%d want 12", got)
 	}
 }
 
@@ -195,6 +219,22 @@ func TestWriteFileWithDurabilityWriteModeWritesPayload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "payload.bin")
 	if _, err := writeFileWithDurability(path, []byte("payload"), storageDurabilityWrite); err != nil {
 		t.Fatalf("writeFileWithDurability failed: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read payload failed: %v", err)
+	}
+	if string(got) != "payload" {
+		t.Fatalf("payload mismatch: got=%q", string(got))
+	}
+}
+
+func TestWriteFileWithDurabilityGroupSyncModeWritesPayload(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "nested", "payload.bin")
+	if _, err := writeFileWithDurability(path, []byte("payload"), storageDurabilityGroupSync); err != nil {
+		t.Fatalf("writeFileWithDurability group_sync failed: %v", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {

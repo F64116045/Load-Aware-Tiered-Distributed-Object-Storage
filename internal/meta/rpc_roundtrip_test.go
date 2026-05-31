@@ -1,7 +1,10 @@
 package meta
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -104,6 +107,48 @@ func TestRPCClientServerRoundTrip(t *testing.T) {
 	}
 	if err := lock.Release(ctx); err != nil {
 		t.Fatalf("leader lock release failed: %v", err)
+	}
+}
+
+func TestRPCServerNilResultUsesNoContent(t *testing.T) {
+	store, err := NewTiKVStore(Config{
+		Enabled: true,
+		DSN:     "memory://rpc-no-content",
+	})
+	if err != nil {
+		t.Fatalf("new tikv store failed: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	rpcServer := NewRPCServer(store, "")
+	t.Cleanup(func() { _ = rpcServer.Close() })
+
+	srv := httptest.NewServer(rpcServer.Handler())
+	t.Cleanup(srv.Close)
+
+	payload, err := json.Marshal(rpcRequest{Method: rpcMethodPing})
+	if err != nil {
+		t.Fatalf("marshal rpc request failed: %v", err)
+	}
+	resp, err := http.Post(srv.URL+"/meta/rpc", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("post rpc failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected nil-result RPC to return 204, got %d", resp.StatusCode)
+	}
+}
+
+func TestRPCClientRejectsNoContentForResultCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewRPCClient(srv.URL, "")
+	if _, err := client.ListHealthyNodeIDs(context.Background(), 60); err == nil {
+		t.Fatalf("expected result-bearing RPC to reject 204 response")
 	}
 }
 

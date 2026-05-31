@@ -43,10 +43,10 @@ append_csv_with_mode() {
 run_mode() {
   local mode="$1"
   case "${mode}" in
-    sync|write)
+    sync|group_sync|write)
       ;;
     *)
-      echo "ERROR: unsupported STORAGE_DURABILITY_MODE=${mode}; expected sync or write" >&2
+      echo "ERROR: unsupported STORAGE_DURABILITY_MODE=${mode}; expected sync, group_sync, or write" >&2
       return 1
       ;;
   esac

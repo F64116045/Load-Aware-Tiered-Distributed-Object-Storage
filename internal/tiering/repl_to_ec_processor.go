@@ -325,7 +325,7 @@ func (p *ReplicationToECProcessor) writeSingleShard(
 		return location, false
 	}
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return location, false
 	}
 

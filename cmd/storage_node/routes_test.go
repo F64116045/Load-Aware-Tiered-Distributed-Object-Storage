@@ -44,8 +44,11 @@ func TestRoutesStoreRetrieveDeleteRoundTrip(t *testing.T) {
 	putReq := httptest.NewRequest(http.MethodPost, "/store?key=test-key", strings.NewReader("hello-bytes"))
 	putRec := httptest.NewRecorder()
 	router.ServeHTTP(putRec, putReq)
-	if putRec.Code != http.StatusOK {
-		t.Fatalf("store status=%d body=%s", putRec.Code, putRec.Body.String())
+	if putRec.Code != http.StatusNoContent {
+		t.Fatalf("store status=%d want=%d body=%s", putRec.Code, http.StatusNoContent, putRec.Body.String())
+	}
+	if putRec.Body.Len() != 0 {
+		t.Fatalf("store should not return body, got=%q", putRec.Body.String())
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/retrieve/test-key", nil)
@@ -91,8 +94,11 @@ func TestRoutesNestedKeyRoundTrip(t *testing.T) {
 	putReq := httptest.NewRequest(http.MethodPost, "/store?key="+url.QueryEscape(key), strings.NewReader("nested-bytes"))
 	putRec := httptest.NewRecorder()
 	router.ServeHTTP(putRec, putReq)
-	if putRec.Code != http.StatusOK {
-		t.Fatalf("store status=%d body=%s", putRec.Code, putRec.Body.String())
+	if putRec.Code != http.StatusNoContent {
+		t.Fatalf("store status=%d want=%d body=%s", putRec.Code, http.StatusNoContent, putRec.Body.String())
+	}
+	if putRec.Body.Len() != 0 {
+		t.Fatalf("store should not return body, got=%q", putRec.Body.String())
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/retrieve/"+url.PathEscape(key), nil)

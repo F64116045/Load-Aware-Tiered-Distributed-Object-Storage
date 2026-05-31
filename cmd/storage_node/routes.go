@@ -65,21 +65,7 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 			totalDuration.Milliseconds(),
 		)
 
-		info := storage.writeAckInfo()
-		c.JSON(http.StatusOK, gin.H{
-			"status":                 "ok",
-			"key":                    key,
-			"size":                   size,
-			"io_workers":             info["io_workers"],
-			"durability_mode":        info["durability_mode"],
-			"queued_write_bytes":     info["queued_write_bytes"],
-			"max_queued_write_bytes": info["max_queued_write_bytes"],
-			"phase_latency_ms": gin.H{
-				"body_read":  int64(0),
-				"store_wait": storeDuration.Milliseconds(),
-				"total":      totalDuration.Milliseconds(),
-			},
-		})
+		c.Status(http.StatusNoContent)
 	})
 
 	retrieveHandler := func(c *gin.Context) {

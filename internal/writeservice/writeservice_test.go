@@ -103,6 +103,23 @@ func TestWriteReplication_SuccessWhenMetadataDisabled(t *testing.T) {
 	}
 }
 
+func TestWriteReplication_AcceptsNoContentStoreAck(t *testing.T) {
+	origMetaEnabled := config.MetaEnabled
+	origWriteQuorum := config.HotWriteQuorum
+	defer func() {
+		config.MetaEnabled = origMetaEnabled
+		config.HotWriteQuorum = origWriteQuorum
+	}()
+	config.MetaEnabled = false
+	config.HotWriteQuorum = 1
+
+	svc := createMockService(&mockHTTPClient{statusCode: http.StatusNoContent})
+	_, err := svc.WriteReplication(context.Background(), []string{"http://node1"}, "k1", []byte("data"))
+	if err != nil {
+		t.Fatalf("WriteReplication() expected success for 204 store ack, got error: %v", err)
+	}
+}
+
 func TestWriteReplication_StorageFails(t *testing.T) {
 	origMetaEnabled := config.MetaEnabled
 	origWriteQuorum := config.HotWriteQuorum

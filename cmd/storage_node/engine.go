@@ -38,9 +38,21 @@ type durableWriteTiming struct {
 }
 
 const (
-	storageDurabilitySync  = "sync"
-	storageDurabilityWrite = "write"
+	storageDurabilitySync      = "sync"
+	storageDurabilityGroupSync = "group_sync"
+	storageDurabilityWrite     = "write"
 )
+
+type groupSyncRequest struct {
+	file *os.File
+	done chan error
+}
+
+type groupSyncer struct {
+	interval time.Duration
+	maxBatch int
+	requests chan groupSyncRequest
+}
 
 // storageEngine handles raw file I/O operations with asynchronous write support.
 type storageEngine struct {
@@ -54,6 +66,7 @@ type storageEngine struct {
 	writeQueue          chan *WriteTask
 	ioWorkerCount       int
 	durabilityMode      string
+	groupSyncer         *groupSyncer
 	queuedWriteBytes    int64
 	maxQueuedWriteBytes int64
 }
@@ -76,10 +89,73 @@ func newStorageEngineWithConfig(port, nodeName, storageDir string, maxQueuedWrit
 
 func normalizeStorageDurabilityMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case storageDurabilityGroupSync:
+		return storageDurabilityGroupSync
 	case storageDurabilityWrite:
 		return storageDurabilityWrite
 	default:
 		return storageDurabilitySync
+	}
+}
+
+func normalizeStorageGroupSyncInterval(ms int) time.Duration {
+	if ms < 0 {
+		ms = 0
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func normalizeStorageGroupSyncMaxBatch(maxBatch int) int {
+	if maxBatch < 1 {
+		return 1
+	}
+	return maxBatch
+}
+
+func newGroupSyncer(interval time.Duration, maxBatch int) *groupSyncer {
+	syncer := &groupSyncer{
+		interval: interval,
+		maxBatch: normalizeStorageGroupSyncMaxBatch(maxBatch),
+		requests: make(chan groupSyncRequest, 4096),
+	}
+	go syncer.run()
+	return syncer
+}
+
+func (g *groupSyncer) sync(file *os.File) error {
+	if g == nil {
+		return file.Sync()
+	}
+	done := make(chan error, 1)
+	g.requests <- groupSyncRequest{file: file, done: done}
+	return <-done
+}
+
+func (g *groupSyncer) run() {
+	for first := range g.requests {
+		batch := []groupSyncRequest{first}
+		timer := time.NewTimer(g.interval)
+		collecting := true
+		for collecting && len(batch) < g.maxBatch {
+			select {
+			case req := <-g.requests:
+				batch = append(batch, req)
+			case <-timer.C:
+				collecting = false
+			}
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+
+		for _, req := range batch {
+			err := req.file.Sync()
+			req.done <- err
+			close(req.done)
+		}
 	}
 }
 
@@ -94,12 +170,25 @@ func newStorageEngineWithDurability(port, nodeName, storageDir string, maxQueued
 
 	ioWorkerCount := normalizeStorageIOWorkers(ioWorkers)
 	normalizedDurabilityMode := normalizeStorageDurabilityMode(durabilityMode)
+	var syncer *groupSyncer
+	if normalizedDurabilityMode == storageDurabilityGroupSync {
+		syncer = newGroupSyncer(
+			normalizeStorageGroupSyncInterval(config.StorageGroupSyncIntervalMs),
+			config.StorageGroupSyncMaxBatch,
+		)
+		log.Printf(
+			"[Storage Durability] group_sync enabled interval_ms=%d max_batch=%d",
+			config.StorageGroupSyncIntervalMs,
+			normalizeStorageGroupSyncMaxBatch(config.StorageGroupSyncMaxBatch),
+		)
+	}
 	engine := &storageEngine{
 		storageDir:          storageDir,
 		port:                port,
 		nodeName:            nodeName,
 		ioWorkerCount:       ioWorkerCount,
 		durabilityMode:      normalizedDurabilityMode,
+		groupSyncer:         syncer,
 		maxQueuedWriteBytes: maxQueuedWriteBytes,
 		// Initialize a buffered channel with a capacity of 5000 to handle burst traffic.
 		writeQueue: make(chan *WriteTask, 5000),
@@ -122,6 +211,10 @@ func writeFileWithDurability(path string, data []byte, durabilityMode string) (d
 }
 
 func writeReaderWithDurability(path string, reader io.Reader, durabilityMode string) (int64, durableWriteTiming, error) {
+	return writeReaderWithSyncer(path, reader, durabilityMode, nil)
+}
+
+func writeReaderWithSyncer(path string, reader io.Reader, durabilityMode string, syncer *groupSyncer) (int64, durableWriteTiming, error) {
 	start := time.Now()
 	timing := durableWriteTiming{}
 	durabilityMode = normalizeStorageDurabilityMode(durabilityMode)
@@ -148,12 +241,18 @@ func writeReaderWithDurability(path string, reader io.Reader, durabilityMode str
 	}
 	timing.Write = time.Since(writeStart)
 
-	if durabilityMode == storageDurabilitySync {
+	if durabilityMode == storageDurabilitySync || durabilityMode == storageDurabilityGroupSync {
 		syncStart := time.Now()
-		if err := f.Sync(); err != nil {
+		syncErr := error(nil)
+		if durabilityMode == storageDurabilityGroupSync {
+			syncErr = syncer.sync(f)
+		} else {
+			syncErr = f.Sync()
+		}
+		if syncErr != nil {
 			timing.Sync = time.Since(syncStart)
 			timing.Total = time.Since(start)
-			return writtenBytes, timing, err
+			return writtenBytes, timing, syncErr
 		}
 		timing.Sync = time.Since(syncStart)
 	}
@@ -184,10 +283,10 @@ func (s *storageEngine) startIoWorker(workerID int) {
 		} else {
 			// Perform the blocking disk write operation according to the configured durability mode.
 			if task.Reader != nil {
-				writtenBytes, timing, err = writeReaderWithDurability(filePath, task.Reader, s.durabilityMode)
+				writtenBytes, timing, err = writeReaderWithSyncer(filePath, task.Reader, s.durabilityMode, s.groupSyncer)
 			} else {
 				writtenBytes = int64(len(task.Data))
-				timing, err = writeFileWithDurability(filePath, task.Data, s.durabilityMode)
+				writtenBytes, timing, err = writeReaderWithSyncer(filePath, bytes.NewReader(task.Data), s.durabilityMode, s.groupSyncer)
 			}
 			if err != nil {
 				log.Printf("[Async IO] Disk Write Failed for %s: %v", filePath, err)
@@ -252,15 +351,6 @@ func (s *storageEngine) releaseQueuedWriteBytes(bytes int64) {
 	next := atomic.AddInt64(&s.queuedWriteBytes, -bytes)
 	if next < 0 {
 		atomic.StoreInt64(&s.queuedWriteBytes, 0)
-	}
-}
-
-func (s *storageEngine) writeAckInfo() map[string]interface{} {
-	return map[string]interface{}{
-		"io_workers":             s.ioWorkerCount,
-		"durability_mode":        s.durabilityMode,
-		"queued_write_bytes":     s.currentQueuedWriteBytes(),
-		"max_queued_write_bytes": atomic.LoadInt64(&s.maxQueuedWriteBytes),
 	}
 }
 

@@ -84,6 +84,14 @@ configure_k8s_experiment_env() {
     changed_storage=true
   fi
 
+  if [[ -n "${STORAGE_GROUP_SYNC_INTERVAL_MS:-}" || -n "${STORAGE_GROUP_SYNC_MAX_BATCH:-}" ]]; then
+    exp_log "Configure storage group sync: interval_ms=${STORAGE_GROUP_SYNC_INTERVAL_MS:-default} max_batch=${STORAGE_GROUP_SYNC_MAX_BATCH:-default}"
+    kubectl -n "${K8S_NAMESPACE}" set env statefulset/storage-node \
+      ${STORAGE_GROUP_SYNC_INTERVAL_MS:+STORAGE_GROUP_SYNC_INTERVAL_MS="${STORAGE_GROUP_SYNC_INTERVAL_MS}"} \
+      ${STORAGE_GROUP_SYNC_MAX_BATCH:+STORAGE_GROUP_SYNC_MAX_BATCH="${STORAGE_GROUP_SYNC_MAX_BATCH}"} >/dev/null
+    changed_storage=true
+  fi
+
   if [[ "${changed_deployments}" == "true" ]]; then
     kubectl -n "${K8S_NAMESPACE}" rollout status deployment/meta-service --timeout=180s
     kubectl -n "${K8S_NAMESPACE}" rollout status deployment/api --timeout=180s
