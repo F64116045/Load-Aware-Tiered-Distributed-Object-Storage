@@ -57,11 +57,13 @@ type recordingHTTPClient struct {
 	statusCode int
 	mu         sync.Mutex
 	urls       []string
+	headers    []string
 }
 
 func (m *recordingHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	m.mu.Lock()
 	m.urls = append(m.urls, req.URL.String())
+	m.headers = append(m.headers, req.Header.Get(config.StorageWriteClassHeader))
 	m.mu.Unlock()
 	return &http.Response{
 		StatusCode: m.statusCode,
@@ -117,6 +119,29 @@ func TestWriteReplication_AcceptsNoContentStoreAck(t *testing.T) {
 	_, err := svc.WriteReplication(context.Background(), []string{"http://node1"}, "k1", []byte("data"))
 	if err != nil {
 		t.Fatalf("WriteReplication() expected success for 204 store ack, got error: %v", err)
+	}
+}
+
+func TestWriteReplicationMarksStoreWritesForeground(t *testing.T) {
+	origMetaEnabled := config.MetaEnabled
+	origWriteQuorum := config.HotWriteQuorum
+	defer func() {
+		config.MetaEnabled = origMetaEnabled
+		config.HotWriteQuorum = origWriteQuorum
+	}()
+	config.MetaEnabled = false
+	config.HotWriteQuorum = 1
+
+	rec := &recordingHTTPClient{statusCode: http.StatusNoContent}
+	svc := NewService(rec, &mockECDriver{}, &mockUtils{}, nil)
+	if _, err := svc.WriteReplication(context.Background(), []string{"http://node1"}, "k1", []byte("data")); err != nil {
+		t.Fatalf("WriteReplication() expected success, got error: %v", err)
+	}
+	if len(rec.headers) != 1 {
+		t.Fatalf("expected one request header record, got %d", len(rec.headers))
+	}
+	if got := rec.headers[0]; got != config.StorageWriteClassForeground {
+		t.Fatalf("write class header=%q want %q", got, config.StorageWriteClassForeground)
 	}
 }
 

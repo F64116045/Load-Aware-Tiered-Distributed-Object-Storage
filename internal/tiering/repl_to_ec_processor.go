@@ -320,6 +320,7 @@ func (p *ReplicationToECProcessor) writeSingleShard(
 		return location, false
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set(config.StorageWriteClassHeader, config.StorageWriteClassBackground)
 	resp, err := p.http.Do(req)
 	if err != nil {
 		return location, false

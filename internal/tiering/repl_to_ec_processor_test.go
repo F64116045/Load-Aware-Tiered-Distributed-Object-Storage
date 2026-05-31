@@ -36,12 +36,14 @@ func TestReplicationToECProcessor_UsesVersionedReplicaPath(t *testing.T) {
 	}
 
 	servers := make([]*httptest.Server, 0, nodeCount)
+	nodes := make([]*testStorageNode, 0, nodeCount)
 	for i := 0; i < nodeCount; i++ {
 		initial := map[string][]byte{}
 		if i == 0 {
 			initial[hotPath] = payload
 		}
 		node := newTestStorageNode(initial)
+		nodes = append(nodes, node)
 		srv := httptest.NewServer(http.HandlerFunc(node.handler))
 		servers = append(servers, srv)
 		defer srv.Close()
@@ -91,6 +93,17 @@ func TestReplicationToECProcessor_UsesVersionedReplicaPath(t *testing.T) {
 	}
 	if len(view.ECShardLocations) < config.K {
 		t.Fatalf("expected at least %d active shards, got %d", config.K, len(view.ECShardLocations))
+	}
+	backgroundWrites := 0
+	for _, node := range nodes {
+		for _, writeClass := range node.recordedWriteClasses() {
+			if writeClass == config.StorageWriteClassBackground {
+				backgroundWrites++
+			}
+		}
+	}
+	if backgroundWrites < config.K {
+		t.Fatalf("expected EC shard writes to be marked background, got %d", backgroundWrites)
 	}
 	expectedShardNodes := placement.SelectByRendezvous(placement.ECShardKey(objectID, version), serverURLs, config.K+config.M)
 	if len(view.ECShardLocations) != len(expectedShardNodes) {

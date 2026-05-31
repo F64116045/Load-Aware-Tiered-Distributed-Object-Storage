@@ -115,6 +115,7 @@ func (s *Service) writeSingleHotReplica(
 		return result
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set(config.StorageWriteClassHeader, config.StorageWriteClassForeground)
 
 	resp, err := s.http.Do(req)
 	if resp != nil {
@@ -419,6 +420,7 @@ func (s *Service) WriteEC(
 				bytes.NewReader(c),
 			)
 			req.Header.Set("Content-Type", "application/octet-stream")
+			req.Header.Set(config.StorageWriteClassHeader, config.StorageWriteClassForeground)
 
 			resp, err := s.http.Do(req)
 			if err == nil {

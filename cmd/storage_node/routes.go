@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"hybrid_distributed_store/internal/config"
 )
 
 func keyFromPathParam(c *gin.Context, name string) (string, error) {
@@ -47,9 +49,10 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing 'key' query parameter"})
 			return
 		}
+		writeClass := normalizeStorageWriteClass(c.GetHeader(config.StorageWriteClassHeader))
 
 		storeStart := time.Now()
-		size, err := storage.storeStream(c.Request.Context(), key, c.Request.Body, c.Request.ContentLength)
+		size, err := storage.storeStreamWithClass(c.Request.Context(), key, c.Request.Body, c.Request.ContentLength, writeClass)
 		storeDuration := time.Since(storeStart)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
@@ -57,7 +60,8 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 		}
 		totalDuration := time.Since(start)
 		log.Printf(
-			"[Storage Route Phase] op=STORE key=%s size_bytes=%d body_read_ms=%d store_wait_ms=%d total_ms=%d",
+			"[Storage Route Phase] op=STORE write_class=%s key=%s size_bytes=%d body_read_ms=%d store_wait_ms=%d total_ms=%d",
+			writeClass,
 			key,
 			size,
 			0,

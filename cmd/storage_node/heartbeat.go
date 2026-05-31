@@ -156,7 +156,7 @@ func registerAndHeartbeatMeta(ctx context.Context, metaStore meta.Repository, no
 			nodeURL, // Keep URL as node_id so API can directly use it as endpoint.
 			freeBytes,
 			totalBytes,
-			len(storage.writeQueue),
+			storage.totalWriteQueueDepth(),
 			storage.currentQueuedWriteBytes(),
 			getCPULoad(),
 			getMemoryUsedPct(),

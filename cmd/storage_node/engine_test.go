@@ -112,6 +112,7 @@ func TestStorageEngineInfoIncludesQueuedByteCapacity(t *testing.T) {
 
 	st := newStorageEngine("19005", "test-node", t.TempDir())
 	atomic.StoreInt64(&st.maxQueuedWriteBytes, 12345)
+	atomic.StoreInt64(&st.maxBackgroundQueuedWriteBytes, 4096)
 
 	if _, err := st.store(context.Background(), "k1", []byte("payload")); err != nil {
 		t.Fatalf("store failed: %v", err)
@@ -125,6 +126,15 @@ func TestStorageEngineInfoIncludesQueuedByteCapacity(t *testing.T) {
 	}
 	if got := info["max_queued_write_bytes"]; got != int64(12345) {
 		t.Fatalf("max_queued_write_bytes=%v want 12345", got)
+	}
+	if got := info["max_background_queued_write_bytes"]; got != int64(4096) {
+		t.Fatalf("max_background_queued_write_bytes=%v want 4096", got)
+	}
+	if got := info["foreground_queue_depth"]; got != 0 {
+		t.Fatalf("foreground_queue_depth=%v want 0", got)
+	}
+	if got := info["background_queue_depth"]; got != 0 {
+		t.Fatalf("background_queue_depth=%v want 0", got)
 	}
 }
 
@@ -193,6 +203,73 @@ func TestStorageEngineNormalizesDurabilityMode(t *testing.T) {
 	}
 	if got := normalizeStorageDurabilityMode("unknown"); got != storageDurabilitySync {
 		t.Fatalf("normalizeStorageDurabilityMode(unknown)=%s want %s", got, storageDurabilitySync)
+	}
+}
+
+func TestStorageEngineNormalizesWriteClass(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeStorageWriteClass("background"); got != "background" {
+		t.Fatalf("normalizeStorageWriteClass(background)=%s want background", got)
+	}
+	if got := normalizeStorageWriteClass(" BACKGROUND "); got != "background" {
+		t.Fatalf("normalizeStorageWriteClass(BACKGROUND)=%s want background", got)
+	}
+	if got := normalizeStorageWriteClass("foreground"); got != "foreground" {
+		t.Fatalf("normalizeStorageWriteClass(foreground)=%s want foreground", got)
+	}
+	if got := normalizeStorageWriteClass("unknown"); got != "foreground" {
+		t.Fatalf("normalizeStorageWriteClass(unknown)=%s want foreground", got)
+	}
+}
+
+func TestStorageEnginePrefersForegroundQueue(t *testing.T) {
+	t.Parallel()
+
+	st := &storageEngine{
+		foregroundWriteQueue: make(chan *WriteTask, 1),
+		backgroundWriteQueue: make(chan *WriteTask, 1),
+	}
+	background := &WriteTask{Key: "background", WriteClass: "background"}
+	foreground := &WriteTask{Key: "foreground", WriteClass: "foreground"}
+	st.backgroundWriteQueue <- background
+	st.foregroundWriteQueue <- foreground
+
+	task, ok := st.nextWriteTask()
+	if !ok {
+		t.Fatalf("expected task")
+	}
+	if task != foreground {
+		t.Fatalf("expected foreground task first, got %s", task.Key)
+	}
+	task, ok = st.nextWriteTask()
+	if !ok {
+		t.Fatalf("expected second task")
+	}
+	if task != background {
+		t.Fatalf("expected background task second, got %s", task.Key)
+	}
+}
+
+func TestStorageEngineRejectsBackgroundWhenClassBudgetExceeded(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngine("19009", "test-node", t.TempDir())
+	atomic.StoreInt64(&st.maxQueuedWriteBytes, 1024)
+	atomic.StoreInt64(&st.maxBackgroundQueuedWriteBytes, 3)
+
+	_, err := st.storeStreamWithClass(context.Background(), "too-large-background", strings.NewReader("payload"), int64(len("payload")), "background")
+	if err == nil {
+		t.Fatalf("expected background byte cap error")
+	}
+	if !strings.Contains(err.Error(), "background queued write bytes") {
+		t.Fatalf("expected background byte cap error, got: %v", err)
+	}
+	if got := st.currentQueuedWriteBytes(); got != 0 {
+		t.Fatalf("queued bytes should be released after rejected background store, got=%d", got)
+	}
+	if got := st.currentQueuedBackgroundWriteBytes(); got != 0 {
+		t.Fatalf("background queued bytes should be released after rejected store, got=%d", got)
 	}
 }
 

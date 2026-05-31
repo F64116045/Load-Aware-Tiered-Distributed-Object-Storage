@@ -92,6 +92,13 @@ configure_k8s_experiment_env() {
     changed_storage=true
   fi
 
+  if [[ -n "${STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES:-}" ]]; then
+    exp_log "Configure storage background queue cap: STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES=${STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES}"
+    kubectl -n "${K8S_NAMESPACE}" set env statefulset/storage-node \
+      STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES="${STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES}" >/dev/null
+    changed_storage=true
+  fi
+
   if [[ "${changed_deployments}" == "true" ]]; then
     kubectl -n "${K8S_NAMESPACE}" rollout status deployment/meta-service --timeout=180s
     kubectl -n "${K8S_NAMESPACE}" rollout status deployment/api --timeout=180s

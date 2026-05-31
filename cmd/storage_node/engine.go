@@ -22,6 +22,7 @@ type WriteTask struct {
 	Data       []byte
 	Reader     io.Reader
 	SizeBytes  int64
+	WriteClass string
 	EnqueuedAt time.Time
 	Done       chan writeTaskResult
 }
@@ -63,12 +64,16 @@ type storageEngine struct {
 	lock            sync.RWMutex
 
 	// writeQueue buffers incoming write requests for background processing.
-	writeQueue          chan *WriteTask
-	ioWorkerCount       int
-	durabilityMode      string
-	groupSyncer         *groupSyncer
-	queuedWriteBytes    int64
-	maxQueuedWriteBytes int64
+	foregroundWriteQueue          chan *WriteTask
+	backgroundWriteQueue          chan *WriteTask
+	ioWorkerCount                 int
+	durabilityMode                string
+	groupSyncer                   *groupSyncer
+	queuedWriteBytes              int64
+	queuedForegroundWriteBytes    int64
+	queuedBackgroundWriteBytes    int64
+	maxQueuedWriteBytes           int64
+	maxBackgroundQueuedWriteBytes int64
 }
 
 // newStorageEngine initializes the storage directory and the async engine.
@@ -95,6 +100,15 @@ func normalizeStorageDurabilityMode(mode string) string {
 		return storageDurabilityWrite
 	default:
 		return storageDurabilitySync
+	}
+}
+
+func normalizeStorageWriteClass(writeClass string) string {
+	switch strings.ToLower(strings.TrimSpace(writeClass)) {
+	case config.StorageWriteClassBackground:
+		return config.StorageWriteClassBackground
+	default:
+		return config.StorageWriteClassForeground
 	}
 }
 
@@ -183,15 +197,17 @@ func newStorageEngineWithDurability(port, nodeName, storageDir string, maxQueued
 		)
 	}
 	engine := &storageEngine{
-		storageDir:          storageDir,
-		port:                port,
-		nodeName:            nodeName,
-		ioWorkerCount:       ioWorkerCount,
-		durabilityMode:      normalizedDurabilityMode,
-		groupSyncer:         syncer,
-		maxQueuedWriteBytes: maxQueuedWriteBytes,
-		// Initialize a buffered channel with a capacity of 5000 to handle burst traffic.
-		writeQueue: make(chan *WriteTask, 5000),
+		storageDir:                    storageDir,
+		port:                          port,
+		nodeName:                      nodeName,
+		ioWorkerCount:                 ioWorkerCount,
+		durabilityMode:                normalizedDurabilityMode,
+		groupSyncer:                   syncer,
+		maxQueuedWriteBytes:           maxQueuedWriteBytes,
+		maxBackgroundQueuedWriteBytes: config.StorageBackgroundMaxQueuedWriteBytes,
+		// Keep separate foreground/background channels so migration writes cannot sit ahead of user PUTs.
+		foregroundWriteQueue: make(chan *WriteTask, 5000),
+		backgroundWriteQueue: make(chan *WriteTask, 5000),
 	}
 
 	for workerID := 1; workerID <= ioWorkerCount; workerID++ {
@@ -263,7 +279,11 @@ func writeReaderWithSyncer(path string, reader io.Reader, durabilityMode string,
 // startIoWorker consumes write tasks from the queue and performs blocking durable disk I/O.
 func (s *storageEngine) startIoWorker(workerID int) {
 	log.Printf("[Async IO] Worker %d/%d started. Waiting for tasks...", workerID, s.ioWorkerCount)
-	for task := range s.writeQueue {
+	for {
+		task, ok := s.nextWriteTask()
+		if !ok {
+			return
+		}
 		taskSize := task.SizeBytes
 		if taskSize <= 0 && task.Data != nil {
 			taskSize = int64(len(task.Data))
@@ -294,8 +314,9 @@ func (s *storageEngine) startIoWorker(workerID int) {
 			}
 		}
 		log.Printf(
-			"[Storage Phase] op=STORE worker_id=%d durability_mode=%s key=%s size_bytes=%d queue_wait_ms=%d durable_write_ms=%d file_write_ms=%d fsync_ms=%d err=%v",
+			"[Storage Phase] op=STORE worker_id=%d write_class=%s durability_mode=%s key=%s size_bytes=%d queue_wait_ms=%d durable_write_ms=%d file_write_ms=%d fsync_ms=%d err=%v",
 			workerID,
+			normalizeStorageWriteClass(task.WriteClass),
 			s.durabilityMode,
 			task.Key,
 			writtenBytes,
@@ -312,6 +333,7 @@ func (s *storageEngine) startIoWorker(workerID int) {
 		s.lock.Unlock()
 
 		s.releaseQueuedWriteBytes(taskSize)
+		s.releaseQueuedWriteClassBytes(taskSize, task.WriteClass)
 		if task.Done != nil {
 			task.Done <- writeTaskResult{SizeBytes: writtenBytes, Err: writeErr}
 			close(task.Done)
@@ -319,8 +341,34 @@ func (s *storageEngine) startIoWorker(workerID int) {
 	}
 }
 
+func (s *storageEngine) nextWriteTask() (*WriteTask, bool) {
+	select {
+	case task, ok := <-s.foregroundWriteQueue:
+		return task, ok
+	default:
+	}
+	select {
+	case task, ok := <-s.foregroundWriteQueue:
+		return task, ok
+	case task, ok := <-s.backgroundWriteQueue:
+		return task, ok
+	}
+}
+
+func (s *storageEngine) totalWriteQueueDepth() int {
+	return len(s.foregroundWriteQueue) + len(s.backgroundWriteQueue)
+}
+
 func (s *storageEngine) currentQueuedWriteBytes() int64 {
 	return atomic.LoadInt64(&s.queuedWriteBytes)
+}
+
+func (s *storageEngine) currentQueuedForegroundWriteBytes() int64 {
+	return atomic.LoadInt64(&s.queuedForegroundWriteBytes)
+}
+
+func (s *storageEngine) currentQueuedBackgroundWriteBytes() int64 {
+	return atomic.LoadInt64(&s.queuedBackgroundWriteBytes)
 }
 
 func (s *storageEngine) reserveQueuedWriteBytes(bytes int64) bool {
@@ -344,6 +392,32 @@ func (s *storageEngine) reserveQueuedWriteBytes(bytes int64) bool {
 	}
 }
 
+func (s *storageEngine) reserveQueuedWriteClassBytes(bytes int64, writeClass string) bool {
+	if bytes < 0 {
+		bytes = 0
+	}
+	writeClass = normalizeStorageWriteClass(writeClass)
+	if writeClass != config.StorageWriteClassBackground {
+		atomic.AddInt64(&s.queuedForegroundWriteBytes, bytes)
+		return true
+	}
+	limit := atomic.LoadInt64(&s.maxBackgroundQueuedWriteBytes)
+	if limit <= 0 {
+		atomic.AddInt64(&s.queuedBackgroundWriteBytes, bytes)
+		return true
+	}
+	for {
+		current := atomic.LoadInt64(&s.queuedBackgroundWriteBytes)
+		next := current + bytes
+		if next > limit {
+			return false
+		}
+		if atomic.CompareAndSwapInt64(&s.queuedBackgroundWriteBytes, current, next) {
+			return true
+		}
+	}
+}
+
 func (s *storageEngine) releaseQueuedWriteBytes(bytes int64) {
 	if bytes <= 0 {
 		return
@@ -351,6 +425,22 @@ func (s *storageEngine) releaseQueuedWriteBytes(bytes int64) {
 	next := atomic.AddInt64(&s.queuedWriteBytes, -bytes)
 	if next < 0 {
 		atomic.StoreInt64(&s.queuedWriteBytes, 0)
+	}
+}
+
+func (s *storageEngine) releaseQueuedWriteClassBytes(bytes int64, writeClass string) {
+	if bytes <= 0 {
+		return
+	}
+	var target *int64
+	if normalizeStorageWriteClass(writeClass) == config.StorageWriteClassBackground {
+		target = &s.queuedBackgroundWriteBytes
+	} else {
+		target = &s.queuedForegroundWriteBytes
+	}
+	next := atomic.AddInt64(target, -bytes)
+	if next < 0 {
+		atomic.StoreInt64(target, 0)
 	}
 }
 
@@ -371,10 +461,16 @@ func (s *storageEngine) store(ctx context.Context, key string, data []byte) (int
 
 // storeStream enqueues a request body stream and waits for durable completion before returning.
 func (s *storageEngine) storeStream(ctx context.Context, key string, reader io.Reader, sizeBytes int64) (int64, error) {
+	return s.storeStreamWithClass(ctx, key, reader, sizeBytes, config.StorageWriteClassForeground)
+}
+
+// storeStreamWithClass enqueues a foreground or background request body stream and waits for durable completion.
+func (s *storageEngine) storeStreamWithClass(ctx context.Context, key string, reader io.Reader, sizeBytes int64, writeClass string) (int64, error) {
 	_, err := s._getSafePath(key)
 	if err != nil {
 		return 0, err
 	}
+	writeClass = normalizeStorageWriteClass(writeClass)
 	dataBytes := sizeBytes
 	if dataBytes < 0 {
 		dataBytes = 0
@@ -387,18 +483,33 @@ func (s *storageEngine) storeStream(ctx context.Context, key string, reader io.R
 			atomic.LoadInt64(&s.maxQueuedWriteBytes),
 		)
 	}
+	if !s.reserveQueuedWriteClassBytes(dataBytes, writeClass) {
+		s.releaseQueuedWriteBytes(dataBytes)
+		return 0, fmt.Errorf(
+			"storage node overloaded (%s queued write bytes %d + request bytes %d exceeds limit %d)",
+			writeClass,
+			s.currentQueuedBackgroundWriteBytes(),
+			dataBytes,
+			atomic.LoadInt64(&s.maxBackgroundQueuedWriteBytes),
+		)
+	}
 
 	task := &WriteTask{
 		Key:        key,
 		Reader:     reader,
 		SizeBytes:  dataBytes,
+		WriteClass: writeClass,
 		EnqueuedAt: time.Now(),
 		Done:       make(chan writeTaskResult, 1),
+	}
+	queue := s.foregroundWriteQueue
+	if writeClass == config.StorageWriteClassBackground {
+		queue = s.backgroundWriteQueue
 	}
 
 	// Non-blocking enqueue
 	select {
-	case s.writeQueue <- task:
+	case queue <- task:
 		// Wait until worker reports durable write result.
 		select {
 		case result := <-task.Done:
@@ -411,8 +522,9 @@ func (s *storageEngine) storeStream(ctx context.Context, key string, reader io.R
 		}
 	default:
 		s.releaseQueuedWriteBytes(dataBytes)
-		log.Printf("[Async IO] Queue Full! Dropping request for key: %s", key)
-		return 0, fmt.Errorf("storage node overloaded (queue full)")
+		s.releaseQueuedWriteClassBytes(dataBytes, writeClass)
+		log.Printf("[Async IO] %s queue full; dropping request for key: %s", writeClass, key)
+		return 0, fmt.Errorf("storage node overloaded (%s queue full)", writeClass)
 	}
 }
 
@@ -480,15 +592,22 @@ func (s *storageEngine) getInfo() (map[string]interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		"total_keys":             totalKeys,
-		"total_size":             totalSize,
-		"total_operations":       ops,
-		"storage_path":           s.storageDir,
-		"write_queue_depth":      len(s.writeQueue),
-		"write_queue_cap":        cap(s.writeQueue),
-		"io_workers":             s.ioWorkerCount,
-		"durability_mode":        s.durabilityMode,
-		"queued_write_bytes":     s.currentQueuedWriteBytes(),
-		"max_queued_write_bytes": atomic.LoadInt64(&s.maxQueuedWriteBytes),
+		"total_keys":                        totalKeys,
+		"total_size":                        totalSize,
+		"total_operations":                  ops,
+		"storage_path":                      s.storageDir,
+		"write_queue_depth":                 s.totalWriteQueueDepth(),
+		"write_queue_cap":                   cap(s.foregroundWriteQueue) + cap(s.backgroundWriteQueue),
+		"foreground_queue_depth":            len(s.foregroundWriteQueue),
+		"foreground_queue_cap":              cap(s.foregroundWriteQueue),
+		"background_queue_depth":            len(s.backgroundWriteQueue),
+		"background_queue_cap":              cap(s.backgroundWriteQueue),
+		"io_workers":                        s.ioWorkerCount,
+		"durability_mode":                   s.durabilityMode,
+		"queued_write_bytes":                s.currentQueuedWriteBytes(),
+		"foreground_queued_write_bytes":     s.currentQueuedForegroundWriteBytes(),
+		"background_queued_write_bytes":     s.currentQueuedBackgroundWriteBytes(),
+		"max_queued_write_bytes":            atomic.LoadInt64(&s.maxQueuedWriteBytes),
+		"max_background_queued_write_bytes": atomic.LoadInt64(&s.maxBackgroundQueuedWriteBytes),
 	}, nil
 }

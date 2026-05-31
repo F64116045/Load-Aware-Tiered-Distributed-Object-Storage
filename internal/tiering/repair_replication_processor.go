@@ -350,6 +350,7 @@ func (p *ReplicationRepairProcessor) writeSingleBlob(ctx context.Context, nodeID
 		return err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set(config.StorageWriteClassHeader, config.StorageWriteClassBackground)
 	resp, err := p.http.Do(req)
 	if err != nil {
 		return err

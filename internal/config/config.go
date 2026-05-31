@@ -54,6 +54,12 @@ const (
 	TieringDueIndexCommitAsync = "async"
 )
 
+const (
+	StorageWriteClassHeader     = "X-Rec-Write-Class"
+	StorageWriteClassForeground = "foreground"
+	StorageWriteClassBackground = "background"
+)
+
 // ExpectedNodeNames stores the set of valid storage node identifiers
 var ExpectedNodeNames = map[string]bool{}
 
@@ -80,6 +86,8 @@ var (
 	HotReplicaLoadAware = getEnvBool("HOT_REPLICA_LOAD_AWARE", true)
 	// StorageMaxQueuedWriteBytes caps bytes held by storage-node write queue/in-flight writes; <=0 disables byte limit.
 	StorageMaxQueuedWriteBytes = getEnvInt64("STORAGE_MAX_QUEUED_WRITE_BYTES", getEnvInt64("MAX_QUEUED_WRITE_BYTES", 512*1024*1024))
+	// StorageBackgroundMaxQueuedWriteBytes caps background migration/repair bytes so foreground writes retain queue budget; <=0 disables the background-specific cap.
+	StorageBackgroundMaxQueuedWriteBytes = getEnvInt64("STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES", StorageMaxQueuedWriteBytes/4)
 	// StorageIOWorkers controls concurrent durable write workers per storage node.
 	StorageIOWorkers = getEnvInt("STORAGE_IO_WORKERS", 2)
 	// StorageDurabilityMode controls whether storage-node writes fsync before ACK ("sync"), batches fsync before ACK ("group_sync"), or only write to OS buffers ("write").

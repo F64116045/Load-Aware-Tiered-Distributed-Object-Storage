@@ -94,6 +94,7 @@ def parse_phase_events(result_dir):
             operation = operation_for(component, event, values)
             identity = values.get("object") or values.get("key") or ""
             size_bytes = values.get("size_bytes", "")
+            write_class = values.get("write_class", "")
             for key, value in values.items():
                 if not key.endswith("_ms"):
                     continue
@@ -111,6 +112,7 @@ def parse_phase_events(result_dir):
                     "value_ms": value_ms,
                     "object_or_key": identity,
                     "size_bytes": size_bytes,
+                    "write_class": write_class,
                     "source_file": str(log_file.relative_to(result_dir)),
                     "result_dir": str(result_dir),
                 })
@@ -127,6 +129,7 @@ def summarize_events(events):
             event["event"],
             event["operation"],
             event["phase"],
+            event["write_class"],
             event["result_dir"],
         )
         buckets[key].append(event["value_ms"])
@@ -139,6 +142,7 @@ def summarize_events(events):
         event,
         operation,
         phase,
+        write_class,
         result_dir,
     ), values in sorted(buckets.items()):
         rows.append({
@@ -148,6 +152,7 @@ def summarize_events(events):
             "event": event,
             "operation": operation,
             "phase": phase,
+            "write_class": write_class,
             "count": len(values),
             "p50_ms": percentile(values, 50),
             "p95_ms": percentile(values, 95),
@@ -220,6 +225,7 @@ def main():
         "event",
         "operation",
         "phase",
+        "write_class",
         "count",
         "p50_ms",
         "p95_ms",
@@ -240,6 +246,7 @@ def main():
             "value_ms",
             "object_or_key",
             "size_bytes",
+            "write_class",
             "source_file",
             "result_dir",
         ]
