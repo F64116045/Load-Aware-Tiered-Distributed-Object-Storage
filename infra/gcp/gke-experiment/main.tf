@@ -2,6 +2,7 @@ locals {
   required_services = [
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "cloudbuild.googleapis.com",
     "compute.googleapis.com",
     "container.googleapis.com",
     "iam.googleapis.com",
@@ -22,6 +23,15 @@ locals {
     "roles/monitoring.metricWriter",
     "roles/stackdriver.resourceMetadata.writer",
   ]
+
+  cloud_build_service_accounts = toset([
+    "${data.google_project.current.number}@cloudbuild.gserviceaccount.com",
+    "${data.google_project.current.number}-compute@developer.gserviceaccount.com",
+  ])
+}
+
+data "google_project" "current" {
+  project_id = var.project_id
 }
 
 resource "google_project_service" "required" {
@@ -67,6 +77,31 @@ resource "google_artifact_registry_repository_iam_member" "node_reader" {
   repository = var.artifact_registry_repository_id
   role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:${google_service_account.gke_nodes.email}"
+
+  depends_on = [
+    google_artifact_registry_repository.images,
+    google_project_service.required,
+  ]
+}
+
+resource "google_project_iam_member" "cloud_build_source_reader" {
+  for_each = local.cloud_build_service_accounts
+
+  project = var.project_id
+  role    = "roles/storage.objectViewer"
+  member  = "serviceAccount:${each.key}"
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_artifact_registry_repository_iam_member" "cloud_build_writer" {
+  for_each = local.cloud_build_service_accounts
+
+  project    = var.project_id
+  location   = var.region
+  repository = var.artifact_registry_repository_id
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${each.key}"
 
   depends_on = [
     google_artifact_registry_repository.images,

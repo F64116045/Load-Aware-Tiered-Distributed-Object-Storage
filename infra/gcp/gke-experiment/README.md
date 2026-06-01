@@ -10,6 +10,7 @@ It manages only the cloud infrastructure:
 - Dedicated VPC and subnet with secondary Pod/Service ranges
 - GKE node service account
 - Minimum GKE node IAM plus Artifact Registry pull permission for the node service account
+- Cloud Build service account permissions needed to read submitted source archives and push images
 - Optional Artifact Registry Docker repository creation
 
 It does not run the experiment suite. Keep deployment and workload control in the existing scripts under `deploy/gke/` and `experiments/scenarios/`.
@@ -77,6 +78,29 @@ export IMAGE="$(terraform -chdir=infra/gcp/gke-experiment output -raw image_exam
 gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev"
 ./deploy/gke/scripts/build-and-push-image.sh "$IMAGE"
 IMAGE="$IMAGE" RESET_NAMESPACE=true ./deploy/gke/scripts/deploy.sh
+```
+
+If Cloud Shell Docker networking cannot push to Artifact Registry, use Cloud Build instead:
+
+```bash
+cat > /tmp/cloudbuild-rec-store.yaml <<'EOF'
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - GOPROXY=https://goproxy.io,direct
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+EOF
+
+gcloud builds submit \
+  --config=/tmp/cloudbuild-rec-store.yaml \
+  --substitutions=_IMAGE="${IMAGE}" \
+  .
 ```
 
 After the deployment is healthy, run the GKE suite as usual:
