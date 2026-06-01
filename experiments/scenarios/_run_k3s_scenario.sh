@@ -36,6 +36,10 @@ TIERING_WORKER_REPLICAS="${TIERING_WORKER_REPLICAS:-1}"
 K8S_DISCOVER_API_BASE="${K8S_DISCOVER_API_BASE:-false}"
 K8S_API_SERVICE_NAME="${K8S_API_SERVICE_NAME:-api}"
 K8S_API_SERVICE_PORT="${K8S_API_SERVICE_PORT:-8000}"
+K8S_IN_CLUSTER_WORKLOAD="${K8S_IN_CLUSTER_WORKLOAD:-false}"
+K8S_WORKLOAD_API_BASE="${K8S_WORKLOAD_API_BASE:-http://${K8S_API_SERVICE_NAME}:${K8S_API_SERVICE_PORT}}"
+K8S_WORKLOAD_IMAGE="${K8S_WORKLOAD_IMAGE:-alpine:3.18}"
+K8S_WORKLOAD_INSTALL_CMD="${K8S_WORKLOAD_INSTALL_CMD:-apk add --no-cache bash curl coreutils gawk >/dev/null}"
 
 write_k8s_run_env() {
   write_run_env
@@ -47,6 +51,10 @@ TIERING_WORKER_REPLICAS=${TIERING_WORKER_REPLICAS}
 K8S_DISCOVER_API_BASE=${K8S_DISCOVER_API_BASE}
 K8S_API_SERVICE_NAME=${K8S_API_SERVICE_NAME}
 K8S_API_SERVICE_PORT=${K8S_API_SERVICE_PORT}
+K8S_IN_CLUSTER_WORKLOAD=${K8S_IN_CLUSTER_WORKLOAD}
+K8S_WORKLOAD_API_BASE=${K8S_WORKLOAD_API_BASE}
+K8S_WORKLOAD_IMAGE=${K8S_WORKLOAD_IMAGE}
+K8S_WORKLOAD_INSTALL_CMD=${K8S_WORKLOAD_INSTALL_CMD}
 EOF
 }
 
@@ -214,6 +222,174 @@ start_k8s_pressure() {
   PRESSURE_PID="$!"
 }
 
+k8s_safe_suffix() {
+  local raw="${1:-${RUN_ID}}"
+  local suffix
+  suffix="$(printf '%s' "${raw}" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | tr -c 'a-z0-9-' '-' | cut -c1-42 | sed 's/^-*//; s/-*$//')"
+  if [[ -z "${suffix}" ]]; then
+    suffix="run"
+  fi
+  printf '%s\n' "${suffix}"
+}
+
+k8s_yaml_string() {
+  local value="${1:-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"\n' "${value}"
+}
+
+create_k8s_workload_configmap() {
+  local configmap="$1"
+  kubectl -n "${K8S_NAMESPACE}" delete configmap "${configmap}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "${K8S_NAMESPACE}" create configmap "${configmap}" \
+    --from-file=common.sh="${SCRIPT_DIR}/../lib/common.sh" \
+    --from-file=prepare_objects.sh="${SCRIPT_DIR}/../workloads/prepare_objects.sh" \
+    --from-file=mixed_put_get.sh="${SCRIPT_DIR}/../workloads/mixed_put_get.sh" >/dev/null
+}
+
+run_k8s_workload_script() {
+  local kind="$1"
+  local script_name="$2"
+  local output_name="$3"
+  local timeout_sec="$4"
+  local suffix configmap job log_dir pod
+
+  suffix="$(k8s_safe_suffix "${RUN_ID}-${kind}")"
+  configmap="$(printf 'workload-scripts-%s' "${suffix}" | cut -c1-63 | sed 's/-*$//')"
+  job="$(printf 'workload-%s-%s' "${kind}" "${suffix}" | cut -c1-63 | sed 's/-*$//')"
+  log_dir="${RESULT_DIR}/logs/k8s-workload"
+  mkdir -p "${log_dir}"
+
+  exp_log "Run ${kind} workload inside k8s: job=${job} api_base=${K8S_WORKLOAD_API_BASE}"
+  create_k8s_workload_configmap "${configmap}"
+  kubectl -n "${K8S_NAMESPACE}" delete job "${job}" --ignore-not-found >/dev/null 2>&1 || true
+
+  cat <<EOF | kubectl -n "${K8S_NAMESPACE}" apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job}
+  labels:
+    app: rec-store-workload
+    run-id: ${suffix}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: rec-store-workload
+        run-id: ${suffix}
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: workload
+        image: ${K8S_WORKLOAD_IMAGE}
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          ${K8S_WORKLOAD_INSTALL_CMD}
+          mkdir -p /work/experiments/lib /work/experiments/workloads /work/results
+          cp /work/scripts/common.sh /work/experiments/lib/common.sh
+          cp /work/scripts/prepare_objects.sh /work/experiments/workloads/prepare_objects.sh
+          cp /work/scripts/mixed_put_get.sh /work/experiments/workloads/mixed_put_get.sh
+          chmod +x /work/experiments/workloads/*.sh
+          cd /work
+          exec /work/experiments/workloads/${script_name}
+        env:
+        - name: API_BASE
+          value: $(k8s_yaml_string "${K8S_WORKLOAD_API_BASE}")
+        - name: SCENARIO
+          value: $(k8s_yaml_string "${SCENARIO}")
+        - name: RUN_ID
+          value: $(k8s_yaml_string "${RUN_ID}")
+        - name: RESULT_ROOT
+          value: "/work/results-root"
+        - name: RESULT_DIR
+          value: "/work/results"
+        - name: OBJECT_COUNT
+          value: $(k8s_yaml_string "${OBJECT_COUNT}")
+        - name: OBJECT_SIZE_BYTES
+          value: $(k8s_yaml_string "${OBJECT_SIZE_BYTES}")
+        - name: KEY_PREFIX
+          value: $(k8s_yaml_string "${KEY_PREFIX}")
+        - name: MANIFEST_FILE
+          value: "/work/results/objects.csv"
+        - name: DURATION_SEC
+          value: $(k8s_yaml_string "${WORKLOAD_DURATION_SEC}")
+        - name: CONCURRENCY
+          value: $(k8s_yaml_string "${WORKLOAD_CONCURRENCY}")
+        - name: GET_PERCENT
+          value: $(k8s_yaml_string "${GET_PERCENT}")
+        - name: PRELOAD_COUNT
+          value: $(k8s_yaml_string "${OBJECT_COUNT}")
+        - name: PUT_SIZE_BYTES
+          value: $(k8s_yaml_string "${OBJECT_SIZE_BYTES}")
+        - name: RESULT_FILE
+          value: "/work/results/latency.csv"
+        volumeMounts:
+        - name: workload-scripts
+          mountPath: /work/scripts
+          readOnly: true
+        - name: workload-results
+          mountPath: /work/results
+      volumes:
+      - name: workload-scripts
+        configMap:
+          name: ${configmap}
+          defaultMode: 0755
+      - name: workload-results
+        emptyDir: {}
+EOF
+
+  if ! kubectl -n "${K8S_NAMESPACE}" wait --for=condition=complete "job/${job}" --timeout="${timeout_sec}s"; then
+    kubectl -n "${K8S_NAMESPACE}" describe "job/${job}" >"${log_dir}/${kind}-job.describe.txt" 2>&1 || true
+    kubectl -n "${K8S_NAMESPACE}" get pods -l "job-name=${job}" -o wide >"${log_dir}/${kind}-pods.txt" 2>&1 || true
+    kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_dir}/${kind}.log" 2>&1 || true
+    exp_log "ERROR: in-cluster ${kind} workload did not complete; see ${log_dir}"
+    return 1
+  fi
+
+  kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_dir}/${kind}.log" 2>&1 || true
+  pod="$(kubectl -n "${K8S_NAMESPACE}" get pods -l "job-name=${job}" -o jsonpath='{.items[0].metadata.name}')"
+  kubectl -n "${K8S_NAMESPACE}" cp "${pod}:/work/results/${output_name}" "${RESULT_DIR}/${output_name}"
+  kubectl -n "${K8S_NAMESPACE}" delete job "${job}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "${K8S_NAMESPACE}" delete configmap "${configmap}" --ignore-not-found >/dev/null 2>&1 || true
+}
+
+run_prepare_objects() {
+  if [[ "${K8S_IN_CLUSTER_WORKLOAD}" == "true" ]]; then
+    local preload_timeout
+    preload_timeout="${K8S_PRELOAD_TIMEOUT_SEC:-$((OBJECT_COUNT * 5 + 300))}"
+    run_k8s_workload_script "preload" "prepare_objects.sh" "objects.csv" "${preload_timeout}"
+  else
+    OBJECT_COUNT="${OBJECT_COUNT}" \
+    OBJECT_SIZE_BYTES="${OBJECT_SIZE_BYTES}" \
+    KEY_PREFIX="${KEY_PREFIX}" \
+    "${SCRIPT_DIR}/../workloads/prepare_objects.sh"
+  fi
+}
+
+run_mixed_workload() {
+  if [[ "${K8S_IN_CLUSTER_WORKLOAD}" == "true" ]]; then
+    local workload_timeout
+    workload_timeout="${K8S_WORKLOAD_TIMEOUT_SEC:-$((WORKLOAD_DURATION_SEC + 300))}"
+    run_k8s_workload_script "mixed" "mixed_put_get.sh" "latency.csv" "${workload_timeout}"
+  else
+    DURATION_SEC="${WORKLOAD_DURATION_SEC}" \
+    CONCURRENCY="${WORKLOAD_CONCURRENCY}" \
+    GET_PERCENT="${GET_PERCENT}" \
+    PRELOAD_COUNT="${OBJECT_COUNT}" \
+    PUT_SIZE_BYTES="${OBJECT_SIZE_BYTES}" \
+    KEY_PREFIX="${KEY_PREFIX}" \
+    RESULT_FILE="${RESULT_DIR}/latency.csv" \
+    "${SCRIPT_DIR}/../workloads/mixed_put_get.sh"
+  fi
+}
+
 deploy_k8s_stack
 configure_k8s_experiment_env
 discover_k8s_api_base
@@ -222,10 +398,7 @@ wait_api_health
 wait_node_discovery_ready "${MIN_HEALTHY_NODES}"
 
 if [[ "${PRELOAD_OBJECTS}" == "true" ]]; then
-  OBJECT_COUNT="${OBJECT_COUNT}" \
-  OBJECT_SIZE_BYTES="${OBJECT_SIZE_BYTES}" \
-  KEY_PREFIX="${KEY_PREFIX}" \
-  "${SCRIPT_DIR}/../workloads/prepare_objects.sh"
+  run_prepare_objects
 
   if (( PRELOAD_AGE_WAIT_SEC > 0 )); then
     exp_log "Wait preload aging: ${PRELOAD_AGE_WAIT_SEC}s"
@@ -252,14 +425,7 @@ if [[ "${START_TIERING_WORKER}" == "true" ]]; then
   start_k8s_tiering_worker
 fi
 
-DURATION_SEC="${WORKLOAD_DURATION_SEC}" \
-CONCURRENCY="${WORKLOAD_CONCURRENCY}" \
-GET_PERCENT="${GET_PERCENT}" \
-PRELOAD_COUNT="${OBJECT_COUNT}" \
-PUT_SIZE_BYTES="${OBJECT_SIZE_BYTES}" \
-KEY_PREFIX="${KEY_PREFIX}" \
-RESULT_FILE="${RESULT_DIR}/latency.csv" \
-"${SCRIPT_DIR}/../workloads/mixed_put_get.sh"
+run_mixed_workload
 
 if [[ -n "${PRESSURE_PID}" ]]; then
   wait "${PRESSURE_PID}" || exp_log "WARN: k3s pressure job did not complete cleanly"
