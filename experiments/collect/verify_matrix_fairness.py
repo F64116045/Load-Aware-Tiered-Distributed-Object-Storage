@@ -38,6 +38,7 @@ INVARIANT_KEYS = [
     "K8S_PRESSURE_TOPOLOGY_KEY",
     "K8S_PRESSURE_TARGET_NODE",
     "K8S_PRESSURE_TARGET_NODES",
+    "K8S_PRESSURE_TARGET_NODE_COUNT",
     "HDD_WORKERS",
     "HDD_BYTES",
     "METRICS_INTERVAL_SEC",
@@ -88,6 +89,17 @@ def uses_discovered_k8s_endpoint(records: List[tuple[Path, Dict[str, str]]]) -> 
     )
 
 
+def uses_auto_pressure_target_count(records: List[tuple[Path, Dict[str, str]]]) -> bool:
+    if not records:
+        return False
+    counts = {values.get("K8S_PRESSURE_TARGET_NODE_COUNT", "") for _, values in records}
+    explicit_single = {values.get("K8S_PRESSURE_TARGET_NODE", "") for _, values in records}
+    if len(counts) != 1 or "" not in explicit_single or len(explicit_single) != 1:
+        return False
+    count = next(iter(counts))
+    return count not in ("", "0")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--result-root", default="experiments/results")
@@ -129,12 +141,18 @@ def main() -> int:
     failures = []
     ignored_differences = []
     ignore_api_base = uses_discovered_k8s_endpoint(records)
+    ignore_auto_pressure_nodes = uses_auto_pressure_target_count(records)
     for key in INVARIANT_KEYS:
         observed = {values.get(key, "") for _, values in records}
         if len(observed) > 1:
             if key == "API_BASE" and ignore_api_base:
                 ignored_differences.append(
                     f"{key} differs because each Kubernetes reset may allocate a new LoadBalancer endpoint: {sorted(observed)}"
+                )
+                continue
+            if key == "K8S_PRESSURE_TARGET_NODES" and ignore_auto_pressure_nodes:
+                ignored_differences.append(
+                    f"{key} differs because target nodes are auto-selected per scenario from K8S_PRESSURE_TARGET_NODE_COUNT: {sorted(observed)}"
                 )
                 continue
             failures.append(f"{key} differs: {sorted(observed)}")
@@ -152,7 +170,7 @@ def main() -> int:
         lines.append("PASS non-policy parameters are uniform across compared scenarios")
         exit_code = 0
     if ignored_differences:
-        lines.append("INFO ignored derived endpoint differences")
+        lines.append("INFO ignored derived differences")
         lines.extend(ignored_differences)
 
     text = "\n".join(lines) + "\n"

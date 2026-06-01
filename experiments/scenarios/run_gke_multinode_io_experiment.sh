@@ -79,15 +79,20 @@ SELECTOR_PREFIX="${GKE_MULTI_IO_SELECTOR_PREFIX:-gke-multinode-io}"
 echo "=== Current pod placement ==="
 kubectl -n "${K8S_NAMESPACE}" get pods -o wide
 
-if [[ -z "${K8S_PRESSURE_TARGET_NODES:-}" ]]; then
-  K8S_PRESSURE_TARGET_NODES="$(choose_storage_only_nodes "${PRESSURE_NODE_COUNT}")"
-  export K8S_PRESSURE_TARGET_NODES
+if [[ -z "${K8S_PRESSURE_TARGET_NODES:-}" && -z "${K8S_PRESSURE_TARGET_NODE:-}" ]]; then
+  K8S_PRESSURE_TARGET_NODE_COUNT="${K8S_PRESSURE_TARGET_NODE_COUNT:-${PRESSURE_NODE_COUNT}}"
+  export K8S_PRESSURE_TARGET_NODE_COUNT
 fi
 
 echo
 echo "=== Multi-node I/O pressure targets ==="
-echo "K8S_PRESSURE_TARGET_NODES=${K8S_PRESSURE_TARGET_NODES}"
-echo "This is the main C-aligned pressure model: 2/6 busy nodes should violate the default idle ratio 0.8."
+if [[ -n "${K8S_PRESSURE_TARGET_NODES:-}" || -n "${K8S_PRESSURE_TARGET_NODE:-}" ]]; then
+  echo "K8S_PRESSURE_TARGET_NODES=${K8S_PRESSURE_TARGET_NODES:-${K8S_PRESSURE_TARGET_NODE}}"
+else
+  echo "K8S_PRESSURE_TARGET_NODE_COUNT=${K8S_PRESSURE_TARGET_NODE_COUNT}"
+  echo "Target nodes are selected per scenario after each Kubernetes reset."
+fi
+echo "This is the main C-aligned pressure model: 2/6 busy storage nodes should violate the default idle ratio 0.8."
 echo
 
 mkdir -p "${RESULT_ROOT}/logs"
@@ -98,7 +103,8 @@ for i in $(seq 1 "${REPEATS}"); do
   echo "=== Multi-node I/O repeat ${i}/${REPEATS}: ${run_root} ==="
   SUITE_RUN_ID_ROOT="${run_root}" \
   GKE_SUITE_PROFILES="io" \
-  K8S_PRESSURE_TARGET_NODES="${K8S_PRESSURE_TARGET_NODES}" \
+  K8S_PRESSURE_TARGET_NODE_COUNT="${K8S_PRESSURE_TARGET_NODE_COUNT:-0}" \
+  K8S_PRESSURE_TARGET_NODES="${K8S_PRESSURE_TARGET_NODES:-}" \
   K8S_PRESSURE_TARGET_NODE="" \
   IMAGE="${IMAGE}" \
   AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC:-60}" \

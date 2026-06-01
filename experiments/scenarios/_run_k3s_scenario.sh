@@ -36,6 +36,7 @@ K8S_PRESSURE_AVOID_APPS="${K8S_PRESSURE_AVOID_APPS:-pd,tikv,meta-service,api}"
 K8S_PRESSURE_TOPOLOGY_KEY="${K8S_PRESSURE_TOPOLOGY_KEY:-kubernetes.io/hostname}"
 K8S_PRESSURE_TARGET_NODE="${K8S_PRESSURE_TARGET_NODE:-}"
 K8S_PRESSURE_TARGET_NODES="${K8S_PRESSURE_TARGET_NODES:-}"
+K8S_PRESSURE_TARGET_NODE_COUNT="${K8S_PRESSURE_TARGET_NODE_COUNT:-0}"
 METRICS_INTERVAL_SEC="${METRICS_INTERVAL_SEC:-5}"
 COLLECT_DURATION_SEC="${COLLECT_DURATION_SEC:-$((WORKLOAD_DURATION_SEC + PRESSURE_DURATION_SEC + PRESSURE_DELAY_SEC + 30))}"
 SUMMARY_FILE="${SUMMARY_FILE:-${RESULT_DIR}/summary.csv}"
@@ -69,6 +70,7 @@ K8S_PRESSURE_AVOID_APPS=${K8S_PRESSURE_AVOID_APPS}
 K8S_PRESSURE_TOPOLOGY_KEY=${K8S_PRESSURE_TOPOLOGY_KEY}
 K8S_PRESSURE_TARGET_NODE=${K8S_PRESSURE_TARGET_NODE}
 K8S_PRESSURE_TARGET_NODES=${K8S_PRESSURE_TARGET_NODES}
+K8S_PRESSURE_TARGET_NODE_COUNT=${K8S_PRESSURE_TARGET_NODE_COUNT}
 EOF
 }
 
@@ -257,6 +259,62 @@ EOF
   fi
 
   render_k8s_pressure_affinity
+}
+
+choose_k8s_storage_only_pressure_nodes() {
+  local count="$1"
+  local rows forbidden_apps storage_nodes blocked_nodes node
+  local selected=()
+  forbidden_apps="${K8S_PRESSURE_AVOID_APPS:-pd,tikv,meta-service,api}"
+  rows="$(kubectl -n "${K8S_NAMESPACE}" get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.app}{"\t"}{.spec.nodeName}{"\n"}{end}')"
+  if [[ -z "${rows}" ]]; then
+    echo "ERROR: no pods found in namespace ${K8S_NAMESPACE}" >&2
+    return 1
+  fi
+
+  storage_nodes="$(awk -F '\t' '$2 == "storage-node" && $3 != "" { print $3 }' <<<"${rows}" | sort -u)"
+  blocked_nodes="$(awk -F '\t' -v apps="${forbidden_apps}" '
+    BEGIN {
+      n = split(apps, app_list, ",")
+      for (i = 1; i <= n; i++) {
+        gsub(/^ +| +$/, "", app_list[i])
+        blocked_app[app_list[i]] = 1
+      }
+    }
+    $2 in blocked_app && $3 != "" { print $3 }
+  ' <<<"${rows}" | sort -u)"
+
+  while IFS= read -r node; do
+    [[ -n "${node}" ]] || continue
+    if ! grep -Fxq "${node}" <<<"${blocked_nodes}"; then
+      selected+=("${node}")
+      if ((${#selected[@]} >= count)); then
+        (IFS=,; printf '%s\n' "${selected[*]}")
+        return 0
+      fi
+    fi
+  done <<<"${storage_nodes}"
+
+  echo "ERROR: need ${count} storage-only pressure nodes, found ${#selected[@]}." >&2
+  echo "Pod placement:" >&2
+  printf '%s\n' "${rows}" >&2
+  return 1
+}
+
+resolve_k8s_pressure_targets() {
+  if [[ "${PRESSURE_PROFILE}" == "none" || -z "${PRESSURE_PROFILE}" ]]; then
+    return 0
+  fi
+  if [[ -n "${K8S_PRESSURE_TARGET_NODES}" || -n "${K8S_PRESSURE_TARGET_NODE}" ]]; then
+    return 0
+  fi
+  if (( K8S_PRESSURE_TARGET_NODE_COUNT <= 0 )); then
+    return 0
+  fi
+
+  K8S_PRESSURE_TARGET_NODES="$(choose_k8s_storage_only_pressure_nodes "${K8S_PRESSURE_TARGET_NODE_COUNT}")"
+  export K8S_PRESSURE_TARGET_NODES
+  exp_log "Selected k8s pressure target nodes: ${K8S_PRESSURE_TARGET_NODES}"
 }
 
 record_k8s_pressure_placement() {
@@ -605,9 +663,10 @@ run_mixed_workload() {
 deploy_k8s_stack
 configure_k8s_experiment_env
 discover_k8s_api_base
-write_k8s_run_env
 wait_api_health
 wait_node_discovery_ready "${MIN_HEALTHY_NODES}"
+resolve_k8s_pressure_targets
+write_k8s_run_env
 
 if [[ "${PRELOAD_OBJECTS}" == "true" ]]; then
   run_prepare_objects
