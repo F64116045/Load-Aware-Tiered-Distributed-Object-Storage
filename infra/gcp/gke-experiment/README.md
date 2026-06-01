@@ -43,6 +43,14 @@ terraform plan
 terraform apply
 ```
 
+If Terraform fails while creating project IAM bindings with a `Cloud Resource Manager API ... disabled` error, enable the API once and rerun the plan:
+
+```bash
+gcloud services enable cloudresourcemanager.googleapis.com iam.googleapis.com
+terraform plan -out=tfplan
+terraform apply tfplan
+```
+
 ## Use The Cluster
 
 From the repository root:

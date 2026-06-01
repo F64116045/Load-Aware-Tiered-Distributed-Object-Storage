@@ -1,8 +1,10 @@
 locals {
   required_services = [
     "artifactregistry.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com",
     "container.googleapis.com",
+    "iam.googleapis.com",
   ]
 
   labels = merge(
