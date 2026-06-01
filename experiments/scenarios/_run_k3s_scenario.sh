@@ -34,6 +34,7 @@ K8S_PRESSURE_INSTALL_CMD="${K8S_PRESSURE_INSTALL_CMD:-apk add --no-cache stress-
 K8S_PRESSURE_AFFINITY_MODE="${K8S_PRESSURE_AFFINITY_MODE:-preferred}"
 K8S_PRESSURE_AVOID_APPS="${K8S_PRESSURE_AVOID_APPS:-pd,tikv,meta-service,api}"
 K8S_PRESSURE_TOPOLOGY_KEY="${K8S_PRESSURE_TOPOLOGY_KEY:-kubernetes.io/hostname}"
+K8S_PRESSURE_TARGET_NODE="${K8S_PRESSURE_TARGET_NODE:-}"
 METRICS_INTERVAL_SEC="${METRICS_INTERVAL_SEC:-5}"
 COLLECT_DURATION_SEC="${COLLECT_DURATION_SEC:-$((WORKLOAD_DURATION_SEC + PRESSURE_DURATION_SEC + PRESSURE_DELAY_SEC + 30))}"
 SUMMARY_FILE="${SUMMARY_FILE:-${RESULT_DIR}/summary.csv}"
@@ -65,6 +66,7 @@ K8S_PRESSURE_INSTALL_CMD=${K8S_PRESSURE_INSTALL_CMD}
 K8S_PRESSURE_AFFINITY_MODE=${K8S_PRESSURE_AFFINITY_MODE}
 K8S_PRESSURE_AVOID_APPS=${K8S_PRESSURE_AVOID_APPS}
 K8S_PRESSURE_TOPOLOGY_KEY=${K8S_PRESSURE_TOPOLOGY_KEY}
+K8S_PRESSURE_TARGET_NODE=${K8S_PRESSURE_TARGET_NODE}
 EOF
 }
 
@@ -239,6 +241,17 @@ EOF
   esac
 }
 
+render_k8s_pressure_scheduling() {
+  if [[ -n "${K8S_PRESSURE_TARGET_NODE}" ]]; then
+    cat <<EOF
+      nodeName: ${K8S_PRESSURE_TARGET_NODE}
+EOF
+    return 0
+  fi
+
+  render_k8s_pressure_affinity
+}
+
 record_k8s_pressure_placement() {
   local job="$1"
   local profile="$2"
@@ -256,6 +269,7 @@ record_k8s_pressure_placement() {
         printf 'job=%s\n' "${job}"
         printf 'pod=%s\n' "${pod}"
         printf 'node=%s\n' "${node}"
+        printf 'target_node=%s\n' "${K8S_PRESSURE_TARGET_NODE}"
         printf 'affinity_mode=%s\n' "${K8S_PRESSURE_AFFINITY_MODE}"
         printf 'avoid_apps=%s\n' "${K8S_PRESSURE_AVOID_APPS}"
       } >"${out_file}"
@@ -326,7 +340,7 @@ spec:
         pressure-profile: ${profile}
     spec:
       restartPolicy: Never
-$(render_k8s_pressure_affinity)
+$(render_k8s_pressure_scheduling)
       containers:
       - name: pressure
         image: ${K8S_PRESSURE_IMAGE}
