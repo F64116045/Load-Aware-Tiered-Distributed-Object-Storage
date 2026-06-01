@@ -1,0 +1,26 @@
+# Free Trial constrained pilot profile.
+#
+# Copy this file to terraform.tfvars when the project has a 12-vCPU
+# CPUS_ALL_REGIONS quota that cannot be adjusted.
+#
+# This preserves the 6-node topology, but it is not intended as the final
+# performance benchmark profile. Use terraform.tfvars.example for the stronger
+# n2-standard-4 pilot when quota allows it.
+project_id = "project-f479bd33-201d-45a8-9d9"
+
+region       = "asia-east1"
+zone         = "asia-east1-a"
+cluster_name = "rec-store-exp"
+
+node_count        = 6
+machine_type      = "n2-standard-2"
+node_disk_type    = "pd-balanced"
+node_disk_size_gb = 30
+
+artifact_registry_repository_id     = "rec-store"
+create_artifact_registry_repository = false
+
+labels = {
+  owner   = "eason"
+  profile = "free-trial"
+}

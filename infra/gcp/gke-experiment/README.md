@@ -35,6 +35,14 @@ Edit `terraform.tfvars`:
 - Keep `create_artifact_registry_repository = false` if `rec-store` already exists.
 - Set `create_artifact_registry_repository = true` only for a fresh project without the repository.
 
+If the project is limited by GCP Free Trial quota and `CPUs (all regions)` is fixed at 12 vCPUs, use the Free Trial profile instead:
+
+```bash
+cp terraform.free-trial.tfvars.example terraform.tfvars
+```
+
+That profile uses 6 `n2-standard-2` nodes. It preserves the 6-node storage topology, but it should be reported as a quota-limited pilot rather than the final benchmark profile.
+
 Then create the cluster:
 
 ```bash
