@@ -201,8 +201,9 @@ def main() -> int:
         for record in records:
             node = record.get("node", "")
             target = record.get("target_node", "")
+            targets = record.get("target_nodes", "")
             scenario_hint = Path(record["path"]).parts[-4] if len(Path(record["path"]).parts) >= 4 else ""
-            print(f"{suite_root},{scenario_hint},target_node={target},node={node}")
+            print(f"{suite_root},{scenario_hint},target_node={target},node={node},target_nodes={targets}")
             if not target or target != node:
                 placement_ok = False
     print(f"placement_ok={str(placement_ok).lower()}")

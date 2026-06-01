@@ -35,6 +35,7 @@ K8S_PRESSURE_AFFINITY_MODE="${K8S_PRESSURE_AFFINITY_MODE:-preferred}"
 K8S_PRESSURE_AVOID_APPS="${K8S_PRESSURE_AVOID_APPS:-pd,tikv,meta-service,api}"
 K8S_PRESSURE_TOPOLOGY_KEY="${K8S_PRESSURE_TOPOLOGY_KEY:-kubernetes.io/hostname}"
 K8S_PRESSURE_TARGET_NODE="${K8S_PRESSURE_TARGET_NODE:-}"
+K8S_PRESSURE_TARGET_NODES="${K8S_PRESSURE_TARGET_NODES:-}"
 METRICS_INTERVAL_SEC="${METRICS_INTERVAL_SEC:-5}"
 COLLECT_DURATION_SEC="${COLLECT_DURATION_SEC:-$((WORKLOAD_DURATION_SEC + PRESSURE_DURATION_SEC + PRESSURE_DELAY_SEC + 30))}"
 SUMMARY_FILE="${SUMMARY_FILE:-${RESULT_DIR}/summary.csv}"
@@ -67,6 +68,7 @@ K8S_PRESSURE_AFFINITY_MODE=${K8S_PRESSURE_AFFINITY_MODE}
 K8S_PRESSURE_AVOID_APPS=${K8S_PRESSURE_AVOID_APPS}
 K8S_PRESSURE_TOPOLOGY_KEY=${K8S_PRESSURE_TOPOLOGY_KEY}
 K8S_PRESSURE_TARGET_NODE=${K8S_PRESSURE_TARGET_NODE}
+K8S_PRESSURE_TARGET_NODES=${K8S_PRESSURE_TARGET_NODES}
 EOF
 }
 
@@ -181,8 +183,12 @@ start_k8s_tiering_worker() {
 }
 
 pressure_job_name() {
+  local extra="${2:-}"
   local suffix
   suffix="$(k8s_safe_suffix "${RUN_ID}")"
+  if [[ -n "${extra}" ]]; then
+    suffix="$(printf '%s-%s' "${suffix}" "$(k8s_safe_suffix "${extra}")" | cut -c1-50 | sed 's/-*$//')"
+  fi
   printf 'pressure-%s-%s\n' "$1" "${suffix}"
 }
 
@@ -242,9 +248,10 @@ EOF
 }
 
 render_k8s_pressure_scheduling() {
-  if [[ -n "${K8S_PRESSURE_TARGET_NODE}" ]]; then
+  local target_node="${1:-${K8S_PRESSURE_TARGET_NODE}}"
+  if [[ -n "${target_node}" ]]; then
     cat <<EOF
-      nodeName: ${K8S_PRESSURE_TARGET_NODE}
+      nodeName: ${target_node}
 EOF
     return 0
   fi
@@ -255,8 +262,11 @@ EOF
 record_k8s_pressure_placement() {
   local job="$1"
   local profile="$2"
+  local label="${3:-}"
+  local target_node="${4:-${K8S_PRESSURE_TARGET_NODE}}"
   local log_dir="${RESULT_DIR}/logs/k8s-pressure"
-  local out_file="${log_dir}/${profile}-placement.txt"
+  local out_name="${profile}${label:+-${label}}-placement.txt"
+  local out_file="${log_dir}/${out_name}"
   local pod node
   mkdir -p "${log_dir}"
 
@@ -269,7 +279,8 @@ record_k8s_pressure_placement() {
         printf 'job=%s\n' "${job}"
         printf 'pod=%s\n' "${pod}"
         printf 'node=%s\n' "${node}"
-        printf 'target_node=%s\n' "${K8S_PRESSURE_TARGET_NODE}"
+        printf 'target_node=%s\n' "${target_node}"
+        printf 'target_nodes=%s\n' "${K8S_PRESSURE_TARGET_NODES:-${K8S_PRESSURE_TARGET_NODE}}"
         printf 'affinity_mode=%s\n' "${K8S_PRESSURE_AFFINITY_MODE}"
         printf 'avoid_apps=%s\n' "${K8S_PRESSURE_AVOID_APPS}"
       } >"${out_file}"
@@ -281,6 +292,51 @@ record_k8s_pressure_placement() {
 
   exp_log "WARN: could not observe pressure job placement for job=${job}"
   return 0
+}
+
+create_k8s_pressure_job() {
+  local job="$1"
+  local profile="$2"
+  local pressure_cmd="$3"
+  local target_node="${4:-}"
+
+  cat <<EOF | kubectl -n "${K8S_NAMESPACE}" apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job}
+  labels:
+    app: rec-store-pressure
+    pressure-profile: ${profile}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: rec-store-pressure
+        pressure-profile: ${profile}
+    spec:
+      restartPolicy: Never
+$(render_k8s_pressure_scheduling "${target_node}")
+      containers:
+      - name: pressure
+        image: ${K8S_PRESSURE_IMAGE}
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          ${K8S_PRESSURE_INSTALL_CMD}
+          echo "pressure_profile=${profile}"
+          echo "node_name=\${NODE_NAME:-unknown}"
+          ${pressure_cmd}
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+EOF
 }
 
 start_k8s_pressure() {
@@ -303,73 +359,66 @@ start_k8s_pressure() {
 
   (
     set +e
-    local job pressure_cmd log_dir
+    local pressure_cmd log_dir
+    local targets_csv="${K8S_PRESSURE_TARGET_NODES:-${K8S_PRESSURE_TARGET_NODE}}"
+    local target_nodes=()
+    local jobs=()
+    local labels=()
+    local job label raw_target target_node index
     if (( PRESSURE_DELAY_SEC > 0 )); then
       sleep "${PRESSURE_DELAY_SEC}"
     fi
 
-    job="$(pressure_job_name "${profile}")"
     log_dir="${RESULT_DIR}/logs/k8s-pressure"
     mkdir -p "${log_dir}"
-    kubectl -n "${K8S_NAMESPACE}" delete job "${job}" --ignore-not-found >/dev/null 2>&1
     case "${profile}" in
       cpu)
-        exp_log "Start k3s CPU pressure job: cpus=${PRESSURE_CPUS} duration=${PRESSURE_DURATION_SEC}s"
+        exp_log "Start k3s CPU pressure job(s): cpus=${PRESSURE_CPUS} duration=${PRESSURE_DURATION_SEC}s targets=${targets_csv:-scheduler}"
         pressure_cmd="stress-ng --cpu ${PRESSURE_CPUS} --timeout ${PRESSURE_DURATION_SEC}s"
         ;;
       io)
-        exp_log "Start k3s I/O pressure job: hdd-workers=${HDD_WORKERS} bytes=${HDD_BYTES} duration=${PRESSURE_DURATION_SEC}s"
+        exp_log "Start k3s I/O pressure job(s): hdd-workers=${HDD_WORKERS} bytes=${HDD_BYTES} duration=${PRESSURE_DURATION_SEC}s targets=${targets_csv:-scheduler}"
         pressure_cmd="stress-ng --hdd ${HDD_WORKERS} --hdd-bytes ${HDD_BYTES} --timeout ${PRESSURE_DURATION_SEC}s"
         ;;
     esac
 
-    cat <<EOF | kubectl -n "${K8S_NAMESPACE}" apply -f -
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ${job}
-  labels:
-    app: rec-store-pressure
-    pressure-profile: ${profile}
-spec:
-  backoffLimit: 0
-  template:
-    metadata:
-      labels:
-        app: rec-store-pressure
-        pressure-profile: ${profile}
-    spec:
-      restartPolicy: Never
-$(render_k8s_pressure_scheduling)
-      containers:
-      - name: pressure
-        image: ${K8S_PRESSURE_IMAGE}
-        imagePullPolicy: IfNotPresent
-        command:
-        - /bin/sh
-        - -c
-        - |
-          set -eu
-          ${K8S_PRESSURE_INSTALL_CMD}
-          echo "pressure_profile=${profile}"
-          echo "node_name=\${NODE_NAME:-unknown}"
-          ${pressure_cmd}
-        env:
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-EOF
-    record_k8s_pressure_placement "${job}" "${profile}"
-    if ! kubectl -n "${K8S_NAMESPACE}" wait --for=condition=complete "job/${job}" --timeout="$((PRESSURE_DURATION_SEC + 180))s" >/dev/null; then
-      kubectl -n "${K8S_NAMESPACE}" describe "job/${job}" >"${log_dir}/${profile}-job.describe.txt" 2>&1 || true
-      kubectl -n "${K8S_NAMESPACE}" get pods -l "job-name=${job}" -o wide >"${log_dir}/${profile}-pods.txt" 2>&1 || true
-      kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_dir}/${profile}.log" 2>&1 || true
-      exp_log "WARN: k3s pressure job did not complete cleanly; see ${log_dir}"
-      exit 1
+    if [[ -n "${targets_csv}" ]]; then
+      IFS=',' read -r -a target_nodes <<<"${targets_csv}"
+    else
+      target_nodes=("")
     fi
-    kubectl -n "${K8S_NAMESPACE}" get pods -l "job-name=${job}" -o wide >"${log_dir}/${profile}-pods.txt" 2>&1 || true
-    kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_dir}/${profile}.log" 2>&1 || true
+
+    index=0
+    for raw_target in "${target_nodes[@]}"; do
+      target_node="${raw_target// /}"
+      if ((${#target_nodes[@]} > 1)); then
+        index=$((index + 1))
+        label="n${index}"
+        job="$(pressure_job_name "${profile}" "${label}")"
+      else
+        label=""
+        job="$(pressure_job_name "${profile}")"
+      fi
+      kubectl -n "${K8S_NAMESPACE}" delete job "${job}" --ignore-not-found >/dev/null 2>&1
+      create_k8s_pressure_job "${job}" "${profile}" "${pressure_cmd}" "${target_node}"
+      jobs+=("${job}")
+      labels+=("${label}")
+      record_k8s_pressure_placement "${job}" "${profile}" "${label}" "${target_node}"
+    done
+
+    for i in "${!jobs[@]}"; do
+      job="${jobs[$i]}"
+      label="${labels[$i]}"
+      if ! kubectl -n "${K8S_NAMESPACE}" wait --for=condition=complete "job/${job}" --timeout="$((PRESSURE_DURATION_SEC + 180))s" >/dev/null; then
+        kubectl -n "${K8S_NAMESPACE}" describe "job/${job}" >"${log_dir}/${profile}${label:+-${label}}-job.describe.txt" 2>&1 || true
+        kubectl -n "${K8S_NAMESPACE}" get pods -l "job-name=${job}" -o wide >"${log_dir}/${profile}${label:+-${label}}-pods.txt" 2>&1 || true
+        kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_dir}/${profile}${label:+-${label}}.log" 2>&1 || true
+        exp_log "WARN: k3s pressure job did not complete cleanly; see ${log_dir}"
+        exit 1
+      fi
+      kubectl -n "${K8S_NAMESPACE}" get pods -l "job-name=${job}" -o wide >"${log_dir}/${profile}${label:+-${label}}-pods.txt" 2>&1 || true
+      kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_dir}/${profile}${label:+-${label}}.log" 2>&1 || true
+    done
   ) &
   PRESSURE_PID="$!"
 }
