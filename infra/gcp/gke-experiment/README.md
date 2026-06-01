@@ -2,6 +2,8 @@
 
 This Terraform root module creates a fixed-size GKE Standard cluster for the REC object-store experiments.
 
+It is compatible with Terraform `1.5.7`, which is commonly available in Google Cloud Shell.
+
 It manages only the cloud infrastructure:
 
 - GKE Standard cluster and fixed worker node pool
