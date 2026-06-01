@@ -48,7 +48,7 @@ variable "node_disk_type" {
 variable "node_disk_size_gb" {
   description = "Boot disk size for each worker node."
   type        = number
-  default     = 50
+  default     = 30
 }
 
 variable "release_channel" {

@@ -18,9 +18,9 @@ It does not run the experiment suite. Keep deployment and workload control in th
 
 The goal is to make the cloud environment repeatable. For final measurements, avoid ad hoc `gcloud container clusters create ...` commands because the machine type, disk size, network, IAM, and cleanup behavior should be visible in versioned code.
 
-The default profile uses 6 `n2-standard-4` nodes as a pilot profile. For final runs, switch `machine_type` to a stronger fixed-size shape such as `n2-standard-8` or `n4-standard-8`, then rerun the same experiment matrix multiple times.
+The default profile uses 6 `n2-standard-4` nodes with 30 GB boot disks as a quota-friendly pilot profile. For final runs, switch `machine_type` to a stronger fixed-size shape such as `n2-standard-8` or `n4-standard-8`, then rerun the same experiment matrix multiple times.
 
-Note: 6 `n2-standard-4` nodes require 24 vCPUs in the selected region. If the project quota is still 12 vCPUs, request a quota increase before treating the result as final. A smaller temporary profile can be used for smoke testing, but it should not be presented as the final cloud experiment.
+Note: 6 `n2-standard-4` nodes require 24 vCPUs and 180 GB of boot Persistent Disk quota in the selected region. If the project quota is still lower than that, request a quota increase before treating the result as final. A smaller temporary profile can be used for smoke testing, but it should not be presented as the final cloud experiment.
 
 ## First Setup
 
