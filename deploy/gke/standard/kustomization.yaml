@@ -6,5 +6,6 @@ resources:
 
 patches:
   - path: api-load-balancer.yaml
+  - path: system-node-selector.yaml
   - path: storage-node-required-anti-affinity.yaml
   - path: quota-friendly-storage.yaml

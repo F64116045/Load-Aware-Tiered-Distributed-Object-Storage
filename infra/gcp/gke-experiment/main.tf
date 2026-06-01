@@ -28,6 +28,9 @@ locals {
     "${data.google_project.current.number}@cloudbuild.gserviceaccount.com",
     "${data.google_project.current.number}-compute@developer.gserviceaccount.com",
   ])
+
+  system_machine_type  = var.system_machine_type == "" ? var.machine_type : var.system_machine_type
+  storage_machine_type = var.storage_machine_type == "" ? var.machine_type : var.storage_machine_type
 }
 
 data "google_project" "current" {
@@ -169,17 +172,17 @@ resource "google_container_cluster" "experiment" {
   }
 }
 
-resource "google_container_node_pool" "workers" {
+resource "google_container_node_pool" "system" {
   project  = var.project_id
-  name     = var.node_pool_name
+  name     = var.system_node_pool_name
   location = var.zone
   cluster  = google_container_cluster.experiment.name
 
-  node_count = var.node_count
+  node_count = var.system_node_count
   version    = var.node_version == "" ? null : var.node_version
 
   node_config {
-    machine_type    = var.machine_type
+    machine_type    = local.system_machine_type
     disk_type       = var.node_disk_type
     disk_size_gb    = var.node_disk_size_gb
     image_type      = "COS_CONTAINERD"
@@ -189,7 +192,62 @@ resource "google_container_node_pool" "workers" {
     labels = merge(
       local.labels,
       {
-        rec_store_role = "experiment-worker"
+        "rec-store-role" = "system"
+      },
+    )
+
+    tags = [
+      "rec-store-gke-experiment",
+    ]
+
+    metadata = {
+      disable-legacy-endpoints = "true"
+    }
+  }
+
+  management {
+    auto_repair  = true
+    auto_upgrade = var.node_auto_upgrade
+  }
+
+  upgrade_settings {
+    max_surge       = 1
+    max_unavailable = 0
+  }
+
+  depends_on = [
+    google_artifact_registry_repository_iam_member.node_reader,
+    google_project_iam_member.node_project_roles,
+  ]
+
+  timeouts {
+    create = "45m"
+    update = "45m"
+    delete = "30m"
+  }
+}
+
+resource "google_container_node_pool" "storage" {
+  project  = var.project_id
+  name     = var.storage_node_pool_name
+  location = var.zone
+  cluster  = google_container_cluster.experiment.name
+
+  node_count = var.storage_node_count
+  version    = var.node_version == "" ? null : var.node_version
+
+  node_config {
+    machine_type    = local.storage_machine_type
+    disk_type       = var.node_disk_type
+    disk_size_gb    = var.node_disk_size_gb
+    image_type      = "COS_CONTAINERD"
+    service_account = google_service_account.gke_nodes.email
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+
+    labels = merge(
+      local.labels,
+      {
+        "rec-store-role" = "storage"
       },
     )
 

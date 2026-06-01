@@ -15,7 +15,15 @@ output "cluster_name" {
 }
 
 output "node_pool_name" {
-  value = google_container_node_pool.workers.name
+  value = google_container_node_pool.storage.name
+}
+
+output "system_node_pool_name" {
+  value = google_container_node_pool.system.name
+}
+
+output "storage_node_pool_name" {
+  value = google_container_node_pool.storage.name
 }
 
 output "node_service_account" {

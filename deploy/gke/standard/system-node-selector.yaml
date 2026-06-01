@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    spec:
+      nodeSelector:
+        rec-store-role: system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meta-service
+spec:
+  template:
+    spec:
+      nodeSelector:
+        rec-store-role: system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tiering-worker
+spec:
+  template:
+    spec:
+      nodeSelector:
+        rec-store-role: system
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pd
+spec:
+  template:
+    spec:
+      nodeSelector:
+        rec-store-role: system
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tikv
+spec:
+  template:
+    spec:
+      nodeSelector:
+        rec-store-role: system

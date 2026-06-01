@@ -6,7 +6,7 @@ It is compatible with Terraform `1.5.7`, which is commonly available in Google C
 
 It manages only the cloud infrastructure:
 
-- GKE Standard cluster and fixed worker node pool
+- GKE Standard cluster with separate system and storage node pools
 - Dedicated VPC and subnet with secondary Pod/Service ranges
 - GKE node service account
 - Minimum GKE node IAM plus Artifact Registry pull permission for the node service account
@@ -19,9 +19,9 @@ It does not run the experiment suite. Keep deployment and workload control in th
 
 The goal is to make the cloud environment repeatable. For final measurements, avoid ad hoc `gcloud container clusters create ...` commands because the machine type, disk size, network, IAM, and cleanup behavior should be visible in versioned code.
 
-The default profile uses 6 `n2-standard-4` nodes with 30 GB boot disks as a quota-friendly pilot profile. For final runs, switch `machine_type` to a stronger fixed-size shape such as `n2-standard-8` or `n4-standard-8`, then rerun the same experiment matrix multiple times.
+The default profile uses 2 system nodes and 6 storage nodes. This makes pod placement part of the experiment design instead of relying on the default Kubernetes scheduler. System pods run on nodes labeled `rec-store-role=system`; `storage-node` pods run on nodes labeled `rec-store-role=storage` with required anti-affinity so each storage replica lands on a different worker.
 
-Note: 6 `n2-standard-4` nodes require 24 vCPUs and 180 GB of boot Persistent Disk quota in the selected region. If the project quota is still lower than that, request a quota increase before treating the result as final. A smaller temporary profile can be used for smoke testing, but it should not be presented as the final cloud experiment.
+The standard example uses `n2-standard-4` for both pools and therefore needs 32 vCPUs. The constrained example uses `n2-standard-2` for both pools and needs 16 vCPUs. If the project quota is still lower than that, request a quota increase before treating the result as final. A smaller temporary profile can be used for smoke testing, but it should not be presented as the final cloud experiment.
 
 ## First Setup
 
@@ -36,13 +36,13 @@ Edit `terraform.tfvars`:
 - Keep `create_artifact_registry_repository = false` if `rec-store` already exists.
 - Set `create_artifact_registry_repository = true` only for a fresh project without the repository.
 
-If the project is limited by GCP Free Trial quota and `CPUs (all regions)` is fixed at 12 vCPUs, use the Free Trial profile instead:
+If the project is limited by GCP quota and `CPUs (all regions)` is fixed at 16 vCPUs, use the constrained profile instead:
 
 ```bash
 cp terraform.free-trial.tfvars.example terraform.tfvars
 ```
 
-That profile uses 6 `n2-standard-2` nodes. It preserves the 6-node storage topology, but it should be reported as a quota-limited pilot rather than the final benchmark profile.
+That profile uses 2 system plus 6 storage `n2-standard-2` nodes. It preserves the 6-storage-node topology while avoiding metadata/API co-location with storage pressure.
 
 Then create the cluster:
 
@@ -103,14 +103,13 @@ gcloud builds submit \
   .
 ```
 
-After the deployment is healthy, run the GKE suite as usual:
+After the deployment is healthy, run the C-aligned multi-node I/O experiment:
 
 ```bash
-IMAGE="$IMAGE" \
 AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=90 \
 OBJECT_COUNT=50 OBJECT_SIZE_BYTES=1048576 \
 WORKLOAD_DURATION_SEC=60 WORKLOAD_CONCURRENCY=2 GET_PERCENT=70 \
-./experiments/scenarios/run_gke_experiment_suite.sh
+./experiments/scenarios/run_gke_multinode_io_experiment.sh
 ```
 
 ## Cost Cleanup
