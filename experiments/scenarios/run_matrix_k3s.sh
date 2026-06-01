@@ -119,9 +119,13 @@ cat "${migration_file}"
 echo "Migration CSV: ${migration_file}"
 
 echo "=== phase latency summary ==="
-cat "${phase_file}"
 echo "Phase latency CSV: ${phase_file}"
 
 echo "=== PUT phase bottleneck summary ==="
-cat "${bottleneck_file}"
+if [[ "${MATRIX_PRINT_PHASE_DETAILS:-false}" == "true" ]]; then
+  cat "${phase_file}"
+  cat "${bottleneck_file}"
+else
+  echo "Set MATRIX_PRINT_PHASE_DETAILS=true to print full phase latency and bottleneck CSVs."
+fi
 echo "Phase bottleneck CSV: ${bottleneck_file}"

@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULT_ROOT="${RESULT_ROOT:-${SCRIPT_DIR}/../results}"
 SUITE_RUN_ID_ROOT="${SUITE_RUN_ID_ROOT:-$(date -u +%Y%m%dT%H%M%SZ)-gke-suite}"
 GKE_SUITE_PROFILES="${GKE_SUITE_PROFILES:-none cpu io}"
+GKE_SUITE_PRINT_FULL="${GKE_SUITE_PRINT_FULL:-false}"
 
 if [[ -z "${IMAGE:-}" ]]; then
   echo "ERROR: IMAGE is required, for example IMAGE=asia-east1-docker.pkg.dev/<project>/<repo>/rec-store:gke-exp-001" >&2
@@ -117,15 +118,27 @@ echo "Combined latency CSV: ${combined_latency}"
 echo "Combined migration CSV: ${combined_migration}"
 echo "Combined phase latency CSV: ${combined_phase_latency}"
 echo "Combined phase bottleneck CSV: ${combined_phase_bottlenecks}"
-echo
-echo "=== Combined latency ==="
-cat "${combined_latency}"
-echo
-echo "=== Combined migration ==="
-cat "${combined_migration}"
-echo
-echo "=== Combined phase latency ==="
-cat "${combined_phase_latency}"
-echo
-echo "=== Combined PUT phase bottlenecks ==="
-cat "${combined_phase_bottlenecks}"
+
+if [[ "${GKE_SUITE_PRINT_FULL}" == "true" ]]; then
+  echo
+  echo "=== Combined latency ==="
+  cat "${combined_latency}"
+  echo
+  echo "=== Combined migration ==="
+  cat "${combined_migration}"
+  echo
+  echo "=== Combined phase latency ==="
+  cat "${combined_phase_latency}"
+  echo
+  echo "=== Combined PUT phase bottlenecks ==="
+  cat "${combined_phase_bottlenecks}"
+else
+  echo
+  echo "=== Combined latency preview ==="
+  awk -F, 'NR == 1 || $4 == "GET" || $4 == "PUT" { print }' "${combined_latency}"
+  echo
+  echo "=== Combined migration preview ==="
+  cat "${combined_migration}"
+  echo
+  echo "Set GKE_SUITE_PRINT_FULL=true to print full phase latency and bottleneck CSVs."
+fi
