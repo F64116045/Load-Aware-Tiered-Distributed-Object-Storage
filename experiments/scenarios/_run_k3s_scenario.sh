@@ -253,12 +253,13 @@ run_k8s_workload_script() {
   local script_name="$2"
   local output_name="$3"
   local timeout_sec="$4"
-  local suffix configmap job log_dir pod
+  local suffix configmap job log_dir log_file
 
   suffix="$(k8s_safe_suffix "${RUN_ID}-${kind}")"
   configmap="$(printf 'workload-scripts-%s' "${suffix}" | cut -c1-63 | sed 's/-*$//')"
   job="$(printf 'workload-%s-%s' "${kind}" "${suffix}" | cut -c1-63 | sed 's/-*$//')"
   log_dir="${RESULT_DIR}/logs/k8s-workload"
+  log_file="${log_dir}/${kind}.log"
   mkdir -p "${log_dir}"
 
   exp_log "Run ${kind} workload inside k8s: job=${job} api_base=${K8S_WORKLOAD_API_BASE}"
@@ -298,7 +299,10 @@ spec:
           cp /work/scripts/mixed_put_get.sh /work/experiments/workloads/mixed_put_get.sh
           chmod +x /work/experiments/workloads/*.sh
           cd /work
-          exec /work/experiments/workloads/${script_name}
+          /work/experiments/workloads/${script_name}
+          printf '__REC_STORE_RESULT_BEGIN__:${output_name}\n'
+          base64 /work/results/${output_name}
+          printf '\n__REC_STORE_RESULT_END__:${output_name}\n'
         env:
         - name: API_BASE
           value: $(k8s_yaml_string "${K8S_WORKLOAD_API_BASE}")
@@ -348,14 +352,21 @@ EOF
   if ! kubectl -n "${K8S_NAMESPACE}" wait --for=condition=complete "job/${job}" --timeout="${timeout_sec}s"; then
     kubectl -n "${K8S_NAMESPACE}" describe "job/${job}" >"${log_dir}/${kind}-job.describe.txt" 2>&1 || true
     kubectl -n "${K8S_NAMESPACE}" get pods -l "job-name=${job}" -o wide >"${log_dir}/${kind}-pods.txt" 2>&1 || true
-    kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_dir}/${kind}.log" 2>&1 || true
+    kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_file}" 2>&1 || true
     exp_log "ERROR: in-cluster ${kind} workload did not complete; see ${log_dir}"
     return 1
   fi
 
-  kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_dir}/${kind}.log" 2>&1 || true
-  pod="$(kubectl -n "${K8S_NAMESPACE}" get pods -l "job-name=${job}" -o jsonpath='{.items[0].metadata.name}')"
-  kubectl -n "${K8S_NAMESPACE}" cp "${pod}:/work/results/${output_name}" "${RESULT_DIR}/${output_name}"
+  kubectl -n "${K8S_NAMESPACE}" logs "job/${job}" --all-containers=true >"${log_file}" 2>&1 || true
+  if ! awk -v begin="__REC_STORE_RESULT_BEGIN__:${output_name}" -v end="__REC_STORE_RESULT_END__:${output_name}" '
+      $0 == begin { capture = 1; next }
+      $0 == end { found = 1; capture = 0; next }
+      capture { print }
+      END { if (!found) exit 1 }
+    ' "${log_file}" | base64 -d >"${RESULT_DIR}/${output_name}"; then
+    exp_log "ERROR: could not extract ${output_name} from in-cluster ${kind} log: ${log_file}"
+    return 1
+  fi
   kubectl -n "${K8S_NAMESPACE}" delete job "${job}" --ignore-not-found >/dev/null 2>&1 || true
   kubectl -n "${K8S_NAMESPACE}" delete configmap "${configmap}" --ignore-not-found >/dev/null 2>&1 || true
 }
