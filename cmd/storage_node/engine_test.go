@@ -2,7 +2,12 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestStorageEngineSafePath(t *testing.T) {
@@ -57,5 +62,291 @@ func TestStorageEngineStoreRetrieveDeleteRoundTrip(t *testing.T) {
 	}
 	if data != nil {
 		t.Fatalf("expected nil data after delete, got=%q", string(data))
+	}
+}
+
+func TestStorageEngineStoreStreamRetrieveRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngine("19008", "test-node", t.TempDir())
+	ctx := context.Background()
+
+	payload := "streamed-payload"
+	size, err := st.storeStream(ctx, "stream-key", strings.NewReader(payload), int64(len(payload)))
+	if err != nil {
+		t.Fatalf("storeStream failed: %v", err)
+	}
+	if size != int64(len(payload)) {
+		t.Fatalf("storeStream size mismatch: got=%d", size)
+	}
+
+	data, err := st.retrieve("stream-key")
+	if err != nil {
+		t.Fatalf("retrieve failed: %v", err)
+	}
+	if string(data) != payload {
+		t.Fatalf("retrieve payload mismatch: got=%q", string(data))
+	}
+}
+
+func TestStorageEngineRejectsWhenQueuedBytesWouldExceedLimit(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngine("19004", "test-node", t.TempDir())
+	atomic.StoreInt64(&st.maxQueuedWriteBytes, 3)
+
+	_, err := st.store(context.Background(), "too-large", []byte("payload"))
+	if err == nil {
+		t.Fatalf("expected byte-aware queue limit error")
+	}
+	if !strings.Contains(err.Error(), "queued write bytes") {
+		t.Fatalf("expected queued byte limit error, got: %v", err)
+	}
+	if got := st.currentQueuedWriteBytes(); got != 0 {
+		t.Fatalf("queued bytes should be released after rejected store, got=%d", got)
+	}
+}
+
+func TestStorageEngineInfoIncludesQueuedByteCapacity(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngine("19005", "test-node", t.TempDir())
+	atomic.StoreInt64(&st.maxQueuedWriteBytes, 12345)
+	atomic.StoreInt64(&st.maxBackgroundQueuedWriteBytes, 4096)
+
+	if _, err := st.store(context.Background(), "k1", []byte("payload")); err != nil {
+		t.Fatalf("store failed: %v", err)
+	}
+	info, err := st.getInfo()
+	if err != nil {
+		t.Fatalf("getInfo failed: %v", err)
+	}
+	if got := info["queued_write_bytes"]; got != int64(0) {
+		t.Fatalf("queued_write_bytes=%v want 0", got)
+	}
+	if got := info["max_queued_write_bytes"]; got != int64(12345) {
+		t.Fatalf("max_queued_write_bytes=%v want 12345", got)
+	}
+	if got := info["max_background_queued_write_bytes"]; got != int64(4096) {
+		t.Fatalf("max_background_queued_write_bytes=%v want 4096", got)
+	}
+	if got := info["foreground_queue_depth"]; got != 0 {
+		t.Fatalf("foreground_queue_depth=%v want 0", got)
+	}
+	if got := info["background_queue_depth"]; got != 0 {
+		t.Fatalf("background_queue_depth=%v want 0", got)
+	}
+}
+
+func TestStorageEngineInfoIncludesConfiguredIOWorkers(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngineWithConfig("19006", "test-node", t.TempDir(), 12345, 3)
+
+	info, err := st.getInfo()
+	if err != nil {
+		t.Fatalf("getInfo failed: %v", err)
+	}
+	if got := info["io_workers"]; got != 3 {
+		t.Fatalf("io_workers=%v want 3", got)
+	}
+	if got := info["max_queued_write_bytes"]; got != int64(12345) {
+		t.Fatalf("max_queued_write_bytes=%v want 12345", got)
+	}
+}
+
+func TestStorageEngineInfoIncludesDurabilityMode(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngineWithDurability("19007", "test-node", t.TempDir(), 12345, 1, storageDurabilityWrite)
+
+	info, err := st.getInfo()
+	if err != nil {
+		t.Fatalf("getInfo failed: %v", err)
+	}
+	if got := info["durability_mode"]; got != storageDurabilityWrite {
+		t.Fatalf("durability_mode=%v want %s", got, storageDurabilityWrite)
+	}
+}
+
+func TestStorageEngineNormalizesInvalidIOWorkerCount(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeStorageIOWorkers(0); got != 1 {
+		t.Fatalf("normalizeStorageIOWorkers(0)=%d want 1", got)
+	}
+	if got := normalizeStorageIOWorkers(-3); got != 1 {
+		t.Fatalf("normalizeStorageIOWorkers(-3)=%d want 1", got)
+	}
+	if got := normalizeStorageIOWorkers(4); got != 4 {
+		t.Fatalf("normalizeStorageIOWorkers(4)=%d want 4", got)
+	}
+}
+
+func TestStorageEngineNormalizesDurabilityMode(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeStorageDurabilityMode("write"); got != storageDurabilityWrite {
+		t.Fatalf("normalizeStorageDurabilityMode(write)=%s want %s", got, storageDurabilityWrite)
+	}
+	if got := normalizeStorageDurabilityMode(" WRITE "); got != storageDurabilityWrite {
+		t.Fatalf("normalizeStorageDurabilityMode(WRITE)=%s want %s", got, storageDurabilityWrite)
+	}
+	if got := normalizeStorageDurabilityMode("data_sync"); got != storageDurabilityDataSync {
+		t.Fatalf("normalizeStorageDurabilityMode(data_sync)=%s want %s", got, storageDurabilityDataSync)
+	}
+	if got := normalizeStorageDurabilityMode(" DATA_SYNC "); got != storageDurabilityDataSync {
+		t.Fatalf("normalizeStorageDurabilityMode(DATA_SYNC)=%s want %s", got, storageDurabilityDataSync)
+	}
+	if got := normalizeStorageDurabilityMode("group_sync"); got != storageDurabilityGroupSync {
+		t.Fatalf("normalizeStorageDurabilityMode(group_sync)=%s want %s", got, storageDurabilityGroupSync)
+	}
+	if got := normalizeStorageDurabilityMode(" GROUP_SYNC "); got != storageDurabilityGroupSync {
+		t.Fatalf("normalizeStorageDurabilityMode(GROUP_SYNC)=%s want %s", got, storageDurabilityGroupSync)
+	}
+	if got := normalizeStorageDurabilityMode("sync"); got != storageDurabilitySync {
+		t.Fatalf("normalizeStorageDurabilityMode(sync)=%s want %s", got, storageDurabilitySync)
+	}
+	if got := normalizeStorageDurabilityMode("unknown"); got != storageDurabilitySync {
+		t.Fatalf("normalizeStorageDurabilityMode(unknown)=%s want %s", got, storageDurabilitySync)
+	}
+}
+
+func TestStorageEngineDataSyncDurabilityMode(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngineWithDurability("19010", "test-node", t.TempDir(), 1024*1024, 1, storageDurabilityDataSync)
+	if _, err := st.store(context.Background(), "k1", []byte("payload")); err != nil {
+		t.Fatalf("store with data_sync failed: %v", err)
+	}
+	info, err := st.getInfo()
+	if err != nil {
+		t.Fatalf("getInfo failed: %v", err)
+	}
+	if got := info["durability_mode"]; got != storageDurabilityDataSync {
+		t.Fatalf("durability_mode=%v want %s", got, storageDurabilityDataSync)
+	}
+	data, err := st.retrieve("k1")
+	if err != nil {
+		t.Fatalf("retrieve failed: %v", err)
+	}
+	if string(data) != "payload" {
+		t.Fatalf("retrieve payload mismatch: got=%q", string(data))
+	}
+}
+
+func TestStorageEngineNormalizesWriteClass(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeStorageWriteClass("background"); got != "background" {
+		t.Fatalf("normalizeStorageWriteClass(background)=%s want background", got)
+	}
+	if got := normalizeStorageWriteClass(" BACKGROUND "); got != "background" {
+		t.Fatalf("normalizeStorageWriteClass(BACKGROUND)=%s want background", got)
+	}
+	if got := normalizeStorageWriteClass("foreground"); got != "foreground" {
+		t.Fatalf("normalizeStorageWriteClass(foreground)=%s want foreground", got)
+	}
+	if got := normalizeStorageWriteClass("unknown"); got != "foreground" {
+		t.Fatalf("normalizeStorageWriteClass(unknown)=%s want foreground", got)
+	}
+}
+
+func TestStorageEnginePrefersForegroundQueue(t *testing.T) {
+	t.Parallel()
+
+	st := &storageEngine{
+		foregroundWriteQueue: make(chan *WriteTask, 1),
+		backgroundWriteQueue: make(chan *WriteTask, 1),
+	}
+	background := &WriteTask{Key: "background", WriteClass: "background"}
+	foreground := &WriteTask{Key: "foreground", WriteClass: "foreground"}
+	st.backgroundWriteQueue <- background
+	st.foregroundWriteQueue <- foreground
+
+	task, ok := st.nextWriteTask()
+	if !ok {
+		t.Fatalf("expected task")
+	}
+	if task != foreground {
+		t.Fatalf("expected foreground task first, got %s", task.Key)
+	}
+	task, ok = st.nextWriteTask()
+	if !ok {
+		t.Fatalf("expected second task")
+	}
+	if task != background {
+		t.Fatalf("expected background task second, got %s", task.Key)
+	}
+}
+
+func TestStorageEngineRejectsBackgroundWhenClassBudgetExceeded(t *testing.T) {
+	t.Parallel()
+
+	st := newStorageEngine("19009", "test-node", t.TempDir())
+	atomic.StoreInt64(&st.maxQueuedWriteBytes, 1024)
+	atomic.StoreInt64(&st.maxBackgroundQueuedWriteBytes, 3)
+
+	_, err := st.storeStreamWithClass(context.Background(), "too-large-background", strings.NewReader("payload"), int64(len("payload")), "background")
+	if err == nil {
+		t.Fatalf("expected background byte cap error")
+	}
+	if !strings.Contains(err.Error(), "background queued write bytes") {
+		t.Fatalf("expected background byte cap error, got: %v", err)
+	}
+	if got := st.currentQueuedWriteBytes(); got != 0 {
+		t.Fatalf("queued bytes should be released after rejected background store, got=%d", got)
+	}
+	if got := st.currentQueuedBackgroundWriteBytes(); got != 0 {
+		t.Fatalf("background queued bytes should be released after rejected store, got=%d", got)
+	}
+}
+
+func TestStorageEngineNormalizesGroupSyncSettings(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeStorageGroupSyncInterval(-1); got != 0 {
+		t.Fatalf("normalizeStorageGroupSyncInterval(-1)=%s want 0", got)
+	}
+	if got := normalizeStorageGroupSyncInterval(7); got != 7*time.Millisecond {
+		t.Fatalf("normalizeStorageGroupSyncInterval(7)=%s want 7ms", got)
+	}
+	if got := normalizeStorageGroupSyncMaxBatch(0); got != 1 {
+		t.Fatalf("normalizeStorageGroupSyncMaxBatch(0)=%d want 1", got)
+	}
+	if got := normalizeStorageGroupSyncMaxBatch(12); got != 12 {
+		t.Fatalf("normalizeStorageGroupSyncMaxBatch(12)=%d want 12", got)
+	}
+}
+
+func TestWriteFileWithDurabilityWriteModeWritesPayload(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "nested", "payload.bin")
+	if _, err := writeFileWithDurability(path, []byte("payload"), storageDurabilityWrite); err != nil {
+		t.Fatalf("writeFileWithDurability failed: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read payload failed: %v", err)
+	}
+	if string(got) != "payload" {
+		t.Fatalf("payload mismatch: got=%q", string(got))
+	}
+}
+
+func TestWriteFileWithDurabilityGroupSyncModeWritesPayload(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "nested", "payload.bin")
+	if _, err := writeFileWithDurability(path, []byte("payload"), storageDurabilityGroupSync); err != nil {
+		t.Fatalf("writeFileWithDurability group_sync failed: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read payload failed: %v", err)
+	}
+	if string(got) != "payload" {
+		t.Fatalf("payload mismatch: got=%q", string(got))
 	}
 }

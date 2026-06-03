@@ -3,9 +3,11 @@ package meta
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
+	"hybrid_distributed_store/internal/config"
 	kvstore "hybrid_distributed_store/internal/meta/kvstore"
 )
 
@@ -25,92 +27,124 @@ func (s *TiKVStore) UpsertNormalizedMetadata(ctx context.Context, objectID strin
 	contentType := toNullableString(metadata["content_type"])
 	encodingK := toNullableInt(metadata["k"])
 	encodingM := toNullableInt(metadata["m"])
+	dueIndexAsync := tier == "HOT" && config.TieringDueIndexCommitMode == config.TieringDueIndexCommitAsync
 
 	now := time.Now()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	objKey := tiKVObjectKey(objectID)
-	obj, found, err := s.getObjectRecord(objKey)
-	if err != nil {
-		return err
-	}
-	if !found {
-		obj = &tiKVObjectRecord{
-			ObjectID:  objectID,
-			TenantID:  "default",
-			CreatedAt: now,
+	if err := s.kv.RunInTxn(ctx, func(txn *kvstore.Txn) error {
+		objKey := tiKVObjectKey(objectID)
+		obj := &tiKVObjectRecord{}
+		found, err := s.txnGetJSON(ctx, txn, objKey, obj)
+		if err != nil {
+			return err
 		}
-	}
-	obj.CurrentVersion = version
-	obj.State = state
-	if obj.TenantID == "" {
-		obj.TenantID = "default"
-	}
-	obj.UpdatedAt = now
-
-	verRec := &tiKVObjectVersionRecord{
-		ObjectID:       objectID,
-		Version:        version,
-		SizeBytes:      sizeBytes,
-		ChecksumSHA256: checksum,
-		Tier:           tier,
-		CreatedAt:      now,
-	}
-	if v, ok := contentType.(string); ok {
-		verRec.ContentType = &v
-	}
-	if v, ok := encodingK.(int); ok {
-		vv := v
-		verRec.EncodingK = &vv
-	}
-	if v, ok := encodingM.(int); ok {
-		vv := v
-		verRec.EncodingM = &vv
-	}
-
-	b := s.kv.NewBatch()
-	defer b.Close()
-
-	if err := s.batchPutJSON(b, objKey, obj); err != nil {
-		return err
-	}
-	if err := s.batchPutJSON(b, tiKVObjectVersionKey(objectID, version), verRec); err != nil {
-		return err
-	}
-
-	if tier == "HOT" {
-		hotPath := toString(metadata["hot_key"], "")
-		if hotPath == "" {
-			hotPath = BuildHotReplicaPath(objectID, version)
-		}
-		if hotPath == "" {
-			hotPath = objectID
-		}
-		replicaNodes := toStringSlice(metadata["replica_nodes"])
-		for _, nodeID := range replicaNodes {
-			if nodeID == "" {
-				continue
+		if !found {
+			obj = &tiKVObjectRecord{
+				ObjectID:  objectID,
+				TenantID:  "default",
+				CreatedAt: now,
 			}
-			rec := tiKVReplicaRecord{
-				ObjectID: objectID,
-				Version:  version,
-				NodeID:   nodeID,
-				Path:     hotPath,
-				Status:   "ACTIVE",
+		}
+		obj.CurrentVersion = version
+		obj.State = state
+		if obj.TenantID == "" {
+			obj.TenantID = "default"
+		}
+		obj.UpdatedAt = now
+
+		verRec := &tiKVObjectVersionRecord{
+			ObjectID:       objectID,
+			Version:        version,
+			SizeBytes:      sizeBytes,
+			ChecksumSHA256: checksum,
+			Tier:           tier,
+			CreatedAt:      now,
+		}
+		if v, ok := contentType.(string); ok {
+			verRec.ContentType = &v
+		}
+		if v, ok := encodingK.(int); ok {
+			vv := v
+			verRec.EncodingK = &vv
+		}
+		if v, ok := encodingM.(int); ok {
+			vv := v
+			verRec.EncodingM = &vv
+		}
+
+		if err := s.txnPutJSON(txn, objKey, obj); err != nil {
+			return err
+		}
+		if err := s.txnPutJSON(txn, tiKVObjectVersionKey(objectID, version), verRec); err != nil {
+			return err
+		}
+
+		if tier == "HOT" {
+			hotPath := toString(metadata["hot_key"], "")
+			if hotPath == "" {
+				hotPath = BuildHotReplicaPath(objectID, version)
 			}
-			if err := s.batchPutJSON(b, tiKVReplicaKey(objectID, version, nodeID), &rec); err != nil {
+			if hotPath == "" {
+				hotPath = objectID
+			}
+			replicaNodes := toStringSlice(metadata["replica_nodes"])
+			for _, nodeID := range replicaNodes {
+				if nodeID == "" {
+					continue
+				}
+				rec := tiKVReplicaRecord{
+					ObjectID: objectID,
+					Version:  version,
+					NodeID:   nodeID,
+					Path:     hotPath,
+					Status:   "ACTIVE",
+				}
+				if err := s.txnPutJSON(txn, tiKVReplicaKey(objectID, version, nodeID), &rec); err != nil {
+					return err
+				}
+			}
+		}
+		if !dueIndexAsync {
+			if err := s.upsertTieringDueIndexTxn(ctx, txn, objectID, version, tier, sizeBytes, now); err != nil {
 				return err
 			}
 		}
-	}
-	if err := s.upsertTieringDueIndex(b, objectID, version, tier, sizeBytes, now); err != nil {
+		return nil
+	}); err != nil {
 		return err
 	}
 
-	if err := b.Commit(kvstore.Sync); err != nil {
-		return fmt.Errorf("commit normalized metadata batch failed: %w", err)
+	if dueIndexAsync {
+		s.upsertTieringDueIndexAsync(objectID, version, tier, sizeBytes, now)
+	}
+	return nil
+}
+
+func (s *TiKVStore) upsertTieringDueIndexAsync(objectID string, version int64, tier string, sizeBytes int64, now time.Time) {
+	go func() {
+		if err := s.upsertTieringDueIndexDetached(objectID, version, tier, sizeBytes, now); err != nil {
+			log.Printf(
+				"[Meta] async due-index upsert failed object=%s version=%d tier=%s err=%v",
+				objectID,
+				version,
+				tier,
+				err,
+			)
+		}
+	}()
+}
+
+func (s *TiKVStore) upsertTieringDueIndexDetached(objectID string, version int64, tier string, sizeBytes int64, now time.Time) error {
+	if s == nil || s.kv == nil {
+		return nil
+	}
+	b := s.kv.NewBatch()
+	defer b.Close()
+	if err := s.upsertTieringDueIndex(b, objectID, version, tier, sizeBytes, now); err != nil {
+		return err
+	}
+	if err := b.Commit(kvstore.NoSync); err != nil {
+		return err
 	}
 	return nil
 }

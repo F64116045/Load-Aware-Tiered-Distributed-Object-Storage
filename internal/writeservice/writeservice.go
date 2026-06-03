@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	neturl "net/url"
@@ -79,6 +80,138 @@ func resolveHotWriteQuorum(replicaCount int) int {
 	return quorum
 }
 
+type replicaWriteResult struct {
+	nodeURL   string
+	duration  time.Duration
+	status    int
+	err       error
+	succeeded bool
+}
+
+func isStoreSuccessStatus(status int) bool {
+	return status == http.StatusOK || status == http.StatusNoContent
+}
+
+func (s *Service) writeSingleHotReplica(
+	ctx context.Context,
+	nodeURL string,
+	hotReplicaPath string,
+	value []byte,
+) replicaWriteResult {
+	result := replicaWriteResult{
+		nodeURL: nodeURL,
+	}
+	nodeStart := time.Now()
+	defer func() {
+		result.duration = time.Since(nodeStart)
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/store?key=%s", nodeURL, neturl.QueryEscape(hotReplicaPath)),
+		bytes.NewReader(value),
+	)
+	if err != nil {
+		result.err = err
+		return result
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set(config.StorageWriteClassHeader, config.StorageWriteClassForeground)
+
+	resp, err := s.http.Do(req)
+	if resp != nil {
+		result.status = resp.StatusCode
+		if resp.Body != nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+	}
+	if err != nil {
+		result.err = err
+		return result
+	}
+	if resp == nil {
+		result.err = fmt.Errorf("nil response")
+		return result
+	}
+	if !isStoreSuccessStatus(resp.StatusCode) {
+		result.err = fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return result
+	}
+
+	result.succeeded = true
+	return result
+}
+
+func (s *Service) observeLateHotReplicaWrites(
+	results <-chan replicaWriteResult,
+	objectID string,
+	version int64,
+) {
+	lateSuccessNodes := make([]string, 0)
+	lateFailures := 0
+
+	for result := range results {
+		if result.succeeded {
+			lateSuccessNodes = append(lateSuccessNodes, result.nodeURL)
+			log.Printf(
+				"[WriteReplication] late replica write succeeded object=%s version=%d node=%s duration_ms=%d",
+				objectID,
+				version,
+				result.nodeURL,
+				result.duration.Milliseconds(),
+			)
+			continue
+		}
+		lateFailures++
+		log.Printf(
+			"[WriteReplication] late replica write failed object=%s version=%d node=%s status=%d duration_ms=%d err=%v",
+			objectID,
+			version,
+			result.nodeURL,
+			result.status,
+			result.duration.Milliseconds(),
+			result.err,
+		)
+	}
+
+	if len(lateSuccessNodes) == 0 {
+		return
+	}
+	if !config.MetaEnabled || s.meta == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	snapshot, err := s.meta.GetObjectVersionSnapshot(ctx, objectID, version)
+	if err != nil {
+		log.Printf("[WriteReplication] late replica metadata snapshot failed object=%s version=%d err=%v", objectID, version, err)
+		return
+	}
+	if snapshot == nil || snapshot.CurrentVersion != version || snapshot.Tier != "HOT" {
+		log.Printf(
+			"[WriteReplication] skip late replica metadata update object=%s version=%d late_success=%d snapshot=%v",
+			objectID,
+			version,
+			len(lateSuccessNodes),
+			snapshot,
+		)
+		return
+	}
+	if err := s.meta.UpsertReplicaLocations(ctx, objectID, version, lateSuccessNodes); err != nil {
+		log.Printf("[WriteReplication] late replica metadata update failed object=%s version=%d nodes=%v err=%v", objectID, version, lateSuccessNodes, err)
+		return
+	}
+	log.Printf(
+		"[WriteReplication] late replica metadata updated object=%s version=%d late_success=%d late_failures=%d",
+		objectID,
+		version,
+		len(lateSuccessNodes),
+		lateFailures,
+	)
+}
+
 // --- Strategy A: Replication ---
 
 func (s *Service) WriteReplication(
@@ -108,6 +241,7 @@ func (s *Service) writeReplication(
 	value []byte,
 	extraMeta map[string]interface{},
 ) (map[string]interface{}, error) {
+	totalStart := time.Now()
 	if len(replicaNodes) == 0 {
 		return nil, fmt.Errorf("replication failed: no replica nodes available")
 	}
@@ -118,41 +252,64 @@ func (s *Service) writeReplication(
 		hotReplicaPath = key
 	}
 
+	requiredQuorum := resolveHotWriteQuorum(len(replicaNodes))
 	var wg sync.WaitGroup
-	var mu sync.Mutex
 	success := 0
 	// 用來記錄哪些節點寫入成功，方便 Healer 除錯或 API 回傳
 	writtenNodes := []string{}
+	replicaWriteMS := make(map[string]int64, len(replicaNodes))
+	replicaWriteStart := time.Now()
+	results := make(chan replicaWriteResult, len(replicaNodes))
+	writeCtx := context.WithoutCancel(ctx)
 
 	for _, nodeURL := range replicaNodes {
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()
-			req, _ := http.NewRequestWithContext(ctx, "POST",
-				fmt.Sprintf("%s/store?key=%s", n, neturl.QueryEscape(hotReplicaPath)),
-				bytes.NewReader(value),
-			)
-			req.Header.Set("Content-Type", "application/octet-stream")
-
-			resp, err := s.http.Do(req)
-			if err == nil {
-				_ = resp.Body.Close()
-			}
-			if err == nil && resp.StatusCode == http.StatusOK {
-				mu.Lock()
-				success++
-				writtenNodes = append(writtenNodes, n)
-				mu.Unlock()
-			} else {
-				log.Printf("[WriteReplication] Failed to write to %s: %v", n, err)
-			}
+			results <- s.writeSingleHotReplica(writeCtx, n, hotReplicaPath, value)
 		}(nodeURL)
 	}
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
 
-	requiredQuorum := resolveHotWriteQuorum(len(replicaNodes))
+	observed := 0
+	allReplicaObserved := true
+	for success < requiredQuorum && observed < len(replicaNodes) {
+		select {
+		case result, ok := <-results:
+			if !ok {
+				observed = len(replicaNodes)
+				break
+			}
+			observed++
+			replicaWriteMS[result.nodeURL] = result.duration.Milliseconds()
+			if result.succeeded {
+				success++
+				writtenNodes = append(writtenNodes, result.nodeURL)
+			} else {
+				log.Printf(
+					"[WriteReplication] Failed to write to %s status=%d duration_ms=%d err=%v",
+					result.nodeURL,
+					result.status,
+					result.duration.Milliseconds(),
+					result.err,
+				)
+			}
+		case <-ctx.Done():
+			if success < requiredQuorum {
+				return nil, ctx.Err()
+			}
+		}
+	}
+	replicaWriteQuorumDuration := time.Since(replicaWriteStart)
+
 	if success < requiredQuorum {
 		return nil, fmt.Errorf("hot write quorum not met: %d/%d successful (required %d)", success, len(replicaNodes), requiredQuorum)
+	}
+	if observed < len(replicaNodes) {
+		allReplicaObserved = false
 	}
 
 	finalMeta := map[string]interface{}{
@@ -177,16 +334,42 @@ func (s *Service) writeReplication(
 		log.Printf("[PartialWrite] Key=%s marked dirty. %d/%d replicas written.", key, success, len(replicaNodes))
 	}
 
+	metadataStart := time.Now()
 	if err := s.finalizeMetadata(ctx, key, finalMeta); err != nil {
 		return nil, err
 	}
+	if !allReplicaObserved {
+		go s.observeLateHotReplicaWrites(results, key, version)
+	}
+	metadataDuration := time.Since(metadataStart)
+	totalDuration := time.Since(totalStart)
+	log.Printf(
+		"[WriteReplication Phase] key=%s size_bytes=%d replicas=%d success=%d quorum=%d replica_write_quorum_ms=%d metadata_ms=%d total_ms=%d",
+		key,
+		len(value),
+		len(replicaNodes),
+		success,
+		requiredQuorum,
+		replicaWriteQuorumDuration.Milliseconds(),
+		metadataDuration.Milliseconds(),
+		totalDuration.Milliseconds(),
+	)
 
 	return map[string]interface{}{
-		"nodes_written":  writtenNodes,
-		"status":         "committed",
-		"partial":        isDirty,
-		"write_quorum":   fmt.Sprintf("%d/%d", requiredQuorum, len(replicaNodes)),
-		"writes_success": success,
+		"nodes_written":             writtenNodes,
+		"status":                    "committed",
+		"partial":                   isDirty,
+		"write_quorum":              fmt.Sprintf("%d/%d", requiredQuorum, len(replicaNodes)),
+		"writes_success":            success,
+		"foreground_writes_success": success,
+		"all_replica_observed":      allReplicaObserved,
+		"quorum_returned":           !allReplicaObserved,
+		"phase_latency_ms": map[string]interface{}{
+			"replica_write_quorum": replicaWriteQuorumDuration.Milliseconds(),
+			"metadata":             metadataDuration.Milliseconds(),
+			"total":                totalDuration.Milliseconds(),
+		},
+		"replica_write_ms": replicaWriteMS,
 	}, nil
 }
 
@@ -237,12 +420,13 @@ func (s *Service) WriteEC(
 				bytes.NewReader(c),
 			)
 			req.Header.Set("Content-Type", "application/octet-stream")
+			req.Header.Set(config.StorageWriteClassHeader, config.StorageWriteClassForeground)
 
 			resp, err := s.http.Do(req)
 			if err == nil {
 				_ = resp.Body.Close()
 			}
-			if err == nil && resp.StatusCode == http.StatusOK {
+			if err == nil && resp != nil && isStoreSuccessStatus(resp.StatusCode) {
 				mu.Lock()
 				success++
 				mu.Unlock()

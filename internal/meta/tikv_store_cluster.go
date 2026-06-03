@@ -83,7 +83,7 @@ func (s *TiKVStore) GetTieringLeaderState(ctx context.Context, lockKey int64) (*
 	return rec, nil
 }
 
-func (s *TiKVStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, memoryUsedPct float64, diskIOWaitPct float64, status string) error {
+func (s *TiKVStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, ioQueueBytes int64, cpuLoad float64, memoryUsedPct float64, diskIOWaitPct float64, status string) error {
 	if s == nil || s.kv == nil {
 		return nil
 	}
@@ -99,6 +99,7 @@ func (s *TiKVStore) UpsertNodeHeartbeat(ctx context.Context, nodeID string, free
 		FreeBytes:     freeBytes,
 		TotalBytes:    totalBytes,
 		IOQueueDepth:  ioQueueDepth,
+		IOQueueBytes:  ioQueueBytes,
 		CPULoad:       cpuLoad,
 		MemoryUsedPct: memoryUsedPct,
 		DiskIOWaitPct: diskIOWaitPct,

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"hybrid_distributed_store/internal/config"
 	"hybrid_distributed_store/internal/meta"
@@ -18,10 +19,18 @@ type mockHTTPClient struct {
 	shouldFail    bool
 	perHostStatus map[string]int
 	perHostFail   map[string]bool
+	perHostDelay  map[string]time.Duration
 }
 
 func (m *mockHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	host := req.URL.Host
+	if m.perHostDelay != nil && m.perHostDelay[host] > 0 {
+		select {
+		case <-time.After(m.perHostDelay[host]):
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+	}
 	if m.perHostFail != nil && m.perHostFail[host] {
 		return nil, fmt.Errorf("mock network error")
 	}
@@ -48,11 +57,13 @@ type recordingHTTPClient struct {
 	statusCode int
 	mu         sync.Mutex
 	urls       []string
+	headers    []string
 }
 
 func (m *recordingHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	m.mu.Lock()
 	m.urls = append(m.urls, req.URL.String())
+	m.headers = append(m.headers, req.Header.Get(config.StorageWriteClassHeader))
 	m.mu.Unlock()
 	return &http.Response{
 		StatusCode: m.statusCode,
@@ -91,6 +102,46 @@ func TestWriteReplication_SuccessWhenMetadataDisabled(t *testing.T) {
 	_, err := svc.WriteReplication(context.Background(), []string{"http://node1"}, "k1", []byte("data"))
 	if err != nil {
 		t.Fatalf("WriteReplication() expected success, got error: %v", err)
+	}
+}
+
+func TestWriteReplication_AcceptsNoContentStoreAck(t *testing.T) {
+	origMetaEnabled := config.MetaEnabled
+	origWriteQuorum := config.HotWriteQuorum
+	defer func() {
+		config.MetaEnabled = origMetaEnabled
+		config.HotWriteQuorum = origWriteQuorum
+	}()
+	config.MetaEnabled = false
+	config.HotWriteQuorum = 1
+
+	svc := createMockService(&mockHTTPClient{statusCode: http.StatusNoContent})
+	_, err := svc.WriteReplication(context.Background(), []string{"http://node1"}, "k1", []byte("data"))
+	if err != nil {
+		t.Fatalf("WriteReplication() expected success for 204 store ack, got error: %v", err)
+	}
+}
+
+func TestWriteReplicationMarksStoreWritesForeground(t *testing.T) {
+	origMetaEnabled := config.MetaEnabled
+	origWriteQuorum := config.HotWriteQuorum
+	defer func() {
+		config.MetaEnabled = origMetaEnabled
+		config.HotWriteQuorum = origWriteQuorum
+	}()
+	config.MetaEnabled = false
+	config.HotWriteQuorum = 1
+
+	rec := &recordingHTTPClient{statusCode: http.StatusNoContent}
+	svc := NewService(rec, &mockECDriver{}, &mockUtils{}, nil)
+	if _, err := svc.WriteReplication(context.Background(), []string{"http://node1"}, "k1", []byte("data")); err != nil {
+		t.Fatalf("WriteReplication() expected success, got error: %v", err)
+	}
+	if len(rec.headers) != 1 {
+		t.Fatalf("expected one request header record, got %d", len(rec.headers))
+	}
+	if got := rec.headers[0]; got != config.StorageWriteClassForeground {
+		t.Fatalf("write class header=%q want %q", got, config.StorageWriteClassForeground)
 	}
 }
 
@@ -183,6 +234,102 @@ func TestWriteReplication_QuorumMetWithPartial(t *testing.T) {
 	}
 	if out["write_quorum"] != "2/3" {
 		t.Fatalf("expected write_quorum=2/3, got: %v", out["write_quorum"])
+	}
+}
+
+func TestWriteReplication_ReturnsAfterQuorumBeforeSlowReplica(t *testing.T) {
+	origMetaEnabled := config.MetaEnabled
+	origWriteQuorum := config.HotWriteQuorum
+	defer func() {
+		config.MetaEnabled = origMetaEnabled
+		config.HotWriteQuorum = origWriteQuorum
+	}()
+	config.MetaEnabled = false
+	config.HotWriteQuorum = 2
+
+	svc := createMockService(&mockHTTPClient{
+		statusCode: http.StatusOK,
+		perHostDelay: map[string]time.Duration{
+			"node3": 250 * time.Millisecond,
+		},
+	})
+
+	start := time.Now()
+	out, err := svc.WriteReplication(
+		context.Background(),
+		[]string{"http://node1", "http://node2", "http://node3"},
+		"k1",
+		[]byte("data"),
+	)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("WriteReplication() expected success, got error: %v", err)
+	}
+	if elapsed >= 150*time.Millisecond {
+		t.Fatalf("WriteReplication() should return after quorum without waiting for slow replica, elapsed=%s", elapsed)
+	}
+	if out["quorum_returned"] != true {
+		t.Fatalf("expected quorum_returned=true, got: %v", out["quorum_returned"])
+	}
+	if out["all_replica_observed"] != false {
+		t.Fatalf("expected all_replica_observed=false, got: %v", out["all_replica_observed"])
+	}
+	if out["foreground_writes_success"] != 2 {
+		t.Fatalf("expected foreground_writes_success=2, got: %v", out["foreground_writes_success"])
+	}
+}
+
+func TestWriteReplication_LateReplicaUpdatesMetadata(t *testing.T) {
+	origMetaEnabled := config.MetaEnabled
+	origWriteQuorum := config.HotWriteQuorum
+	defer func() {
+		config.MetaEnabled = origMetaEnabled
+		config.HotWriteQuorum = origWriteQuorum
+	}()
+	config.MetaEnabled = true
+	config.HotWriteQuorum = 2
+
+	store, err := meta.NewTiKVStore(meta.Config{
+		Enabled: true,
+		DSN:     "memory://writeservice-late-replica",
+	})
+	if err != nil {
+		t.Fatalf("new tikv store failed: %v", err)
+	}
+	defer store.Close()
+
+	svc := NewService(&mockHTTPClient{
+		statusCode: http.StatusOK,
+		perHostDelay: map[string]time.Duration{
+			"node3": 30 * time.Millisecond,
+		},
+	}, &mockECDriver{}, &mockUtils{}, store)
+
+	if _, err := svc.WriteReplication(
+		context.Background(),
+		[]string{"http://node1", "http://node2", "http://node3"},
+		"obj-late-replica",
+		[]byte("payload"),
+	); err != nil {
+		t.Fatalf("write replication failed: %v", err)
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		view, err := store.GetObjectAdminView(context.Background(), "obj-late-replica")
+		if err != nil {
+			t.Fatalf("get object admin view failed: %v", err)
+		}
+		if view != nil && len(view.ReplicaLocations) == 3 {
+			return
+		}
+		if time.Now().After(deadline) {
+			if view == nil {
+				t.Fatalf("expected object admin view")
+			}
+			t.Fatalf("expected late replica metadata to reach 3 placements, got=%d", len(view.ReplicaLocations))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

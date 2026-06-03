@@ -18,8 +18,9 @@ import (
 )
 
 type testStorageNode struct {
-	mu   sync.Mutex
-	data map[string][]byte
+	mu           sync.Mutex
+	data         map[string][]byte
+	writeClasses []string
 }
 
 func newTestStorageNode(initial map[string][]byte) *testStorageNode {
@@ -65,6 +66,7 @@ func (n *testStorageNode) handler(w http.ResponseWriter, r *http.Request) {
 		}
 		n.mu.Lock()
 		n.data[key] = payload
+		n.writeClasses = append(n.writeClasses, r.Header.Get(config.StorageWriteClassHeader))
 		n.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		return
@@ -72,6 +74,14 @@ func (n *testStorageNode) handler(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+func (n *testStorageNode) recordedWriteClasses() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]string, len(n.writeClasses))
+	copy(out, n.writeClasses)
+	return out
 }
 
 func (n *testStorageNode) get(key string) ([]byte, bool) {
@@ -127,7 +137,7 @@ func TestReplicationRepairProcessor_RepairsMissingReplica(t *testing.T) {
 
 	ctx := context.Background()
 	for _, nodeURL := range []string{srvA.URL, srvB.URL, srvC.URL} {
-		if err := store.UpsertNodeHeartbeat(ctx, nodeURL, 100, 1000, 0, 0, 30, 0, "UP"); err != nil {
+		if err := store.UpsertNodeHeartbeat(ctx, nodeURL, 100, 1000, 0, 0, 0, 30, 0, "UP"); err != nil {
 			t.Fatalf("upsert node heartbeat failed: %v", err)
 		}
 	}
@@ -206,7 +216,7 @@ func TestReplicationRepairProcessor_RepairsMissingECShard(t *testing.T) {
 
 	ctx := context.Background()
 	for i, srv := range servers {
-		if err := store.UpsertNodeHeartbeat(ctx, srv.URL, 100, 1000, 0, 0, 30, 0, "UP"); err != nil {
+		if err := store.UpsertNodeHeartbeat(ctx, srv.URL, 100, 1000, 0, 0, 0, 30, 0, "UP"); err != nil {
 			t.Fatalf("upsert node heartbeat failed idx=%d: %v", i, err)
 		}
 	}

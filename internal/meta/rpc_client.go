@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -22,10 +23,26 @@ var _ Repository = (*RPCClient)(nil)
 func NewRPCClient(endpoint, authToken string) *RPCClient {
 	base := strings.TrimSpace(strings.TrimRight(endpoint, "/"))
 	return &RPCClient{
-		baseURL:   base,
-		authToken: strings.TrimSpace(authToken),
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+		baseURL:    base,
+		authToken:  strings.TrimSpace(authToken),
+		httpClient: newRPCHTTPClient(),
+	}
+}
+
+func newRPCHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   5 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          256,
+			MaxIdleConnsPerHost:   64,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
 }
@@ -71,6 +88,13 @@ func (c *RPCClient) call(ctx context.Context, method string, params interface{},
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNoContent {
+		if out != nil {
+			return fmt.Errorf("rpc %s returned no content for result-bearing call", method)
+		}
+		return nil
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read rpc response failed: %w", err)
@@ -105,12 +129,13 @@ func (c *RPCClient) Close() error {
 	return nil
 }
 
-func (c *RPCClient) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, cpuLoad float64, memoryUsedPct float64, diskIOWaitPct float64, status string) error {
+func (c *RPCClient) UpsertNodeHeartbeat(ctx context.Context, nodeID string, freeBytes int64, totalBytes int64, ioQueueDepth int, ioQueueBytes int64, cpuLoad float64, memoryUsedPct float64, diskIOWaitPct float64, status string) error {
 	return c.call(ctx, rpcMethodUpsertNodeHeartbeat, rpcNodeHeartbeatArgs{
 		NodeID:        nodeID,
 		FreeBytes:     freeBytes,
 		TotalBytes:    totalBytes,
 		IOQueueDepth:  ioQueueDepth,
+		IOQueueBytes:  ioQueueBytes,
 		CPULoad:       cpuLoad,
 		MemoryUsedPct: memoryUsedPct,
 		DiskIOWaitPct: diskIOWaitPct,

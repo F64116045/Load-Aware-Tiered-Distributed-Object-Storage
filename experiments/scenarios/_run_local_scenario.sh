@@ -99,6 +99,9 @@ if [[ -n "${pressure_pid}" ]]; then
 fi
 wait "${metrics_pid}" || true
 
+collect_compose_logs || true
+analyze_phase_latency_dir || true
+
 "${SCRIPT_DIR}/../collect/summarize_latency.py" "${RESULT_DIR}/latency.csv" --out "${SUMMARY_FILE}" | tee "${RESULT_DIR}/summary.stdout.csv"
 
 exp_log "Scenario complete: ${SCENARIO}"

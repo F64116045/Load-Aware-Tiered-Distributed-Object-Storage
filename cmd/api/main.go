@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -24,10 +23,12 @@ import (
 
 // --- Service Discovery Globals ---
 var (
-	ActiveNodeURLs  = make(map[string]string)
-	NodeListLock    = &sync.RWMutex{}
-	NodesReadyEvent = make(chan struct{})
-	nodesReady      = false
+	ActiveNodeURLs          = make(map[string]string)
+	ActiveNodeLoads         = make(map[string]nodeLoadSnapshot)
+	ActiveNodeRecentWriteMS = make(map[string]float64)
+	NodeListLock            = &sync.RWMutex{}
+	NodesReadyEvent         = make(chan struct{})
+	nodesReady              = false
 )
 
 var errMetadataNotFound = errors.New("metadata not found")
@@ -74,6 +75,45 @@ func replaceActiveNodes(nodeURLs []string) {
 
 	NodeListLock.Lock()
 	ActiveNodeURLs = newMap
+	ActiveNodeLoads = make(map[string]nodeLoadSnapshot, len(newMap))
+	ActiveNodeRecentWriteMS = make(map[string]float64, len(newMap))
+	if len(ActiveNodeURLs) >= config.K && !nodesReady {
+		nodesReady = true
+		close(NodesReadyEvent)
+	}
+	if len(ActiveNodeURLs) < config.K && nodesReady {
+		nodesReady = false
+		NodesReadyEvent = make(chan struct{})
+	}
+	NodeListLock.Unlock()
+}
+
+func replaceActiveNodeHeartbeats(records []meta.NodeHeartbeatSnapshot, staleSec int) {
+	if staleSec <= 0 {
+		staleSec = config.NodeHeartbeatStaleSec
+	}
+	now := time.Now()
+	newMap := make(map[string]string, len(records))
+	newLoads := make(map[string]nodeLoadSnapshot, len(records))
+	for _, rec := range records {
+		if rec.NodeID == "" || rec.Status != "UP" {
+			continue
+		}
+		if now.Sub(rec.LastSeenAt) > time.Duration(staleSec)*time.Second {
+			continue
+		}
+		newMap[rec.NodeID] = rec.NodeID
+		newLoads[rec.NodeID] = nodeLoadSnapshotFromHeartbeat(rec)
+	}
+
+	NodeListLock.Lock()
+	ActiveNodeURLs = newMap
+	ActiveNodeLoads = newLoads
+	for nodeID := range ActiveNodeRecentWriteMS {
+		if _, ok := newMap[nodeID]; !ok {
+			delete(ActiveNodeRecentWriteMS, nodeID)
+		}
+	}
 	if len(ActiveNodeURLs) >= config.K && !nodesReady {
 		nodesReady = true
 		close(NodesReadyEvent)
@@ -101,12 +141,12 @@ func watchNodesFromMetadata(ctx context.Context, metaStore meta.Repository) {
 		loadCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 
-		nodeURLs, err := metaStore.ListHealthyNodeIDs(loadCtx, config.NodeHeartbeatStaleSec)
+		nodes, err := metaStore.ListNodeHeartbeats(loadCtx, 1000)
 		if err != nil {
 			log.Printf("%s[API] metadata node fetch failed: %v%s\n", config.Colors["RED"], err, config.Colors["RESET"])
 			return
 		}
-		replaceActiveNodes(nodeURLs)
+		replaceActiveNodeHeartbeats(nodes, config.NodeHeartbeatStaleSec)
 	}
 
 	load()
@@ -143,7 +183,32 @@ func selectDynamicNodesForObject(objectID string, allNodes []string, replicaTarg
 		return nil, nil, fmt.Errorf("need %d healthy EC nodes", ecTarget)
 	}
 
-	replicaNodes := placement.SelectByRendezvous(placement.HotReplicaKey(objectID), allNodes, replicaTarget)
+	replicaNodes := selectHotReplicaNodes(objectID, allNodes, nil, replicaTarget, config.HotReplicaLoadAware)
+	ecNodes := placement.SelectByRendezvous(placement.ECShardKey(objectID, 0), allNodes, ecTarget)
+	return replicaNodes, ecNodes, nil
+}
+
+func selectDynamicNodesForObjectWithLoads(objectID string, allNodes []string, loads map[string]nodeLoadSnapshot, replicaTarget int, writeQuorum int, ecTarget int) ([]string, []string, error) {
+	if replicaTarget <= 0 {
+		replicaTarget = 3
+	}
+	if writeQuorum <= 0 {
+		writeQuorum = 1
+	}
+	if writeQuorum > replicaTarget {
+		return nil, nil, fmt.Errorf("HOT_WRITE_QUORUM(%d) cannot exceed HOT_REPLICA_COUNT(%d)", writeQuorum, replicaTarget)
+	}
+	if len(allNodes) < replicaTarget {
+		return nil, nil, fmt.Errorf("need %d healthy replica nodes", replicaTarget)
+	}
+	if ecTarget <= 0 {
+		ecTarget = config.K + config.M
+	}
+	if len(allNodes) < ecTarget {
+		return nil, nil, fmt.Errorf("need %d healthy EC nodes", ecTarget)
+	}
+
+	replicaNodes := selectHotReplicaNodes(objectID, allNodes, loads, replicaTarget, config.HotReplicaLoadAware)
 	ecNodes := placement.SelectByRendezvous(placement.ECShardKey(objectID, 0), allNodes, ecTarget)
 	return replicaNodes, ecNodes, nil
 }
@@ -163,11 +228,20 @@ func getDynamicNodes(c *gin.Context, objectID string) ([]string, []string, error
 	for _, url := range ActiveNodeURLs {
 		allNodes = append(allNodes, url)
 	}
+	nodeLoads := make(map[string]nodeLoadSnapshot, len(ActiveNodeLoads))
+	for nodeID, load := range ActiveNodeLoads {
+		nodeLoads[nodeID] = load
+	}
+	for nodeID, recentWriteMS := range ActiveNodeRecentWriteMS {
+		load := nodeLoads[nodeID]
+		load.recentWriteMS = recentWriteMS
+		nodeLoads[nodeID] = load
+	}
 	NodeListLock.RUnlock()
 
 	replicaTarget := config.HotReplicaCount
 	writeQuorum := config.HotWriteQuorum
-	replicaNodes, ecNodes, selectErr := selectDynamicNodesForObject(objectID, allNodes, replicaTarget, writeQuorum, config.K+config.M)
+	replicaNodes, ecNodes, selectErr := selectDynamicNodesForObjectWithLoads(objectID, allNodes, nodeLoads, replicaTarget, writeQuorum, config.K+config.M)
 	if selectErr != nil {
 		if strings.Contains(selectErr.Error(), "HOT_WRITE_QUORUM") {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -340,12 +414,16 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			return
 		}
 
+		nodeSelectStart := nowFn()
 		replicaNodes, _, err := deps.getDynamicNodes(c, objectID)
+		nodeSelectDuration := nowFn().Sub(nodeSelectStart)
 		if err != nil {
 			return
 		}
 
-		bodyBytes, err := io.ReadAll(c.Request.Body)
+		bodyReadStart := nowFn()
+		bodyBytes, err := readAPIRequestBody(c.Request)
+		bodyReadDuration := nowFn().Sub(bodyReadStart)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 			return
@@ -355,6 +433,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			contentType = "application/octet-stream"
 		}
 
+		writeStart := nowFn()
 		opResult, opErr := deps.writeReplicationWithMetadata(
 			c.Request.Context(),
 			replicaNodes,
@@ -364,6 +443,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 				"content_type": contentType,
 			},
 		)
+		writeDuration := nowFn().Sub(writeStart)
 		if opErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": opErr.Error()})
 			return
@@ -371,6 +451,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 		if opResult == nil {
 			opResult = map[string]interface{}{}
 		}
+		recordHotReplicaWriteLatencies(opResult)
 
 		opResult["status"] = "ok"
 		opResult["object_id"] = objectID
@@ -378,23 +459,45 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 		opResult["strategy"] = string(config.StrategyReplication)
 		opResult["size_bytes"] = len(bodyBytes)
 		opResult["content_type"] = contentType
-		opResult["latency_ms"] = nowFn().Sub(start).Milliseconds()
+		totalDuration := nowFn().Sub(start)
+		opResult["latency_ms"] = totalDuration.Milliseconds()
+		opResult["api_phase_latency_ms"] = gin.H{
+			"node_select":  nodeSelectDuration.Milliseconds(),
+			"body_read":    bodyReadDuration.Milliseconds(),
+			"write_commit": writeDuration.Milliseconds(),
+			"total":        totalDuration.Milliseconds(),
+		}
+		log.Printf(
+			"[API Phase] op=PUT object=%s size_bytes=%d nodes=%d node_select_ms=%d body_read_ms=%d write_commit_ms=%d total_ms=%d",
+			objectID,
+			len(bodyBytes),
+			len(replicaNodes),
+			nodeSelectDuration.Milliseconds(),
+			bodyReadDuration.Milliseconds(),
+			writeDuration.Milliseconds(),
+			totalDuration.Milliseconds(),
+		)
 		c.JSON(http.StatusCreated, opResult)
 	})
 
 	router.GET("/v2/objects/:id", func(c *gin.Context) {
+		start := nowFn()
 		objectID := strings.TrimSpace(c.Param("id"))
 		if objectID == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid object id"})
 			return
 		}
 
+		nodeSelectStart := nowFn()
 		replicaNodes, ecNodes, err := deps.getDynamicNodes(c, objectID)
+		nodeSelectDuration := nowFn().Sub(nodeSelectStart)
 		if err != nil {
 			return
 		}
 
+		metadataStart := nowFn()
 		metadata, _, err := deps.loadMetadata(c.Request.Context(), objectID)
+		metadataDuration := nowFn().Sub(metadataStart)
 		if err != nil {
 			if errors.Is(err, errMetadataNotFound) {
 				c.JSON(http.StatusNotFound, gin.H{"detail": fmt.Sprintf("Metadata not found for key '%s'", objectID)})
@@ -406,6 +509,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 
 		strategyStr, _ := metadata["strategy"].(string)
 		var dataBytes []byte
+		readStart := nowFn()
 		switch config.StorageStrategy(strategyStr) {
 		case config.StrategyReplication:
 			replicaNodes = preferMetadataReplicaNodes(metadata, replicaNodes)
@@ -423,6 +527,7 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 			})
 			return
 		}
+		readDuration := nowFn().Sub(readStart)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"detail": err.Error()})
 			return
@@ -432,6 +537,22 @@ func registerV2ObjectRoutes(router gin.IRoutes, deps v2ObjectRouteDeps) {
 		if ct, ok := metadata["content_type"].(string); ok && strings.TrimSpace(ct) != "" {
 			contentType = strings.TrimSpace(ct)
 		}
+		totalDuration := nowFn().Sub(start)
+		c.Header("X-Rec-Latency-Ms", strconv.FormatInt(totalDuration.Milliseconds(), 10))
+		c.Header("X-Rec-Phase-Node-Select-Ms", strconv.FormatInt(nodeSelectDuration.Milliseconds(), 10))
+		c.Header("X-Rec-Phase-Metadata-Ms", strconv.FormatInt(metadataDuration.Milliseconds(), 10))
+		c.Header("X-Rec-Phase-Read-Ms", strconv.FormatInt(readDuration.Milliseconds(), 10))
+		c.Header("X-Rec-Tier", strategyStr)
+		log.Printf(
+			"[API Phase] op=GET object=%s strategy=%s size_bytes=%d node_select_ms=%d metadata_ms=%d read_ms=%d total_ms=%d",
+			objectID,
+			strategyStr,
+			len(dataBytes),
+			nodeSelectDuration.Milliseconds(),
+			metadataDuration.Milliseconds(),
+			readDuration.Milliseconds(),
+			totalDuration.Milliseconds(),
+		)
 		c.Data(http.StatusOK, contentType, dataBytes)
 	})
 

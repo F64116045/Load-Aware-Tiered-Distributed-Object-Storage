@@ -83,7 +83,7 @@ func (s *RPCServer) dispatch(ctx context.Context, req rpcRequest) (interface{}, 
 		if err := decodeRPCParams(req.Params, &a); err != nil {
 			return nil, err
 		}
-		return nil, s.repo.UpsertNodeHeartbeat(ctx, a.NodeID, a.FreeBytes, a.TotalBytes, a.IOQueueDepth, a.CPULoad, a.MemoryUsedPct, a.DiskIOWaitPct, a.Status)
+		return nil, s.repo.UpsertNodeHeartbeat(ctx, a.NodeID, a.FreeBytes, a.TotalBytes, a.IOQueueDepth, a.IOQueueBytes, a.CPULoad, a.MemoryUsedPct, a.DiskIOWaitPct, a.Status)
 	case rpcMethodListHealthyNodeIDs:
 		var a rpcListHealthyNodeIDsArgs
 		if err := decodeRPCParams(req.Params, &a); err != nil {
@@ -358,16 +358,18 @@ func decodeRPCParams(raw json.RawMessage, out interface{}) error {
 }
 
 func writeRPCResult(w http.ResponseWriter, result interface{}) {
+	if result == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	resp := rpcResponse{OK: true}
-	if result != nil {
-		raw, err := json.Marshal(result)
-		if err != nil {
-			writeRPCError(w, fmt.Errorf("encode result failed: %w", err))
-			return
-		}
-		resp.Result = raw
+	raw, err := json.Marshal(result)
+	if err != nil {
+		writeRPCError(w, fmt.Errorf("encode result failed: %w", err))
+		return
 	}
+	resp.Result = raw
 	_ = json.NewEncoder(w).Encode(resp)
 }
 

@@ -2,12 +2,15 @@ package main
 
 import (
 	"fmt"
-	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"hybrid_distributed_store/internal/config"
 )
 
 func keyFromPathParam(c *gin.Context, name string) (string, error) {
@@ -40,31 +43,33 @@ func registerRoutes(router gin.IRoutes, storage *storageEngine) {
 	})
 
 	router.POST("/store", func(c *gin.Context) {
+		start := time.Now()
 		key := c.Query("key")
 		if key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing 'key' query parameter"})
 			return
 		}
+		writeClass := normalizeStorageWriteClass(c.GetHeader(config.StorageWriteClassHeader))
 
-		data, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read body"})
-			return
-		}
-
-		size, err := storage.store(c.Request.Context(), key, data)
+		storeStart := time.Now()
+		size, err := storage.storeStreamWithClass(c.Request.Context(), key, c.Request.Body, c.Request.ContentLength, writeClass)
+		storeDuration := time.Since(storeStart)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return
 		}
+		totalDuration := time.Since(start)
+		log.Printf(
+			"[Storage Route Phase] op=STORE write_class=%s key=%s size_bytes=%d body_read_ms=%d store_wait_ms=%d total_ms=%d",
+			writeClass,
+			key,
+			size,
+			0,
+			storeDuration.Milliseconds(),
+			totalDuration.Milliseconds(),
+		)
 
-		info, _ := storage.getInfo()
-		c.JSON(http.StatusOK, gin.H{
-			"status":     "ok",
-			"key":        key,
-			"size":       size,
-			"total_keys": info["total_keys"],
-		})
+		c.Status(http.StatusNoContent)
 	})
 
 	retrieveHandler := func(c *gin.Context) {

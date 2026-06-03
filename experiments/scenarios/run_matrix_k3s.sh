@@ -41,6 +41,7 @@ common_env=(
   "HDD_WORKERS=${MATRIX_HDD_WORKERS}"
   "HDD_BYTES=${MATRIX_HDD_BYTES}"
   "METRICS_INTERVAL_SEC=${MATRIX_METRICS_INTERVAL_SEC}"
+  "STORAGE_DURABILITY_MODE=${STORAGE_DURABILITY_MODE:-sync}"
 )
 
 run_one() {
@@ -76,6 +77,8 @@ run_one strategy-c strategy_c_pressure_aware \
 comparison_file="${RESULT_ROOT:-${SCRIPT_DIR}/../results}/matrix-${RUN_ID_ROOT}-comparison.csv"
 migration_file="${RESULT_ROOT:-${SCRIPT_DIR}/../results}/matrix-${RUN_ID_ROOT}-migration.csv"
 fairness_file="${RESULT_ROOT:-${SCRIPT_DIR}/../results}/matrix-${RUN_ID_ROOT}-fairness.txt"
+phase_file="${RESULT_ROOT:-${SCRIPT_DIR}/../results}/matrix-${RUN_ID_ROOT}-phase-latency.csv"
+bottleneck_file="${RESULT_ROOT:-${SCRIPT_DIR}/../results}/matrix-${RUN_ID_ROOT}-phase-bottlenecks.csv"
 if ! python3 "${SCRIPT_DIR}/../collect/verify_matrix_fairness.py" \
   --result-root "${RESULT_ROOT:-${SCRIPT_DIR}/../results}" \
   --run-id-root "${RUN_ID_ROOT}" \
@@ -93,6 +96,15 @@ python3 "${SCRIPT_DIR}/../collect/summarize_migration.py" \
   --result-root "${RESULT_ROOT:-${SCRIPT_DIR}/../results}" \
   --run-id-root "${RUN_ID_ROOT}" \
   --out "${migration_file}"
+python3 "${SCRIPT_DIR}/../collect/analyze_phase_latency.py" \
+  --result-root "${RESULT_ROOT:-${SCRIPT_DIR}/../results}" \
+  --run-id-root "${RUN_ID_ROOT}" \
+  --out "${phase_file}"
+python3 "${SCRIPT_DIR}/../collect/summarize_phase_bottlenecks.py" \
+  --phase-csv "${phase_file}" \
+  --latency-csv "${comparison_file}" \
+  --operation PUT \
+  --out "${bottleneck_file}"
 
 echo "=== fairness check ==="
 cat "${fairness_file}"
@@ -105,3 +117,11 @@ echo "Comparison CSV: ${comparison_file}"
 echo "=== migration summary ==="
 cat "${migration_file}"
 echo "Migration CSV: ${migration_file}"
+
+echo "=== phase latency summary ==="
+cat "${phase_file}"
+echo "Phase latency CSV: ${phase_file}"
+
+echo "=== PUT phase bottleneck summary ==="
+cat "${bottleneck_file}"
+echo "Phase bottleneck CSV: ${bottleneck_file}"

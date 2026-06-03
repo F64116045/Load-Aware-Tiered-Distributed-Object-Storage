@@ -65,18 +65,47 @@ deploy_k8s_stack() {
 }
 
 configure_k8s_experiment_env() {
-  if [[ -z "${AGE_THRESHOLD_SEC:-}" ]]; then
-    return 0
+  local changed_deployments=false
+  local changed_storage=false
+
+  if [[ -n "${AGE_THRESHOLD_SEC:-}" ]]; then
+    exp_log "Configure k8s experiment env: AGE_THRESHOLD_SEC=${AGE_THRESHOLD_SEC}"
+    kubectl -n "${K8S_NAMESPACE}" set env deployment/meta-service deployment/api \
+      AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
+    kubectl -n "${K8S_NAMESPACE}" set env deployment/tiering-worker \
+      AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
+    changed_deployments=true
   fi
 
-  exp_log "Configure k8s experiment env: AGE_THRESHOLD_SEC=${AGE_THRESHOLD_SEC}"
-  kubectl -n "${K8S_NAMESPACE}" set env deployment/meta-service deployment/api \
-    AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
-  kubectl -n "${K8S_NAMESPACE}" set env deployment/tiering-worker \
-    AGE_THRESHOLD_SEC="${AGE_THRESHOLD_SEC}" >/dev/null
+  if [[ -n "${STORAGE_DURABILITY_MODE:-}" ]]; then
+    exp_log "Configure storage durability mode: STORAGE_DURABILITY_MODE=${STORAGE_DURABILITY_MODE}"
+    kubectl -n "${K8S_NAMESPACE}" set env statefulset/storage-node \
+      STORAGE_DURABILITY_MODE="${STORAGE_DURABILITY_MODE}" >/dev/null
+    changed_storage=true
+  fi
 
-  kubectl -n "${K8S_NAMESPACE}" rollout status deployment/meta-service --timeout=180s
-  kubectl -n "${K8S_NAMESPACE}" rollout status deployment/api --timeout=180s
+  if [[ -n "${STORAGE_GROUP_SYNC_INTERVAL_MS:-}" || -n "${STORAGE_GROUP_SYNC_MAX_BATCH:-}" ]]; then
+    exp_log "Configure storage group sync: interval_ms=${STORAGE_GROUP_SYNC_INTERVAL_MS:-default} max_batch=${STORAGE_GROUP_SYNC_MAX_BATCH:-default}"
+    kubectl -n "${K8S_NAMESPACE}" set env statefulset/storage-node \
+      ${STORAGE_GROUP_SYNC_INTERVAL_MS:+STORAGE_GROUP_SYNC_INTERVAL_MS="${STORAGE_GROUP_SYNC_INTERVAL_MS}"} \
+      ${STORAGE_GROUP_SYNC_MAX_BATCH:+STORAGE_GROUP_SYNC_MAX_BATCH="${STORAGE_GROUP_SYNC_MAX_BATCH}"} >/dev/null
+    changed_storage=true
+  fi
+
+  if [[ -n "${STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES:-}" ]]; then
+    exp_log "Configure storage background queue cap: STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES=${STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES}"
+    kubectl -n "${K8S_NAMESPACE}" set env statefulset/storage-node \
+      STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES="${STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES}" >/dev/null
+    changed_storage=true
+  fi
+
+  if [[ "${changed_deployments}" == "true" ]]; then
+    kubectl -n "${K8S_NAMESPACE}" rollout status deployment/meta-service --timeout=180s
+    kubectl -n "${K8S_NAMESPACE}" rollout status deployment/api --timeout=180s
+  fi
+  if [[ "${changed_storage}" == "true" ]]; then
+    kubectl -n "${K8S_NAMESPACE}" rollout status statefulset/storage-node --timeout=300s
+  fi
 }
 
 discover_k8s_api_base() {
@@ -119,6 +148,7 @@ start_k8s_tiering_worker() {
     MAX_OBJECTS_PER_ROUND="${MAX_OBJECTS_PER_ROUND:-200}" \
     MAX_BYTES_PER_ROUND="${MAX_BYTES_PER_ROUND:-1073741824}" \
     WORKER_BW_LIMIT_MBPS="${WORKER_BW_LIMIT_MBPS:-0}" \
+    WORKER_EC_SHARD_WRITE_PARALLELISM="${WORKER_EC_SHARD_WRITE_PARALLELISM:-2}" \
     TIERING_IDLE_STABLE_ROUNDS="${TIERING_IDLE_STABLE_ROUNDS:-3}" \
     TIERING_IDLE_CPU_PCT="${TIERING_IDLE_CPU_PCT:-70}" \
     TIERING_IDLE_MEMORY_PCT="${TIERING_IDLE_MEMORY_PCT:-90}" \
@@ -235,6 +265,9 @@ if [[ -n "${PRESSURE_PID}" ]]; then
   wait "${PRESSURE_PID}" || exp_log "WARN: k3s pressure job did not complete cleanly"
 fi
 wait "${metrics_pid}" || true
+
+collect_k8s_logs "${K8S_NAMESPACE}" || true
+analyze_phase_latency_dir || true
 
 "${SCRIPT_DIR}/../collect/summarize_latency.py" "${RESULT_DIR}/latency.csv" --out "${SUMMARY_FILE}" | tee "${RESULT_DIR}/summary.stdout.csv"
 

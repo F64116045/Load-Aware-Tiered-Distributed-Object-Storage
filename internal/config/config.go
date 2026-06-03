@@ -49,6 +49,17 @@ const (
 	TieringTriggerHybrid    TieringTriggerMode = "hybrid"
 )
 
+const (
+	TieringDueIndexCommitSync  = "sync"
+	TieringDueIndexCommitAsync = "async"
+)
+
+const (
+	StorageWriteClassHeader     = "X-Rec-Write-Class"
+	StorageWriteClassForeground = "foreground"
+	StorageWriteClassBackground = "background"
+)
+
 // ExpectedNodeNames stores the set of valid storage node identifiers
 var ExpectedNodeNames = map[string]bool{}
 
@@ -71,6 +82,20 @@ var (
 	HotReplicaCount = getEnvInt("HOT_REPLICA_COUNT", 3)
 	// HotWriteQuorum is the minimum number of successful replica writes for ACK.
 	HotWriteQuorum = getEnvInt("HOT_WRITE_QUORUM", 2)
+	// HotReplicaLoadAware enables load-aware ordering for foreground HOT replica writes.
+	HotReplicaLoadAware = getEnvBool("HOT_REPLICA_LOAD_AWARE", true)
+	// StorageMaxQueuedWriteBytes caps bytes held by storage-node write queue/in-flight writes; <=0 disables byte limit.
+	StorageMaxQueuedWriteBytes = getEnvInt64("STORAGE_MAX_QUEUED_WRITE_BYTES", getEnvInt64("MAX_QUEUED_WRITE_BYTES", 512*1024*1024))
+	// StorageBackgroundMaxQueuedWriteBytes caps background migration/repair bytes so foreground writes retain queue budget; <=0 disables the background-specific cap.
+	StorageBackgroundMaxQueuedWriteBytes = getEnvInt64("STORAGE_BACKGROUND_MAX_QUEUED_WRITE_BYTES", StorageMaxQueuedWriteBytes/4)
+	// StorageIOWorkers controls concurrent durable write workers per storage node.
+	StorageIOWorkers = getEnvInt("STORAGE_IO_WORKERS", 2)
+	// StorageDurabilityMode controls whether storage-node writes fsync before ACK ("sync"), batches fsync before ACK ("group_sync"), or only write to OS buffers ("write").
+	StorageDurabilityMode = getEnv("STORAGE_DURABILITY_MODE", "sync")
+	// StorageGroupSyncIntervalMs is the short batching window for STORAGE_DURABILITY_MODE=group_sync.
+	StorageGroupSyncIntervalMs = getEnvInt("STORAGE_GROUP_SYNC_INTERVAL_MS", 5)
+	// StorageGroupSyncMaxBatch caps files flushed in one group-sync batch.
+	StorageGroupSyncMaxBatch = getEnvInt("STORAGE_GROUP_SYNC_MAX_BATCH", 32)
 	// AgeThresholdSec defines when HOT objects become eligible for tiering.
 	AgeThresholdSec = getEnvInt("AGE_THRESHOLD_SEC", 3600)
 	// TieringPeriodSec defines periodic policy scan interval.
@@ -85,6 +110,8 @@ var (
 	TieringTriggerModeSetting = normalizeTieringTriggerMode(getEnv("TIERING_TRIGGER_MODE", string(TieringTriggerPeriodic)))
 	// TieringThresholdCheckSec is threshold trigger sampling interval.
 	TieringThresholdCheckSec = getEnvInt("TIERING_THRESHOLD_CHECK_SEC", 10)
+	// TieringDueIndexCommitMode controls whether foreground metadata writes also wait for due-index maintenance.
+	TieringDueIndexCommitMode = normalizeTieringDueIndexCommitMode(getEnv("TIERING_DUE_INDEX_COMMIT_MODE", TieringDueIndexCommitSync))
 	// TieringThresholdCooldownSec prevents threshold-trigger storms.
 	TieringThresholdCooldownSec = getEnvInt("TIERING_THRESHOLD_COOLDOWN_SEC", getEnvInt("THRESHOLD_COOLDOWN_SEC", 60))
 	// TieringIdleStableRounds requires N consecutive idle samples before threshold-trigger enqueue.
@@ -145,6 +172,8 @@ var (
 	TieringLeaderStaleSec = getEnvInt("TIERING_LEADER_STALE_SEC", 10)
 	// WorkerBWLimitMBPS limits REPL->EC migration I/O bandwidth per worker; <=0 disables.
 	WorkerBWLimitMBPS = getEnvInt64("WORKER_BW_LIMIT_MBPS", 0)
+	// WorkerECShardWriteParallelism caps concurrent EC shard writes per REPL->EC task.
+	WorkerECShardWriteParallelism = getEnvInt("WORKER_EC_SHARD_WRITE_PARALLELISM", 2)
 )
 
 func init() {
@@ -239,6 +268,15 @@ func normalizeTieringTriggerMode(raw string) TieringTriggerMode {
 		return TieringTriggerMode(v)
 	default:
 		return TieringTriggerPeriodic
+	}
+}
+
+func normalizeTieringDueIndexCommitMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case TieringDueIndexCommitAsync:
+		return TieringDueIndexCommitAsync
+	default:
+		return TieringDueIndexCommitSync
 	}
 }
 

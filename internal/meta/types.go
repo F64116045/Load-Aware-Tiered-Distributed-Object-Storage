@@ -9,6 +9,7 @@ type NodeHeartbeatSnapshot struct {
 	FreeBytes     int64
 	TotalBytes    int64
 	IOQueueDepth  int
+	IOQueueBytes  int64
 	CPULoad       float64
 	MemoryUsedPct float64
 	DiskIOWaitPct float64

@@ -8,14 +8,12 @@ WORKDIR /app
 # Git is required for fetching Go dependencies
 RUN apk add --no-cache git
 
-# 1. Copy Source Code
-# Copy everything to ensure 'go mod tidy' can see all internal packages.
-COPY . .
+# 1. Cache Go dependencies before copying application source.
+COPY go.mod go.sum ./
+RUN go mod download
 
-# 2. Resolve Dependencies
-# Run 'go mod tidy' inside the container to ensure go.mod/go.sum 
-# match the source code and Go 1.24 environment.
-RUN go mod tidy
+# 2. Copy Source Code
+COPY . .
 
 # 3. Build Microservices
 # We build separate binaries: API Gateway, Storage Node, Tiering Worker, and Meta Service.
