@@ -5,6 +5,11 @@
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
+ARG GOPROXY=https://proxy.golang.org,direct
+ARG GOSUMDB=sum.golang.org
+ENV GOPROXY=${GOPROXY}
+ENV GOSUMDB=${GOSUMDB}
+
 # Git is required for fetching Go dependencies
 RUN apk add --no-cache git
 

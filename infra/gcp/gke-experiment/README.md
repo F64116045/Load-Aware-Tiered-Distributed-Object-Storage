@@ -2,12 +2,15 @@
 
 This Terraform root module creates a fixed-size GKE Standard cluster for the REC object-store experiments.
 
+It is compatible with Terraform `1.5.7`, which is commonly available in Google Cloud Shell.
+
 It manages only the cloud infrastructure:
 
 - GKE Standard cluster and fixed worker node pool
 - Dedicated VPC and subnet with secondary Pod/Service ranges
 - GKE node service account
 - Minimum GKE node IAM plus Artifact Registry pull permission for the node service account
+- Cloud Build service account permissions needed to read submitted source archives and push images
 - Optional Artifact Registry Docker repository creation
 
 It does not run the experiment suite. Keep deployment and workload control in the existing scripts under `deploy/gke/` and `experiments/scenarios/`.
@@ -16,9 +19,9 @@ It does not run the experiment suite. Keep deployment and workload control in th
 
 The goal is to make the cloud environment repeatable. For final measurements, avoid ad hoc `gcloud container clusters create ...` commands because the machine type, disk size, network, IAM, and cleanup behavior should be visible in versioned code.
 
-The default profile uses 6 `n2-standard-4` nodes as a pilot profile. For final runs, switch `machine_type` to a stronger fixed-size shape such as `n2-standard-8` or `n4-standard-8`, then rerun the same experiment matrix multiple times.
+The default profile uses 6 `n2-standard-4` nodes with 30 GB boot disks as a quota-friendly pilot profile. For final runs, switch `machine_type` to a stronger fixed-size shape such as `n2-standard-8` or `n4-standard-8`, then rerun the same experiment matrix multiple times.
 
-Note: 6 `n2-standard-4` nodes require 24 vCPUs in the selected region. If the project quota is still 12 vCPUs, request a quota increase before treating the result as final. A smaller temporary profile can be used for smoke testing, but it should not be presented as the final cloud experiment.
+Note: 6 `n2-standard-4` nodes require 24 vCPUs and 180 GB of boot Persistent Disk quota in the selected region. If the project quota is still lower than that, request a quota increase before treating the result as final. A smaller temporary profile can be used for smoke testing, but it should not be presented as the final cloud experiment.
 
 ## First Setup
 
@@ -33,12 +36,28 @@ Edit `terraform.tfvars`:
 - Keep `create_artifact_registry_repository = false` if `rec-store` already exists.
 - Set `create_artifact_registry_repository = true` only for a fresh project without the repository.
 
+If the project is limited by GCP Free Trial quota and `CPUs (all regions)` is fixed at 12 vCPUs, use the Free Trial profile instead:
+
+```bash
+cp terraform.free-trial.tfvars.example terraform.tfvars
+```
+
+That profile uses 6 `n2-standard-2` nodes. It preserves the 6-node storage topology, but it should be reported as a quota-limited pilot rather than the final benchmark profile.
+
 Then create the cluster:
 
 ```bash
 terraform init
 terraform plan
 terraform apply
+```
+
+If Terraform fails while creating project IAM bindings with a `Cloud Resource Manager API ... disabled` error, enable the API once and rerun the plan:
+
+```bash
+gcloud services enable cloudresourcemanager.googleapis.com iam.googleapis.com
+terraform plan -out=tfplan
+terraform apply tfplan
 ```
 
 ## Use The Cluster
@@ -59,6 +78,29 @@ export IMAGE="$(terraform -chdir=infra/gcp/gke-experiment output -raw image_exam
 gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev"
 ./deploy/gke/scripts/build-and-push-image.sh "$IMAGE"
 IMAGE="$IMAGE" RESET_NAMESPACE=true ./deploy/gke/scripts/deploy.sh
+```
+
+If Cloud Shell Docker networking cannot push to Artifact Registry, use Cloud Build instead:
+
+```bash
+cat > /tmp/cloudbuild-rec-store.yaml <<'EOF'
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - GOPROXY=https://goproxy.io,direct
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+EOF
+
+gcloud builds submit \
+  --config=/tmp/cloudbuild-rec-store.yaml \
+  --substitutions=_IMAGE="${IMAGE}" \
+  .
 ```
 
 After the deployment is healthy, run the GKE suite as usual:

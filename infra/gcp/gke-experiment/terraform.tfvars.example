@@ -9,7 +9,7 @@ cluster_name = "rec-store-exp"
 node_count        = 6
 machine_type      = "n2-standard-4"
 node_disk_type    = "pd-balanced"
-node_disk_size_gb = 50
+node_disk_size_gb = 30
 
 # If the repository already exists from a previous gcloud setup, keep this false.
 # For a fresh project, set true and Terraform will create it.
