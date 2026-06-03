@@ -3,3 +3,12 @@
 __pycache__/
 .experiment-pressure/
 experiments/results/
+
+# Terraform local state and per-project variables.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
