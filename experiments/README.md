@@ -123,6 +123,24 @@ experiments/results/suite-<suite_run_id>-latency.csv
 experiments/results/suite-<suite_run_id>-migration.csv
 ```
 
+For the final report-quality GKE experiment, use the formal wrapper. It runs
+three repeats for no pressure, CPU pressure, and I/O pressure. CPU and I/O
+pressure target two storage-only nodes after each Kubernetes namespace reset,
+matching the pressure-aware policy's multi-node resource-window design:
+
+```bash
+AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=90 \
+OBJECT_COUNT=50 OBJECT_SIZE_BYTES=1048576 \
+WORKLOAD_DURATION_SEC=60 WORKLOAD_CONCURRENCY=2 GET_PERCENT=70 \
+  ./experiments/scenarios/run_gke_formal_experiment.sh
+```
+
+Curated report-ready summaries are stored in:
+
+```text
+experiments/final_results/
+```
+
 Important files:
 
 ```text

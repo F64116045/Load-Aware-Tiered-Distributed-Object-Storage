@@ -1,0 +1,13 @@
+profile,policy,get_p99_ms,put_p99_ms,repl_done,total_errors,notes
+none,baseline,36.0,35.9,0,0,foreground-only baseline
+none,A,51.5,37.4,41,0,age-based migration
+none,B,53.3,36.2,39,0,throttled migration
+none,C,231.5,41.9,34,0,pressure-aware migration showed GET tail outliers without pressure
+cpu,baseline,42.8,38.1,0,0,foreground-only baseline
+cpu,A,57.0,39.9,66,0,age-based migration
+cpu,B,55.6,40.6,66,0,throttled migration
+cpu,C,345.4,37.5,60,0,CPU pressure did not strongly gate migration under this workload
+io,baseline,43.1,42.8,0,0,foreground-only baseline
+io,A,97.0,52.3,66,0,age-based migration
+io,B,386.2,53.6,66,0,throttled migration
+io,C,85.2,52.1,16,0,pressure-aware migration gated background work under I/O pressure

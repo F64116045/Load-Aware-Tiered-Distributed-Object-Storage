@@ -5,6 +5,8 @@ metadata:
 spec:
   template:
     spec:
+      nodeSelector:
+        rec-store-role: storage
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

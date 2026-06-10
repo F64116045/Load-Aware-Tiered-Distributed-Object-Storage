@@ -1,0 +1,13 @@
+profile,run_id,policy,get_p99_ms,put_p99_ms,repl_done,total_errors
+none,20260607T150833Z-gke-formal-none-r2,baseline,40.4,35.9,0,0
+none,20260607T150833Z-gke-formal-none-r2,A,50.1,37.4,41,0
+none,20260607T150833Z-gke-formal-none-r2,B,50.3,36.1,40,0
+none,20260607T150833Z-gke-formal-none-r2,C,56.0,40.5,36,0
+cpu,20260607T202559Z-gke-formal-cpu-r3,baseline,37.0,35.4,0,0
+cpu,20260607T202559Z-gke-formal-cpu-r3,A,57.0,38.8,64,0
+cpu,20260607T202559Z-gke-formal-cpu-r3,B,55.6,40.6,66,0
+cpu,20260607T202559Z-gke-formal-cpu-r3,C,113.1,40.1,59,0
+io,20260606T153612Z-gke-multinode-io-r1,baseline,44.7,42.8,0,0
+io,20260606T153612Z-gke-multinode-io-r1,A,75.0,55.9,66,0
+io,20260606T153612Z-gke-multinode-io-r1,B,79.0,64.7,66,0
+io,20260606T153612Z-gke-multinode-io-r1,C,55.6,52.1,16,0

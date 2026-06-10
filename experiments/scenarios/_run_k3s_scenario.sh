@@ -37,6 +37,9 @@ K8S_PRESSURE_TOPOLOGY_KEY="${K8S_PRESSURE_TOPOLOGY_KEY:-kubernetes.io/hostname}"
 K8S_PRESSURE_TARGET_NODE="${K8S_PRESSURE_TARGET_NODE:-}"
 K8S_PRESSURE_TARGET_NODES="${K8S_PRESSURE_TARGET_NODES:-}"
 K8S_PRESSURE_TARGET_NODE_COUNT="${K8S_PRESSURE_TARGET_NODE_COUNT:-0}"
+K8S_STORAGE_NODE_SELECTOR_KEY="${K8S_STORAGE_NODE_SELECTOR_KEY:-}"
+K8S_STORAGE_NODE_SELECTOR_VALUE="${K8S_STORAGE_NODE_SELECTOR_VALUE:-}"
+K8S_REQUIRE_STORAGE_PLACEMENT="${K8S_REQUIRE_STORAGE_PLACEMENT:-false}"
 METRICS_INTERVAL_SEC="${METRICS_INTERVAL_SEC:-5}"
 COLLECT_DURATION_SEC="${COLLECT_DURATION_SEC:-$((WORKLOAD_DURATION_SEC + PRESSURE_DURATION_SEC + PRESSURE_DELAY_SEC + 30))}"
 SUMMARY_FILE="${SUMMARY_FILE:-${RESULT_DIR}/summary.csv}"
@@ -48,6 +51,8 @@ K8S_IN_CLUSTER_WORKLOAD="${K8S_IN_CLUSTER_WORKLOAD:-false}"
 K8S_WORKLOAD_API_BASE="${K8S_WORKLOAD_API_BASE:-http://${K8S_API_SERVICE_NAME}:${K8S_API_SERVICE_PORT}}"
 K8S_WORKLOAD_IMAGE="${K8S_WORKLOAD_IMAGE:-alpine:3.18}"
 K8S_WORKLOAD_INSTALL_CMD="${K8S_WORKLOAD_INSTALL_CMD:-apk add --no-cache bash curl coreutils gawk >/dev/null}"
+K8S_WORKLOAD_NODE_SELECTOR_KEY="${K8S_WORKLOAD_NODE_SELECTOR_KEY:-}"
+K8S_WORKLOAD_NODE_SELECTOR_VALUE="${K8S_WORKLOAD_NODE_SELECTOR_VALUE:-}"
 
 write_k8s_run_env() {
   write_run_env
@@ -71,6 +76,11 @@ K8S_PRESSURE_TOPOLOGY_KEY=${K8S_PRESSURE_TOPOLOGY_KEY}
 K8S_PRESSURE_TARGET_NODE=${K8S_PRESSURE_TARGET_NODE}
 K8S_PRESSURE_TARGET_NODES=${K8S_PRESSURE_TARGET_NODES}
 K8S_PRESSURE_TARGET_NODE_COUNT=${K8S_PRESSURE_TARGET_NODE_COUNT}
+K8S_STORAGE_NODE_SELECTOR_KEY=${K8S_STORAGE_NODE_SELECTOR_KEY}
+K8S_STORAGE_NODE_SELECTOR_VALUE=${K8S_STORAGE_NODE_SELECTOR_VALUE}
+K8S_REQUIRE_STORAGE_PLACEMENT=${K8S_REQUIRE_STORAGE_PLACEMENT}
+K8S_WORKLOAD_NODE_SELECTOR_KEY=${K8S_WORKLOAD_NODE_SELECTOR_KEY}
+K8S_WORKLOAD_NODE_SELECTOR_VALUE=${K8S_WORKLOAD_NODE_SELECTOR_VALUE}
 EOF
 }
 
@@ -263,7 +273,7 @@ EOF
 
 choose_k8s_storage_only_pressure_nodes() {
   local count="$1"
-  local rows forbidden_apps storage_nodes blocked_nodes node
+  local rows forbidden_apps storage_nodes blocked_nodes labeled_storage_nodes node
   local selected=()
   forbidden_apps="${K8S_PRESSURE_AVOID_APPS:-pd,tikv,meta-service,api}"
   rows="$(kubectl -n "${K8S_NAMESPACE}" get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.app}{"\t"}{.spec.nodeName}{"\n"}{end}')"
@@ -273,6 +283,11 @@ choose_k8s_storage_only_pressure_nodes() {
   fi
 
   storage_nodes="$(awk -F '\t' '$2 == "storage-node" && $3 != "" { print $3 }' <<<"${rows}" | sort -u)"
+  labeled_storage_nodes=""
+  if [[ -n "${K8S_STORAGE_NODE_SELECTOR_KEY}" && -n "${K8S_STORAGE_NODE_SELECTOR_VALUE}" ]]; then
+    labeled_storage_nodes="$(kubectl get nodes -l "${K8S_STORAGE_NODE_SELECTOR_KEY}=${K8S_STORAGE_NODE_SELECTOR_VALUE}" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+  fi
   blocked_nodes="$(awk -F '\t' -v apps="${forbidden_apps}" '
     BEGIN {
       n = split(apps, app_list, ",")
@@ -286,6 +301,9 @@ choose_k8s_storage_only_pressure_nodes() {
 
   while IFS= read -r node; do
     [[ -n "${node}" ]] || continue
+    if [[ -n "${labeled_storage_nodes}" ]] && ! grep -Fxq "${node}" <<<"${labeled_storage_nodes}"; then
+      continue
+    fi
     if ! grep -Fxq "${node}" <<<"${blocked_nodes}"; then
       selected+=("${node}")
       if ((${#selected[@]} >= count)); then
@@ -299,6 +317,64 @@ choose_k8s_storage_only_pressure_nodes() {
   echo "Pod placement:" >&2
   printf '%s\n' "${rows}" >&2
   return 1
+}
+
+validate_k8s_storage_placement() {
+  if [[ "${K8S_REQUIRE_STORAGE_PLACEMENT}" != "true" ]]; then
+    return 0
+  fi
+
+  local rows expected storage_pod_count unique_storage_nodes forbidden_apps blocked_overlap labeled_storage_nodes unlabeled_storage_nodes
+  rows="$(kubectl -n "${K8S_NAMESPACE}" get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.app}{"\t"}{.spec.nodeName}{"\n"}{end}')"
+  expected="${MIN_HEALTHY_NODES}"
+  storage_pod_count="$(awk -F '\t' '$2 == "storage-node" && $3 != "" { count++ } END { print count + 0 }' <<<"${rows}")"
+  unique_storage_nodes="$(awk -F '\t' '$2 == "storage-node" && $3 != "" { print $3 }' <<<"${rows}" | sort -u)"
+
+  if (( storage_pod_count < expected )); then
+    echo "ERROR: storage placement preflight expected ${expected} storage pods, found ${storage_pod_count}" >&2
+    printf '%s\n' "${rows}" >&2
+    return 1
+  fi
+  if (( $(wc -l <<<"${unique_storage_nodes}") != storage_pod_count )); then
+    echo "ERROR: storage placement preflight requires one storage-node per worker node" >&2
+    printf '%s\n' "${rows}" >&2
+    return 1
+  fi
+
+  if [[ -n "${K8S_STORAGE_NODE_SELECTOR_KEY}" && -n "${K8S_STORAGE_NODE_SELECTOR_VALUE}" ]]; then
+    labeled_storage_nodes="$(kubectl get nodes -l "${K8S_STORAGE_NODE_SELECTOR_KEY}=${K8S_STORAGE_NODE_SELECTOR_VALUE}" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+    if [[ -z "${labeled_storage_nodes}" ]]; then
+      echo "ERROR: storage placement preflight found no nodes labeled ${K8S_STORAGE_NODE_SELECTOR_KEY}=${K8S_STORAGE_NODE_SELECTOR_VALUE}" >&2
+      return 1
+    fi
+    unlabeled_storage_nodes="$(grep -Fxv -f <(printf '%s\n' "${labeled_storage_nodes}") <(printf '%s\n' "${unique_storage_nodes}") || true)"
+    if [[ -n "${unlabeled_storage_nodes}" ]]; then
+      echo "ERROR: storage placement preflight found storage pods outside ${K8S_STORAGE_NODE_SELECTOR_KEY}=${K8S_STORAGE_NODE_SELECTOR_VALUE} nodes" >&2
+      printf '%s\n' "${unlabeled_storage_nodes}" >&2
+      return 1
+    fi
+  fi
+
+  forbidden_apps="${K8S_PRESSURE_AVOID_APPS:-pd,tikv,meta-service,api}"
+  blocked_overlap="$(awk -F '\t' -v apps="${forbidden_apps}" '
+    BEGIN {
+      n = split(apps, app_list, ",")
+      for (i = 1; i <= n; i++) {
+        gsub(/^ +| +$/, "", app_list[i])
+        blocked_app[app_list[i]] = 1
+      }
+    }
+    $2 in blocked_app && $3 != "" { print $3 }
+  ' <<<"${rows}" | sort -u | grep -Fxf <(printf '%s\n' "${unique_storage_nodes}") || true)"
+  if [[ -n "${blocked_overlap}" ]]; then
+    echo "ERROR: storage placement preflight found protected app(s) on storage-node workers" >&2
+    printf '%s\n' "${blocked_overlap}" >&2
+    printf '%s\n' "${rows}" >&2
+    return 1
+  fi
+
+  exp_log "Storage placement preflight passed: ${storage_pod_count} storage pods on dedicated storage nodes"
 }
 
 resolve_k8s_pressure_targets() {
@@ -498,6 +574,17 @@ k8s_yaml_string() {
   printf '"%s"\n' "${value}"
 }
 
+render_k8s_workload_scheduling() {
+  if [[ -z "${K8S_WORKLOAD_NODE_SELECTOR_KEY}" || -z "${K8S_WORKLOAD_NODE_SELECTOR_VALUE}" ]]; then
+    return 0
+  fi
+
+  cat <<EOF
+      nodeSelector:
+        ${K8S_WORKLOAD_NODE_SELECTOR_KEY}: ${K8S_WORKLOAD_NODE_SELECTOR_VALUE}
+EOF
+}
+
 create_k8s_workload_configmap() {
   local configmap="$1"
   kubectl -n "${K8S_NAMESPACE}" delete configmap "${configmap}" --ignore-not-found >/dev/null 2>&1 || true
@@ -542,6 +629,7 @@ spec:
         run-id: ${suffix}
     spec:
       restartPolicy: Never
+$(render_k8s_workload_scheduling)
       containers:
       - name: workload
         image: ${K8S_WORKLOAD_IMAGE}
@@ -665,6 +753,7 @@ configure_k8s_experiment_env
 discover_k8s_api_base
 wait_api_health
 wait_node_discovery_ready "${MIN_HEALTHY_NODES}"
+validate_k8s_storage_placement
 resolve_k8s_pressure_targets
 write_k8s_run_env
 
