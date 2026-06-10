@@ -7,23 +7,7 @@ We compare three scheduling policies (A: age-based, B: budget-limited, C: pressu
 and evaluate their trade-offs on P99 latency, throughput, migration efficiency, and space savings
 under resource-constrained conditions.
 
-## Architecture Diagrams
 
-### Overall System Architecture
-
-![Overall System Architecture Diagram](img/Overall%20System%20Architecture%20Diagram.png)
-
-### Background Task Lifecycle and Consistency Control
-
-![Background Task Lifecycle and Consistency Control Diagram](img/Background%20Task%20Lifecycle%20and%20Consistency%20Control%20Diagram.png)
-
-## Runtime Summary
-
-1. `PUT /v2/objects/:id` writes HOT replicas and commits metadata + due-index.
-2. Scanner (leader-only) reads due-index and enqueues deterministic tasks.
-3. Workers claim runnable tasks and execute processors.
-4. `GET /v2/objects/:id` reads via metadata-selected strategy (`replication` or `ec`).
-5. `DELETE /v2/objects/:id` removes physical data and metadata.
 
 ## Quick Start
 
@@ -162,9 +146,4 @@ Recommended start:
 - [Task State Machine Reference](docs/reference/task-state-machine-reference.md)
 - [TiKV Keyspace and Key Encoding Reference](docs/reference/tikv-keyspace-and-key-encoding-reference.md)
 
-## Current Boundaries
 
-- Processing guarantee is `at-least-once` (not strict `exactly-once`).
-- No automatic timeout reclaim for long-stuck `RUNNING` tasks.
-- S3-compatible API is not implemented.
-- Bucket and ACL semantics are not implemented.
