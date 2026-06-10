@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Generate poster-ready figures from selected representative GKE runs.
 
-The values are copied from local_notes/FORMAL_GKE_RESULTS.md. These are compact
-single-run snapshots for poster layout work, so captions should say "selected
-representative runs" instead of implying they are aggregate repeat statistics.
+The selected values are mirrored in
+experiments/final_results/gke_selected_representative_runs.csv. These are
+compact single-run snapshots for poster layout work, so captions should say
+"selected representative runs" instead of implying they are aggregate repeat
+statistics.
 
 This script intentionally uses Pillow only. It avoids depending on the local
 NumPy/Matplotlib environment, which can be fragile on Cloud Shell/WSL machines.

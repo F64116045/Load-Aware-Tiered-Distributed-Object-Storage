@@ -103,14 +103,17 @@ gcloud builds submit \
   .
 ```
 
-After the deployment is healthy, run the C-aligned multi-node I/O experiment:
+After the deployment is healthy, run the formal experiment suite:
 
 ```bash
 AGE_THRESHOLD_SEC=60 PRELOAD_AGE_WAIT_SEC=90 \
 OBJECT_COUNT=50 OBJECT_SIZE_BYTES=1048576 \
 WORKLOAD_DURATION_SEC=60 WORKLOAD_CONCURRENCY=2 GET_PERCENT=70 \
-./experiments/scenarios/run_gke_multinode_io_experiment.sh
+./experiments/scenarios/run_gke_formal_experiment.sh
 ```
+
+This runs three repeats for `none`, `cpu`, and `io`. For CPU and I/O pressure,
+the runner targets two storage-only nodes after each Kubernetes namespace reset.
 
 ## Cost Cleanup
 
